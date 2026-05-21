@@ -1,6 +1,9 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ModelCenterPage, type ModelCenterRecord, type ModelProviderRecord } from './model-center-page';
+import { createQueryClient } from '@/lib/api/query-client';
+import { ModelCenterPage } from './model-center-page';
+import type { ModelCenterRecord, ModelProviderRecord } from './types';
 
 const providers: ModelProviderRecord[] = [
   {
@@ -38,13 +41,22 @@ function mockGateway() {
   } as Response);
 }
 
+function renderModelCenter() {
+  const queryClient = createQueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ModelCenterPage initialModels={models} initialProviders={providers} />
+    </QueryClientProvider>,
+  );
+}
+
 describe('ModelCenterPage', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it('keeps models as the main tab and shows providers in a sibling tab', () => {
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     expect(screen.getByRole('heading', { name: '模型中心' })).toBeInTheDocument();
     expect(screen.getByRole('table')).toHaveTextContent('OpenAI 兼容评估模型');
@@ -62,7 +74,7 @@ describe('ModelCenterPage', () => {
 
   it('adds a provider and then creates an LLM model without user-facing model code', async () => {
     const fetchMock = mockGateway();
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     fireEvent.click(screen.getByRole('tab', { name: /供应商列表/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加供应商' }));
@@ -115,7 +127,7 @@ describe('ModelCenterPage', () => {
   });
 
   it('uses controlled provider validation without native required bubbles', () => {
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     fireEvent.click(screen.getByRole('tab', { name: /供应商列表/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加供应商' }));
@@ -130,7 +142,7 @@ describe('ModelCenterPage', () => {
 
   it('tests provider form configuration before saving', async () => {
     const fetchMock = mockGateway();
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     fireEvent.click(screen.getByRole('tab', { name: /供应商列表/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加供应商' }));
@@ -153,7 +165,7 @@ describe('ModelCenterPage', () => {
 
   it('tests model form configuration before saving', async () => {
     const fetchMock = mockGateway();
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     fireEvent.click(screen.getByRole('button', { name: '添加模型' }));
     const modelForm = screen.getByRole('form', { name: '添加模型表单' });
@@ -174,7 +186,7 @@ describe('ModelCenterPage', () => {
 
   it('accepts decimal K and M token units while saving numeric token counts', async () => {
     const fetchMock = mockGateway();
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     fireEvent.click(screen.getByRole('button', { name: '添加模型' }));
     const modelForm = screen.getByRole('form', { name: '添加模型表单' });
@@ -204,7 +216,7 @@ describe('ModelCenterPage', () => {
 
   it('tests model connection through the gateway row action using id', async () => {
     const fetchMock = mockGateway();
-    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+    renderModelCenter();
 
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
 
@@ -216,5 +228,13 @@ describe('ModelCenterPage', () => {
         method: 'POST',
       }),
     );
+  });
+
+  it('renders the HeroUI POC shell with the project table wrapper', () => {
+    renderModelCenter();
+
+    expect(screen.getByRole('heading', { name: '模型中心' })).toBeInTheDocument();
+    expect(screen.getByText('HeroUI POC')).toBeInTheDocument();
+    expect(screen.getByRole('table')).toHaveTextContent('OpenAI 兼容评估模型');
   });
 });
