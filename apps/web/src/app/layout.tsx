@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { GeistSans } from 'geist/font/sans';
 import { Toaster } from '@/components/ui';
+import { AppProviders } from './providers';
 import './styles.css';
 
 export const metadata: Metadata = {
@@ -12,9 +13,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="zh-CN">
       <body className={GeistSans.className}>
-        {children}
-        {/* @author codex: Global toast host keeps feedback consistent across console workflows. */}
-        <Toaster />
+        <AppProviders>
+          {children}
+          {/* @author codex: Global toast host keeps feedback consistent across console workflows. */}
+          <Toaster />
+        </AppProviders>
       </body>
     </html>
   );
