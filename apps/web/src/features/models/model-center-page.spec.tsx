@@ -48,6 +48,7 @@ describe('ModelCenterPage', () => {
 
     expect(screen.getByRole('heading', { name: '模型中心' })).toBeInTheDocument();
     expect(screen.getByRole('table')).toHaveTextContent('OpenAI 兼容评估模型');
+    expect(screen.getByRole('table')).toHaveTextContent('128K ctx / 4,096 out');
     expect(screen.getByRole('tab', { name: /模型列表/ })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: /供应商列表/ })).toHaveAttribute('aria-selected', 'false');
 
@@ -168,6 +169,36 @@ describe('ModelCenterPage', () => {
           method: 'POST',
         }),
       ),
+    );
+  });
+
+  it('accepts decimal K and M token units while saving numeric token counts', async () => {
+    const fetchMock = mockGateway();
+    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '添加模型' }));
+    const modelForm = screen.getByRole('form', { name: '添加模型表单' });
+    fireEvent.change(within(modelForm).getByLabelText('模型名称'), { target: { value: '紧凑单位模型' } });
+    fireEvent.change(within(modelForm).getByLabelText('供应商模型 ID'), { target: { value: 'gpt-4.1-mini' } });
+    fireEvent.change(within(modelForm).getByLabelText('上下文窗口'), { target: { value: '1m' } });
+    fireEvent.change(within(modelForm).getByLabelText('最大输出 Token'), { target: { value: '4k' } });
+    fireEvent.click(within(modelForm).getByRole('button', { name: '保存模型' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
+        expect.objectContaining({
+          body: expect.stringContaining('"contextWindow":1000000'),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
+      expect.objectContaining({
+        body: expect.stringContaining('"maxOutputTokens":4000'),
+        method: 'POST',
+      }),
     );
   });
 

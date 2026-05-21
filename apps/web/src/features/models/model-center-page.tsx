@@ -168,7 +168,7 @@ function buildModelForm(providerCode = '', providerType: ProviderType = 'OPENAI_
     provider: providerCode,
     modelId: modelType === 'EMBEDDING' ? (providerMeta.embeddingExample ?? '') : providerMeta.llmExample,
     modelType,
-    contextWindow: '128000',
+    contextWindow: '128k',
     maxOutputTokens: '4096',
     stream: 'true',
     jsonMode: providerType === 'DEEPSEEK' ? 'false' : 'true',
@@ -201,8 +201,8 @@ function modelToForm(model: ModelCenterRecord): ModelFormState {
     ...buildModelForm(model.provider, model.providerType, model.modelType),
     name: model.name,
     modelId: model.modelId,
-    contextWindow: String(model.limits.contextWindow ?? ''),
-    maxOutputTokens: String(model.parameters.maxOutputTokens ?? model.limits.maxOutputTokens ?? ''),
+    contextWindow: formatTokenInput(model.limits.contextWindow),
+    maxOutputTokens: formatTokenInput(model.parameters.maxOutputTokens ?? model.limits.maxOutputTokens),
     stream: String(model.parameters.stream ?? model.capabilities.stream ?? true),
     jsonMode: String(model.parameters.jsonMode ?? model.capabilities.jsonMode ?? false),
     toolCalling: String(model.parameters.toolCalling ?? model.capabilities.toolCalling ?? false),
@@ -218,6 +218,31 @@ function toStatusLabel(enabled: boolean): StatusLabel {
 function toNumber(value: string, fallback?: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && value.trim() !== '' ? parsed : fallback;
+}
+
+function parseTokenCount(value: string, fallback?: number) {
+  const normalized = value.trim().replace(/,/g, '').replace(/\s+/g, '').toLowerCase();
+  if (!normalized) return fallback;
+  const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
+  if (!match) return fallback;
+  const unit = match[2];
+  const multiplier = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
+  const parsed = Number(match[1]) * multiplier;
+  return Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function formatTokenInput(value?: number) {
+  if (!value) return '';
+  if (value % 1_000_000 === 0) return `${value / 1_000_000}m`;
+  if (value % 1_000 === 0) return `${value / 1_000}k`;
+  return String(value);
+}
+
+function formatTokenDisplay(value?: number) {
+  if (!value) return '-';
+  if (value % 1_000_000 === 0) return `${value / 1_000_000}M`;
+  if (value % 1_000 === 0) return `${value / 1_000}K`;
+  return value.toLocaleString();
 }
 
 function toBoolean(value: string) {
@@ -400,8 +425,8 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     if (!modelForm.modelId.trim()) errors.modelId = '请填写供应商模型 ID。';
     if (provider?.type === 'DEEPSEEK' && modelForm.modelType === 'EMBEDDING') errors.modelType = 'DeepSeek 官方供应商暂不支持 Embedding。';
     if (modelForm.modelType === 'LLM') {
-      if (!toNumber(modelForm.contextWindow)) errors.contextWindow = '请填写有效上下文窗口。';
-      if (!toNumber(modelForm.maxOutputTokens)) errors.maxOutputTokens = '请填写有效最大输出 Token。';
+      if (!parseTokenCount(modelForm.contextWindow)) errors.contextWindow = '请输入有效 token 数量，例如 128k 或 1000000。';
+      if (!parseTokenCount(modelForm.maxOutputTokens)) errors.maxOutputTokens = '请输入有效 token 数量，例如 4k 或 4096。';
     }
     if (modelForm.modelType === 'EMBEDDING' && modelForm.dimensions && !toNumber(modelForm.dimensions)) {
       errors.dimensions = '维度必须是数字。';
@@ -419,7 +444,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
             dimensions: toNumber(modelForm.dimensions),
           }
         : {
-            maxOutputTokens: toNumber(modelForm.maxOutputTokens, 4096),
+            maxOutputTokens: parseTokenCount(modelForm.maxOutputTokens, 4096),
             stream: toBoolean(modelForm.stream),
             jsonMode: toBoolean(modelForm.jsonMode),
             toolCalling: toBoolean(modelForm.toolCalling),
@@ -441,8 +466,8 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
             maxInputTokens: 8192,
           }
         : {
-            contextWindow: toNumber(modelForm.contextWindow, 128000),
-            maxOutputTokens: toNumber(modelForm.maxOutputTokens, 4096),
+            contextWindow: parseTokenCount(modelForm.contextWindow, 128000),
+            maxOutputTokens: parseTokenCount(modelForm.maxOutputTokens, 4096),
           };
     return {
       modelName: modelForm.name.trim(),
@@ -715,7 +740,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                         </td>
                         <td>{model.modelId}</td>
                         <td>{PROTOCOL_META[model.protocol]}</td>
-                        <td>{model.modelType === 'EMBEDDING' ? `${model.limits.embeddingDimensions ?? model.parameters.dimensions ?? '-'} 维` : `${model.limits.contextWindow?.toLocaleString() ?? '-'} ctx / ${model.limits.maxOutputTokens?.toLocaleString() ?? model.parameters.maxOutputTokens ?? '-'} out`}</td>
+                        <td>{model.modelType === 'EMBEDDING' ? `${model.limits.embeddingDimensions ?? model.parameters.dimensions ?? '-'} 维` : `${formatTokenDisplay(model.limits.contextWindow)} ctx / ${formatTokenDisplay(model.limits.maxOutputTokens ?? model.parameters.maxOutputTokens)} out`}</td>
                         <td>
                           <span className={`console-status-pill console-status-${model.status}`}>{model.status}</span>
                         </td>
@@ -840,8 +865,8 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                 <TextInput className="console-form-field" label="供应商模型 ID" value={modelForm.modelId} error={modelErrors.modelId} required placeholder={selectedModelProvider ? (modelForm.modelType === 'EMBEDDING' ? (PROVIDER_TYPE_META[selectedModelProvider.type].embeddingExample ?? '') : PROVIDER_TYPE_META[selectedModelProvider.type].llmExample) : '供应商侧模型 slug'} onChange={(event) => updateModelField('modelId', event.target.value)} />
                 {modelForm.modelType === 'LLM' ? (
                   <>
-                    <TextInput className="console-form-field" label="上下文窗口" value={modelForm.contextWindow} error={modelErrors.contextWindow} required inputMode="numeric" onChange={(event) => updateModelField('contextWindow', event.target.value)} />
-                    <TextInput className="console-form-field" label="最大输出 Token" value={modelForm.maxOutputTokens} error={modelErrors.maxOutputTokens} required inputMode="numeric" onChange={(event) => updateModelField('maxOutputTokens', event.target.value)} />
+                    <TextInput className="console-form-field" label="上下文窗口" value={modelForm.contextWindow} error={modelErrors.contextWindow} required placeholder="如 128k 或 1000000" onChange={(event) => updateModelField('contextWindow', event.target.value)} />
+                    <TextInput className="console-form-field" label="最大输出 Token" value={modelForm.maxOutputTokens} error={modelErrors.maxOutputTokens} required placeholder="如 4k 或 4096" onChange={(event) => updateModelField('maxOutputTokens', event.target.value)} />
                     <ConsoleSelect className="console-form-field" ariaLabel="支持流式响应" label="支持流式响应" value={modelForm.stream} onValueChange={(value) => updateModelField('stream', value)} options={SUPPORT_OPTIONS} />
                     <ConsoleSelect className="console-form-field" ariaLabel="支持 JSON 输出" label="支持 JSON 输出" value={modelForm.jsonMode} onValueChange={(value) => updateModelField('jsonMode', value)} options={SUPPORT_OPTIONS} />
                     <ConsoleSelect className="console-form-field" ariaLabel="支持工具调用" label="支持工具调用" value={modelForm.toolCalling} onValueChange={(value) => updateModelField('toolCalling', value)} options={SUPPORT_OPTIONS} />
