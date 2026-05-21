@@ -1,0 +1,7 @@
+node_modules
+apps/*/.next
+dist
+coverage
+.git
+*.log
+ai-quality-platform-health.png

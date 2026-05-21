@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id           BigInt   @id @default(autoincrement())
+  username     String   @unique @db.VarChar(100)
+  displayName  String   @db.VarChar(100)
+  passwordHash String   @db.VarChar(255)
+  roleCode     String   @db.VarChar(50)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("sys_user")
+}
+
+model AiApp {
+  id             BigInt   @id @default(autoincrement())
+  appCode        String   @unique @db.VarChar(100)
+  appName        String   @db.VarChar(200)
+  appType        String   @db.VarChar(50)
+  businessDomain String   @db.VarChar(100)
+  invokeUrl      String   @db.VarChar(500)
+  requestMethod  String   @default("POST") @db.VarChar(20)
+  authType       String   @default("NONE") @db.VarChar(50)
+  authConfig     Json?
+  adapterConfig  Json?
+  owner          String?  @db.VarChar(100)
+  status         String   @default("ENABLED") @db.VarChar(50)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("ai_app")
+}
+
+model AiProvider {
+  id           BigInt   @id @default(autoincrement())
+  providerCode String   @unique @db.VarChar(100)
+  providerName String   @db.VarChar(200)
+  providerType String   @db.VarChar(50)
+  baseUrl      String   @db.VarChar(500)
+  apiKey       String   @db.VarChar(500)
+  defaultModel String?  @db.VarChar(200)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("ai_provider")
+}
+
+model AiModel {
+  id            BigInt   @id @default(autoincrement())
+  modelCode     String   @unique @db.VarChar(100)
+  modelName     String   @db.VarChar(200)
+  providerCode  String   @db.VarChar(100)
+  modelId       String   @db.VarChar(200)
+  purpose       String   @db.VarChar(50)
+  contextWindow Int      @default(0)
+  temperature   Decimal  @default(0.2) @db.Decimal(5, 2)
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([providerCode])
+  @@map("ai_model")
+}
+
+model EvalCaseCategory {
+  id          BigInt   @id @default(autoincrement())
+  appCode     String?  @db.VarChar(100)
+  name        String   @db.VarChar(100)
+  description String   @db.VarChar(500)
+  sortOrder   Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([appCode, name])
+  @@index([appCode])
+  @@map("eval_case_category")
+}
+
+model EvalCase {
+  id                   BigInt   @id @default(autoincrement())
+  caseName             String   @db.VarChar(200)
+  appCode              String   @db.VarChar(100)
+  caseScope            String   @default("APP") @db.VarChar(50)
+  categoryId           BigInt
+  sourcePresetId       BigInt?
+  riskLevel            String   @db.VarChar(50)
+  inputJson            Json
+  expectedJson         Json
+  referenceAnswer      String?  @db.Text
+  minScore             Int      @default(80)
+  manualReviewRequired Boolean  @default(false)
+  tags                 String?  @db.VarChar(500)
+  enabled              Boolean  @default(true)
+  version              Int      @default(1)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([appCode])
+  @@index([caseScope])
+  @@index([categoryId])
+  @@index([sourcePresetId])
+  @@map("eval_case")
+}
+
+model EvalCaseSuite {
+  id            BigInt   @id @default(autoincrement())
+  suiteCode     String   @unique @db.VarChar(100)
+  suiteName     String   @db.VarChar(200)
+  appCode       String   @db.VarChar(100)
+  description   String?  @db.VarChar(500)
+  caseIdsJson   Json
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([appCode])
+  @@map("eval_case_suite")
+}
+
+model EvalPlan {
+  id             BigInt   @id @default(autoincrement())
+  planCode       String   @unique @db.VarChar(100)
+  planName       String   @db.VarChar(200)
+  appCode        String   @db.VarChar(100)
+  planType       String   @db.VarChar(50)
+  caseFilterJson Json
+  status         String   @default("ENABLED") @db.VarChar(50)
+  createdBy      String?  @db.VarChar(100)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([appCode])
+  @@map("eval_plan")
+}
+
+model EvalRun {
+  id           BigInt    @id @default(autoincrement())
+  runCode      String    @unique @db.VarChar(100)
+  planCode     String    @db.VarChar(100)
+  appCode      String    @db.VarChar(100)
+  runName      String    @db.VarChar(200)
+  status       String    @db.VarChar(50)
+  totalCount   Int       @default(0)
+  passCount    Int       @default(0)
+  failCount    Int       @default(0)
+  reviewCount  Int       @default(0)
+  warningCount Int       @default(0)
+  blockedCount Int       @default(0)
+  avgScore     Decimal?  @db.Decimal(5, 2)
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdBy    String?   @db.VarChar(100)
+  createdAt    DateTime  @default(now())
+
+  @@index([planCode])
+  @@index([appCode])
+  @@map("eval_run")
+}
+
+model EvalResult {
+  id            BigInt   @id @default(autoincrement())
+  runCode       String   @db.VarChar(100)
+  caseId        BigInt
+  appCode       String   @db.VarChar(100)
+  requestJson   Json
+  responseJson  Json?
+  finalAnswer   String?  @db.Text
+  ruleScore     Decimal? @db.Decimal(5, 2)
+  judgeScore    Decimal? @db.Decimal(5, 2)
+  finalScore    Decimal? @db.Decimal(5, 2)
+  passStatus    String   @db.VarChar(50)
+  failureReason String?  @db.Text
+  problemType   String?  @db.VarChar(100)
+  traceId       String?  @db.VarChar(100)
+  elapsedMs     Int?
+  errorCode     String?  @db.VarChar(100)
+  createdAt     DateTime @default(now())
+
+  @@index([runCode])
+  @@index([caseId])
+  @@map("eval_result")
+}
+
+model EvalReview {
+  id            BigInt    @id @default(autoincrement())
+  resultId      BigInt
+  reviewStatus  String    @db.VarChar(50)
+  manualResult  String?   @db.VarChar(50)
+  problemType   String?   @db.VarChar(100)
+  reviewComment String?   @db.Text
+  nextAction    String?   @db.VarChar(100)
+  reviewer      String?   @db.VarChar(100)
+  reviewedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([resultId])
+  @@map("eval_review")
+}
+
+model EvalReport {
+  id                  BigInt   @id @default(autoincrement())
+  reportCode          String   @unique @db.VarChar(100)
+  runCode             String   @db.VarChar(100)
+  reportName          String   @db.VarChar(200)
+  summaryJson         Json
+  categoryStatsJson   Json
+  riskStatsJson       Json
+  typicalFailuresJson Json
+  suggestion          String?  @db.Text
+  generatedAt         DateTime @default(now())
+
+  @@index([runCode])
+  @@map("eval_report")
+}

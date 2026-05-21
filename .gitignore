@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+coverage/
+.turbo/
+.env
+.env.local
+*.log
+tmp/
+.DS_Store
+.playwright-cli/
+.playwright-mcp/
+output/
+/*.png

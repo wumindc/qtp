@@ -1,0 +1,33 @@
+{
+  "name": "ai-quality-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.1.2",
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build:web": "pnpm --filter web build",
+    "db:generate": "pnpm --filter @ai-quality-platform/shared-database prisma:generate",
+    "db:push": "pnpm --filter @ai-quality-platform/shared-database prisma:push",
+    "db:seed": "pnpm --filter @ai-quality-platform/shared-database seed",
+    "db:clear-business": "pnpm --filter @ai-quality-platform/shared-database clear-business-data",
+    "dev:web": "pnpm --filter web dev",
+    "dev:gateway": "pnpm --filter quality-gateway start:dev",
+    "dev:services": "pnpm --parallel --filter './apps/quality-*-service' start:dev",
+    "check:health": "node scripts/check-health.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "@nestjs/core",
+      "esbuild",
+      "prisma",
+      "sharp"
+    ]
+  }
+}

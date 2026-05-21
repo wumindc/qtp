@@ -1,0 +1,161 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ai_quality_platform
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "sunsharing"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "sunsharing", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      target: web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - quality-gateway
+    environment:
+      NEXT_PUBLIC_GATEWAY_BASE_URL: http://quality-gateway:8080/ai-quality-platform
+
+  quality-gateway:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - quality-business-service
+      - quality-case-service
+      - quality-plan-service
+      - quality-execution-service
+      - quality-ai-service
+      - quality-review-service
+      - quality-statistics-service
+      - quality-system-service
+
+  quality-business-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-business-service
+    ports:
+      - "3101:3101"
+    environment: &service-env
+      DATABASE_URL: mysql://root:root@mysql:3306/ai_quality_platform
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: sunsharing
+    depends_on:
+      - mysql
+      - redis
+
+  quality-case-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-case-service
+    ports:
+      - "3102:3102"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis
+
+  quality-plan-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-plan-service
+    ports:
+      - "3103:3103"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis
+
+  quality-execution-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-execution-service
+    ports:
+      - "3104:3104"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis
+
+  quality-ai-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-ai-service
+    ports:
+      - "3105:3105"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis
+
+  quality-review-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-review-service
+    ports:
+      - "3106:3106"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis
+
+  quality-statistics-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-statistics-service
+    ports:
+      - "3107:3107"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis
+
+  quality-system-service:
+    build:
+      context: .
+      target: service
+      args:
+        SERVICE_NAME: quality-system-service
+    ports:
+      - "3108:3108"
+    environment: *service-env
+    depends_on:
+      - mysql
+      - redis

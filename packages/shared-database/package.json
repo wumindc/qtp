@@ -1,0 +1,25 @@
+{
+  "name": "@ai-quality-platform/shared-database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "seed": "tsx src/seed.ts",
+    "clear-business-data": "tsx src/clear-business-data.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-mariadb": "^7.8.0",
+    "@prisma/client": "^7.1.0",
+    "mariadb": "^3.5.2"
+  },
+  "devDependencies": {
+    "prisma": "^7.1.0",
+    "tsx": "^4.21.0",
+    "vitest": "^4.0.14"
+  }
+}

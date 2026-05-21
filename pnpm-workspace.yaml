@@ -1,0 +1,9 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+allowBuilds:
+  '@nestjs/core': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
+  sharp: true
