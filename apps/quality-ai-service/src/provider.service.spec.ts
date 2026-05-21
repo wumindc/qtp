@@ -199,6 +199,38 @@ describe('ProviderService', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('https://api.example.com/v1/embeddings', expect.objectContaining({ method: 'POST' }));
   });
 
+  it('tests transient model configuration before saving it', async () => {
+    const fetchMock = createProviderFetch();
+    const service = new ProviderService(fetchMock as unknown as typeof fetch);
+    await service.create({
+      providerCode: 'qwen-main',
+      providerName: '通义千问',
+      providerType: 'QWEN',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'sk-test',
+    });
+
+    const response = await service.testModelConfigPayload({
+      modelName: 'Qwen Plus 模型',
+      providerCode: 'qwen-main',
+      modelId: 'qwen-plus',
+      modelType: 'LLM',
+      limits: { contextWindow: 128000, maxOutputTokens: 4096 },
+      capabilities: { stream: true, jsonMode: true, toolCalling: true },
+    });
+
+    expect(response).toMatchObject({
+      id: 'transient-model-config',
+      modelId: 'qwen-plus',
+      status: 'SUCCESS',
+    });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect((await service.modelList({}, { currentPage: 1, linesPerPage: 10 })).page.totalNum).toBe(0);
+  });
+
   it('rejects DeepSeek embedding models', async () => {
     const service = new ProviderService();
     await service.create({

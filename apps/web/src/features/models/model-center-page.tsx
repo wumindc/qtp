@@ -286,6 +286,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const [modelDialogMode, setModelDialogMode] = useState<DialogMode | null>(null);
   const [modelForm, setModelForm] = useState<ModelFormState>(() => buildModelForm(initialProviders[0]?.code ?? '', initialProviders[0]?.type));
   const [modelErrors, setModelErrors] = useState<FieldErrors<ModelFormState>>({});
+  const [modelTesting, setModelTesting] = useState(false);
   const [editingModelId, setEditingModelId] = useState('');
   const [providerPanelOpen, setProviderPanelOpen] = useState(false);
   const [providerFormMode, setProviderFormMode] = useState<DialogMode>('create');
@@ -567,6 +568,24 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     }
   };
 
+  const testModelForm = async () => {
+    if (!validateModelForm()) return;
+    const provider = providersByCode.get(modelForm.provider);
+    if (!provider || provider.status !== '启用') {
+      notify('请选择启用状态的供应商');
+      return;
+    }
+    setModelTesting(true);
+    try {
+      const result = await postAi('/provider/model/test-config.do', buildModelPayload());
+      notify(result.message ?? result.data?.message ?? '模型测试完成');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '模型测试失败');
+    } finally {
+      setModelTesting(false);
+    }
+  };
+
   const testProvider = async (provider: ModelProviderRecord) => {
     try {
       const result = await postAi('/provider/test-connection.do', { providerCode: provider.code });
@@ -839,6 +858,10 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                 </div>
               </div>
               <div className="console-modal-actions">
+                <button className="console-button provider-config-test-button" disabled={modelTesting} type="button" onClick={testModelForm}>
+                  <FlaskConical size={14} strokeWidth={1.9} aria-hidden="true" />
+                  {modelTesting ? '测试中' : '测试连接'}
+                </button>
                 <button className="console-button" type="button" onClick={closeModelDialog}>
                   取消
                 </button>

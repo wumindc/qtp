@@ -89,6 +89,8 @@ export interface ModelCreateRequest {
   limits?: ModelLimits;
 }
 
+export interface ModelConfigTestRequest extends ModelCreateRequest {}
+
 export interface ModelQuery {
   providerCode?: string;
   modelType?: ModelType;
@@ -406,6 +408,37 @@ export class ProviderService {
 
   /**
    * @author codex
+   * Tests a model form payload before it is persisted, so users can verify provider/model ids during creation.
+   */
+  async testModelConfigPayload(request: ModelConfigTestRequest) {
+    const provider = await this.getProvider(request.providerCode);
+    if (!provider.enabled) {
+      return {
+        providerCode: provider.providerCode,
+        modelId: request.modelId,
+        status: 'DISABLED',
+        message: '供应商已停用',
+      };
+    }
+    const modelType = this.normalizeModelType(request.modelType);
+    this.assertProviderSupportsModelType(provider.providerType, modelType);
+    const model = this.normalizeModelRecord(provider, {
+      id: 'transient-model-config',
+      modelName: request.modelName,
+      providerCode: provider.providerCode,
+      modelId: request.modelId,
+      modelType,
+      protocol: request.protocol ?? ProviderService.resolveProtocol(provider.providerType, modelType),
+      parameters: request.parameters ?? {},
+      capabilities: request.capabilities ?? {},
+      limits: request.limits ?? {},
+      enabled: true,
+    });
+    return this.testModelConfig(provider, model);
+  }
+
+  /**
+   * @author codex
    * Lists concrete model assets under provider sources.
    */
   async modelList(query: ModelQuery, page: { currentPage: number; linesPerPage: number }): Promise<PageResult<ModelRecord>> {
@@ -638,7 +671,7 @@ export class ProviderService {
       stream: input.stream ?? true,
       jsonMode: input.jsonMode ?? providerType !== 'DEEPSEEK',
       toolCalling: input.toolCalling ?? providerType !== 'DEEPSEEK',
-      thinkingEnabled: input.thinkingEnabled ?? providerType === 'DEEPSEEK' ? true : false,
+      thinkingEnabled: input.thinkingEnabled ?? (providerType === 'DEEPSEEK' ? true : false),
       reasoningEffort: input.reasoningEffort ?? (providerType === 'DEEPSEEK' ? 'high' : undefined),
       timeoutMs: this.optionalNumber(input.timeoutMs) ?? 60000,
     };

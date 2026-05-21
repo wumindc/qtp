@@ -150,6 +150,27 @@ describe('ModelCenterPage', () => {
     );
   });
 
+  it('tests model form configuration before saving', async () => {
+    const fetchMock = mockGateway();
+    render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '添加模型' }));
+    const modelForm = screen.getByRole('form', { name: '添加模型表单' });
+    fireEvent.change(within(modelForm).getByLabelText('模型名称'), { target: { value: '临时评估模型' } });
+    fireEvent.change(within(modelForm).getByLabelText('供应商模型 ID'), { target: { value: 'gpt-4.1-mini' } });
+    fireEvent.click(within(modelForm).getByRole('button', { name: '测试连接' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/test-config.do',
+        expect.objectContaining({
+          body: expect.stringContaining('"modelId":"gpt-4.1-mini"'),
+          method: 'POST',
+        }),
+      ),
+    );
+  });
+
   it('tests model connection through the gateway row action using id', async () => {
     const fetchMock = mockGateway();
     render(<ModelCenterPage initialModels={models} initialProviders={providers} />);

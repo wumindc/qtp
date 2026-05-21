@@ -1,6 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import {
   ProviderService,
+  type ModelConfigTestRequest,
   type ModelCreateRequest,
   type ModelQuery,
   type ModelRecord,
@@ -76,6 +77,11 @@ export class ProviderController {
   @Post('model/test-connection.do')
   testModelConnection(@Body() request: { id: string }) {
     return this.providerService.testModelConnection(request.id);
+  }
+
+  @Post('model/test-config.do')
+  testModelConfig(@Body() request: ModelConfigTestRequest) {
+    return this.providerService.testModelConfigPayload(request);
   }
 
   @Post('model/delete.do')

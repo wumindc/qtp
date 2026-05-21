@@ -43,6 +43,16 @@ describe('ProviderController', () => {
 
     expect(response.list[0]?.id).toBe(model.id);
     expect((await controller.testModelConnection({ id: model.id })).status).toBe('SUCCESS');
+    expect(
+      (
+        await controller.testModelConfig({
+          modelName: '临时评估模型',
+          providerCode: 'openai-compatible-main',
+          modelId: 'quality-judge',
+          modelType: 'LLM',
+        })
+      ).status,
+    ).toBe('SUCCESS');
   });
 
   it('tests unsaved provider configuration from the form', async () => {
