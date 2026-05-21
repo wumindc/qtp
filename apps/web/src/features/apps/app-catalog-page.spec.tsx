@@ -98,6 +98,23 @@ describe('AppCatalogPage', () => {
     );
   });
 
+  it('uses controlled validation and aligned field metadata in the app dialog', () => {
+    const fetchMock = mockGateway();
+    const { container } = render(<AppCatalogPage initialApps={apps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '新增应用' }));
+    const form = screen.getByRole('form', { name: '新增应用表单' });
+    fireEvent.click(within(form).getByRole('button', { name: '保存应用' }));
+
+    expect(form).toHaveAttribute('novalidate');
+    expect(within(form).getByText('请填写应用编码。')).toBeInTheDocument();
+    expect(within(form).getByText('请填写应用名称。')).toBeInTheDocument();
+    expect(within(form).getByText('请填写业务领域。')).toBeInTheDocument();
+    expect(within(form).getByText('请填写负责人。')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(Array.from(container.querySelectorAll('.console-form-grid > .console-form-field')).every((field) => field.getAttribute('data-has-meta') === 'true')).toBe(true);
+  });
+
   it('requires a lightweight confirmation before changing app status', async () => {
     const fetchMock = mockGateway();
     render(<AppCatalogPage initialApps={apps} />);

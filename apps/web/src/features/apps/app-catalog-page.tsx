@@ -39,6 +39,8 @@ interface GatewayResponse {
   };
 }
 
+type FieldErrors<T> = Partial<Record<keyof T, string>>;
+
 const APP_TYPES = ['CHATBOT', 'WORKFLOW', 'RAG', 'AGENT'];
 const TYPE_LABELS: Record<string, string> = {
   CHATBOT: '对话应用',
@@ -173,6 +175,7 @@ export function AppCatalogPage({ initialApps }: AppCatalogPageProps) {
   const [statusFilter, setStatusFilter] = useState('全部');
   const [dialogMode, setDialogMode] = useState<DialogMode | null>(null);
   const [formState, setFormState] = useState<AppFormState>(() => emptyForm());
+  const [formErrors, setFormErrors] = useState<FieldErrors<AppFormState>>({});
   const [pendingDelete, setPendingDelete] = useState<AppView | null>(null);
   const [actionMessage, setActionMessage] = useState('');
 
@@ -197,16 +200,30 @@ export function AppCatalogPage({ initialApps }: AppCatalogPageProps) {
 
   const openDialog = (mode: DialogMode, app?: AppView) => {
     setDialogMode(mode);
+    setFormErrors({});
     setFormState(mode === 'edit' && app ? formFromApp(app) : emptyForm());
   };
 
   const closeDialog = () => {
     setDialogMode(null);
+    setFormErrors({});
     setFormState(emptyForm());
+  };
+
+  const validateForm = () => {
+    const errors: FieldErrors<AppFormState> = {};
+    if (!formState.code.trim()) errors.code = '请填写应用编码。';
+    if (!formState.name.trim()) errors.name = '请填写应用名称。';
+    if (!formState.type.trim()) errors.type = '请选择应用类型。';
+    if (!formState.domain.trim()) errors.domain = '请填写业务领域。';
+    if (!formState.owner.trim()) errors.owner = '请填写负责人。';
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const saveApp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!validateForm()) return;
     const payload = toPayload(formState);
     try {
       if (dialogMode === 'edit') {
@@ -388,12 +405,13 @@ export function AppCatalogPage({ initialApps }: AppCatalogPageProps) {
             description={formState.name || '维护被测应用基础信息，接口协议进入应用后继续配置。'}
             title={dialogMode === 'create' ? '新增应用' : '编辑应用'}
           >
-          <form className="console-dialog-form" aria-label={dialogMode === 'create' ? '新增应用表单' : '编辑应用表单'} onSubmit={saveApp}>
+          <form className="console-dialog-form" aria-label={dialogMode === 'create' ? '新增应用表单' : '编辑应用表单'} noValidate onSubmit={saveApp}>
             <div className="console-form-grid">
               <TextInput
                 className="console-form-field"
                 label="应用编码"
                 value={formState.code}
+                error={formErrors.code}
                 disabled={dialogMode === 'edit'}
                 required
                 placeholder="如 credit_assistant"
@@ -403,22 +421,26 @@ export function AppCatalogPage({ initialApps }: AppCatalogPageProps) {
                 className="console-form-field"
                 label="应用名称"
                 value={formState.name}
+                error={formErrors.name}
                 required
                 placeholder="如 信用服务助手"
                 onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
               />
-              <label className="console-form-field">
-                <span>应用类型</span>
-                <ConsoleSelect
-                  value={formState.type}
-                  onValueChange={(value) => setFormState((current) => ({ ...current, type: value }))}
-                  options={APP_TYPES.map((type) => ({ label: getTypeLabel(type), value: type }))}
-                />
-              </label>
+              <ConsoleSelect
+                ariaLabel="应用类型"
+                className="console-form-field"
+                error={formErrors.type}
+                label="应用类型"
+                required
+                value={formState.type}
+                onValueChange={(value) => setFormState((current) => ({ ...current, type: value }))}
+                options={APP_TYPES.map((type) => ({ label: getTypeLabel(type), value: type }))}
+              />
               <TextInput
                 className="console-form-field"
                 label="业务领域"
                 value={formState.domain}
+                error={formErrors.domain}
                 required
                 onChange={(event) => setFormState((current) => ({ ...current, domain: event.target.value }))}
               />
@@ -426,6 +448,7 @@ export function AppCatalogPage({ initialApps }: AppCatalogPageProps) {
                 className="console-form-field"
                 label="负责人"
                 value={formState.owner}
+                error={formErrors.owner}
                 required
                 onChange={(event) => setFormState((current) => ({ ...current, owner: event.target.value }))}
               />
