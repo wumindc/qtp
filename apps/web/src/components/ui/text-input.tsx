@@ -69,11 +69,9 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
             {hint}
           </span>
         ) : null}
-        {shownError ? (
-          <span className="ui-field__error" id={id ? `${id}-error` : undefined}>
-            {shownError}
-          </span>
-        ) : null}
+        <span className="ui-field__error" id={id ? `${id}-error` : undefined}>
+          {shownError}
+        </span>
       </label>
     );
   },

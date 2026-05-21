@@ -28,7 +28,6 @@ describe('ProviderService', () => {
       providerType: 'DEEPSEEK',
       baseUrl: 'https://api.deepseek.com',
       apiKey: 'sk-test',
-      defaultModel: 'deepseek-chat',
     });
 
     expect(created.enabled).toBe(true);
@@ -50,14 +49,12 @@ describe('ProviderService', () => {
       providerType: 'DEEPSEEK',
       baseUrl: 'https://api.deepseek.com',
       apiKey: 'sk-test',
-      defaultModel: 'deepseek-chat',
     });
     const secondProvider = await service.create({
       providerName: 'DeepSeek 生产环境',
       providerType: 'DEEPSEEK',
       baseUrl: 'https://api.deepseek.com',
       apiKey: 'sk-test',
-      defaultModel: 'deepseek-chat',
     });
 
     expect(firstProvider.providerCode).toBe('provider-deepseek');
@@ -87,7 +84,6 @@ describe('ProviderService', () => {
       providerType: 'DEEPSEEK',
       baseUrl: 'https://api.deepseek.com',
       apiKey: 'sk-test',
-      defaultModel: 'deepseek-chat',
       enabled: false,
     });
 
@@ -99,7 +95,6 @@ describe('ProviderService', () => {
         providerType: 'DEEPSEEK',
         baseUrl: 'https://api.deepseek.com',
         apiKey: 'sk-test',
-        defaultModel: 'deepseek-chat',
       }),
     ).rejects.toThrow('供应商已存在');
   });
@@ -112,10 +107,11 @@ describe('ProviderService', () => {
       providerType: 'QWEN',
       baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       apiKey: 'sk-test',
-      defaultModel: 'qwen-plus',
     });
 
-    expect((await service.update('qwen-main', { defaultModel: 'qwen-max' })).defaultModel).toBe('qwen-max');
+    expect((await service.update('qwen-main', { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' })).baseUrl).toContain(
+      'dashscope',
+    );
     expect((await service.changeStatus('qwen-main', false)).enabled).toBe(false);
     expect((await service.delete('qwen-main')).providerCode).toBe('qwen-main');
   });
@@ -128,22 +124,18 @@ describe('ProviderService', () => {
       providerType: 'OPENAI_COMPATIBLE',
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'sk-test',
-      defaultModel: 'quality-judge',
     });
     await service.createModel({
-      modelCode: 'quality-judge',
       modelName: '质量评估模型',
       providerCode: 'openai-compatible-main',
       modelId: 'quality-judge',
-      purpose: 'JUDGE',
-      contextWindow: 128000,
-      temperature: 0.2,
+      modelType: 'LLM',
     });
 
     await expect(service.delete('openai-compatible-main')).rejects.toThrow('该供应商下仍有关联模型');
   });
 
-  it('manages concrete models under a provider source', async () => {
+  it('manages LLM models under a provider source using database ids', async () => {
     const fetchMock = createProviderFetch();
     const service = new ProviderService(fetchMock as unknown as typeof fetch);
     await service.create({
@@ -152,27 +144,78 @@ describe('ProviderService', () => {
       providerType: 'QWEN',
       baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       apiKey: 'sk-test',
-      defaultModel: 'qwen-plus',
     });
 
     const created = await service.createModel({
-      modelCode: 'qwen-plus-eval',
-      modelName: 'Qwen Plus 评估模型',
+      modelName: 'Qwen Plus 模型',
       providerCode: 'qwen-main',
       modelId: 'qwen-plus',
-      purpose: 'JUDGE',
-      contextWindow: 128000,
-      temperature: 0.2,
+      modelType: 'LLM',
+      parameters: {
+        temperature: 0.2,
+        maxOutputTokens: 2048,
+      },
     });
 
     expect(created.enabled).toBe(true);
-    expect((await service.modelList({ providerCode: 'qwen-main' }, { currentPage: 1, linesPerPage: 10 })).page.totalNum).toBe(1);
-    expect(await service.testModelConnection('qwen-plus-eval')).toMatchObject({
-      modelCode: 'qwen-plus-eval',
+    expect(created.protocol).toBe('DASHSCOPE_COMPATIBLE_CHAT');
+    expect(created.parameters.temperature).toBe(0.2);
+    expect((await service.modelList({ providerCode: 'qwen-main', modelType: 'LLM' }, { currentPage: 1, linesPerPage: 10 })).page.totalNum).toBe(1);
+    expect(await service.testModelConnection(created.id)).toMatchObject({
+      id: created.id,
       status: 'SUCCESS',
     });
-    expect((await service.updateModel('qwen-plus-eval', { temperature: 0.1 })).temperature).toBe(0.1);
-    expect((await service.changeModelStatus('qwen-plus-eval', false)).enabled).toBe(false);
-    expect((await service.deleteModel('qwen-plus-eval')).modelCode).toBe('qwen-plus-eval');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect((await service.updateModel(created.id, { parameters: { temperature: 0.1 } })).parameters.temperature).toBe(0.1);
+    expect((await service.changeModelStatus(created.id, false)).enabled).toBe(false);
+    expect((await service.deleteModel(created.id)).id).toBe(created.id);
+  });
+
+  it('supports embedding model test payloads for compatible providers', async () => {
+    const fetchMock = createProviderFetch();
+    const service = new ProviderService(fetchMock as unknown as typeof fetch);
+    await service.create({
+      providerCode: 'openai-compatible-main',
+      providerName: 'OpenAI 兼容供应商',
+      providerType: 'OPENAI_COMPATIBLE',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-test',
+    });
+
+    const created = await service.createModel({
+      modelName: 'Embedding 模型',
+      providerCode: 'openai-compatible-main',
+      modelId: 'text-embedding-3-large',
+      modelType: 'EMBEDDING',
+      parameters: { dimensions: 1024 },
+    });
+
+    expect(created.protocol).toBe('OPENAI_EMBEDDINGS');
+    expect(created.capabilities.embedding).toBe(true);
+    expect((await service.testModelConnection(created.id)).status).toBe('SUCCESS');
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.example.com/v1/embeddings', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('rejects DeepSeek embedding models', async () => {
+    const service = new ProviderService();
+    await service.create({
+      providerCode: 'deepseek-main',
+      providerName: 'DeepSeek',
+      providerType: 'DEEPSEEK',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+    });
+
+    await expect(
+      service.createModel({
+        modelName: 'DeepSeek Embedding',
+        providerCode: 'deepseek-main',
+        modelId: 'deepseek-embedding',
+        modelType: 'EMBEDDING',
+      }),
+    ).rejects.toThrow('DeepSeek 官方供应商暂不支持');
   });
 });

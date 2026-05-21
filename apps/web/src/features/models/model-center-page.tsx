@@ -2,25 +2,52 @@
 
 import { FormEvent, useMemo, useState } from 'react';
 import { getGatewayApiUrl } from '@ai-quality-platform/shared-config';
-import {
-  Boxes,
-  Check,
-  FlaskConical,
-  Pencil,
-  Plus,
-  Search,
-  ServerCog,
-  ShieldCheck,
-  Trash2,
-} from 'lucide-react';
+import { Boxes, Check, FlaskConical, Pencil, Plus, Search, ServerCog, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConsoleSelect, DialogContent, DialogRoot, PopoverConfirm, TextInput } from '@/components/ui';
 
 type ProviderType = 'OPENAI_COMPATIBLE' | 'QWEN' | 'DEEPSEEK';
-type ModelPurpose = 'JUDGE' | 'EXECUTION' | 'EMBEDDING';
+type ModelType = 'LLM' | 'EMBEDDING';
+type ModelProtocol =
+  | 'OPENAI_CHAT_COMPLETIONS'
+  | 'OPENAI_EMBEDDINGS'
+  | 'DASHSCOPE_COMPATIBLE_CHAT'
+  | 'DASHSCOPE_COMPATIBLE_EMBEDDINGS'
+  | 'DEEPSEEK_CHAT_COMPLETIONS';
 type StatusLabel = '启用' | '停用';
 type DialogMode = 'create' | 'edit';
 type ModelCenterTab = 'models' | 'providers';
+
+interface ModelParameters {
+  batchSize?: number;
+  dimensions?: number;
+  encodingFormat?: 'float' | 'base64';
+  jsonMode?: boolean;
+  maxOutputTokens?: number;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max';
+  stream?: boolean;
+  temperature?: number;
+  thinkingEnabled?: boolean;
+  timeoutMs?: number;
+  toolCalling?: boolean;
+  topK?: number;
+  topP?: number;
+}
+
+interface ModelCapabilities {
+  embedding?: boolean;
+  jsonMode?: boolean;
+  reasoning?: boolean;
+  stream?: boolean;
+  toolCalling?: boolean;
+}
+
+interface ModelLimits {
+  contextWindow?: number;
+  embeddingDimensions?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+}
 
 export interface ModelProviderRecord {
   id: string;
@@ -29,21 +56,21 @@ export interface ModelProviderRecord {
   type: ProviderType;
   baseUrl: string;
   apiKey: string;
-  defaultModel: string;
   status: StatusLabel;
 }
 
 export interface ModelCenterRecord {
   id: string;
-  code: string;
   name: string;
   provider: string;
   providerName: string;
   providerType: ProviderType;
   modelId: string;
-  purpose: ModelPurpose;
-  context: string;
-  temperature: string;
+  modelType: ModelType;
+  protocol: ModelProtocol;
+  parameters: ModelParameters;
+  capabilities: ModelCapabilities;
+  limits: ModelLimits;
   status: StatusLabel;
 }
 
@@ -53,13 +80,24 @@ interface ModelCenterPageProps {
 }
 
 interface ModelFormState {
-  code: string;
   name: string;
   provider: string;
   modelId: string;
-  purpose: ModelPurpose;
-  context: string;
+  modelType: ModelType;
+  contextWindow: string;
+  maxOutputTokens: string;
   temperature: string;
+  topP: string;
+  topK: string;
+  stream: string;
+  jsonMode: string;
+  toolCalling: string;
+  thinkingEnabled: string;
+  reasoningEffort: string;
+  dimensions: string;
+  batchSize: string;
+  encodingFormat: string;
+  timeoutMs: string;
 }
 
 interface ProviderFormState {
@@ -67,8 +105,6 @@ interface ProviderFormState {
   type: ProviderType;
   baseUrl: string;
   apiKey: string;
-  defaultModel: string;
-  enabled: boolean;
 }
 
 interface GatewayResponse {
@@ -79,57 +115,80 @@ interface GatewayResponse {
   };
 }
 
-type ProviderSaveResponse = GatewayResponse & Partial<ProviderRecordResponse>;
+type FieldErrors<T> = Partial<Record<keyof T, string>>;
+type ModelRecordResponse = Partial<ModelCenterRecord> & Record<string, unknown>;
+type ProviderSaveResponse = GatewayResponse &
+  Partial<{
+    providerCode: string;
+    providerName: string;
+    providerType: ProviderType;
+    baseUrl: string;
+    apiKey: string;
+    enabled: boolean;
+  }>;
 
-interface ProviderRecordResponse {
-  providerCode: string;
-  providerName: string;
-  providerType: ProviderType;
-  baseUrl: string;
-  apiKey?: string;
-  defaultModel?: string;
-  enabled?: boolean;
-}
-
-const PROVIDER_TYPE_META: Record<
-  ProviderType,
-  { label: string; defaultBaseUrl: string; modelExample: string; configHint: string }
-> = {
+const PROVIDER_TYPE_META: Record<ProviderType, { label: string; defaultBaseUrl: string; llmExample: string; embeddingExample?: string; configHint: string }> = {
   OPENAI_COMPATIBLE: {
     label: 'OpenAI 兼容',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    modelExample: 'your-model-id',
-    configHint: '需要 Base URL 与 API Key；模型 ID 通常在添加模型时直接填写供应商侧 slug。',
+    llmExample: 'gpt-4.1-mini',
+    embeddingExample: 'text-embedding-3-large',
+    configHint: '适合 OpenAI、自建网关、OpenRouter、Vercel AI Gateway 或任何 /v1 兼容端点。',
   },
   QWEN: {
-    label: '通义千问',
+    label: '阿里云百炼（通义千问）',
     defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    modelExample: 'qwen-plus',
-    configHint: '需要 DashScope API Key；模型 ID 建议填写 qwen-plus、qwen-max 等实际可调用模型。',
+    llmExample: 'qwen-plus',
+    embeddingExample: 'text-embedding-v4',
+    configHint: '默认使用百炼 OpenAI 兼容模式；LLM 可配置 top_k，Embedding 可配置输出维度。',
   },
   DEEPSEEK: {
-    label: 'DeepSeek',
-    defaultBaseUrl: 'https://api.deepseek.com/v1',
-    modelExample: 'deepseek-chat',
-    configHint: '需要 DeepSeek API Key；模型 ID 可填写 deepseek-chat 或 deepseek-reasoner。',
+    label: 'DeepSeek 官方',
+    defaultBaseUrl: 'https://api.deepseek.com',
+    llmExample: 'deepseek-chat',
+    configHint: 'DeepSeek 官方端点用于对话模型；思考模式下部分采样参数可能被供应商忽略。',
   },
 };
 
-const PURPOSE_META: Record<ModelPurpose, { label: string; description: string }> = {
-  JUDGE: { label: '评估模型', description: '用于评分、复核、质量判断' },
-  EXECUTION: { label: '执行模型', description: '用于调用被测应用或生成样本' },
-  EMBEDDING: { label: 'Embedding', description: '用于相似度、召回、向量检索' },
+const MODEL_TYPE_META: Record<ModelType, { label: string; description: string }> = {
+  LLM: { label: 'LLM', description: '对话、评估、工具调用和结构化输出' },
+  EMBEDDING: { label: 'Embedding', description: '向量化、相似度、召回和检索' },
 };
 
-function buildModelForm(providerCode = ''): ModelFormState {
+const PROTOCOL_META: Record<ModelProtocol, string> = {
+  OPENAI_CHAT_COMPLETIONS: 'OpenAI Chat Completions',
+  OPENAI_EMBEDDINGS: 'OpenAI Embeddings',
+  DASHSCOPE_COMPATIBLE_CHAT: '百炼兼容 Chat',
+  DASHSCOPE_COMPATIBLE_EMBEDDINGS: '百炼兼容 Embeddings',
+  DEEPSEEK_CHAT_COMPLETIONS: 'DeepSeek Chat Completions',
+};
+
+const BOOLEAN_OPTIONS = [
+  { label: '开启', value: 'true' },
+  { label: '关闭', value: 'false' },
+];
+
+function buildModelForm(providerCode = '', providerType: ProviderType = 'OPENAI_COMPATIBLE', modelType: ModelType = 'LLM'): ModelFormState {
+  const providerMeta = PROVIDER_TYPE_META[providerType];
   return {
-    code: '',
     name: '',
     provider: providerCode,
-    modelId: '',
-    purpose: 'JUDGE',
-    context: '128000',
-    temperature: '0.2',
+    modelId: modelType === 'EMBEDDING' ? (providerMeta.embeddingExample ?? '') : providerMeta.llmExample,
+    modelType,
+    contextWindow: '128000',
+    maxOutputTokens: '4096',
+    temperature: providerType === 'DEEPSEEK' ? '1' : '0.2',
+    topP: '1',
+    topK: providerType === 'QWEN' ? '0' : '',
+    stream: 'true',
+    jsonMode: providerType === 'DEEPSEEK' ? 'false' : 'true',
+    toolCalling: providerType === 'DEEPSEEK' ? 'false' : 'true',
+    thinkingEnabled: providerType === 'DEEPSEEK' ? 'true' : 'false',
+    reasoningEffort: providerType === 'DEEPSEEK' ? 'high' : '',
+    dimensions: modelType === 'EMBEDDING' ? '1024' : '',
+    batchSize: modelType === 'EMBEDDING' ? '16' : '',
+    encodingFormat: 'float',
+    timeoutMs: modelType === 'EMBEDDING' ? '30000' : '60000',
   };
 }
 
@@ -139,8 +198,6 @@ function buildProviderForm(type: ProviderType = 'OPENAI_COMPATIBLE'): ProviderFo
     type,
     baseUrl: '',
     apiKey: '',
-    defaultModel: '',
-    enabled: true,
   };
 }
 
@@ -150,20 +207,28 @@ function providerToForm(provider: ModelProviderRecord): ProviderFormState {
     type: provider.type,
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
-    defaultModel: provider.defaultModel,
-    enabled: provider.status === '启用',
   };
 }
 
 function modelToForm(model: ModelCenterRecord): ModelFormState {
   return {
-    code: model.code,
+    ...buildModelForm(model.provider, model.providerType, model.modelType),
     name: model.name,
-    provider: model.provider,
     modelId: model.modelId,
-    purpose: model.purpose,
-    context: model.context,
-    temperature: model.temperature,
+    contextWindow: String(model.limits.contextWindow ?? ''),
+    maxOutputTokens: String(model.parameters.maxOutputTokens ?? model.limits.maxOutputTokens ?? ''),
+    temperature: String(model.parameters.temperature ?? ''),
+    topP: String(model.parameters.topP ?? ''),
+    topK: String(model.parameters.topK ?? ''),
+    stream: String(model.parameters.stream ?? model.capabilities.stream ?? true),
+    jsonMode: String(model.parameters.jsonMode ?? model.capabilities.jsonMode ?? false),
+    toolCalling: String(model.parameters.toolCalling ?? model.capabilities.toolCalling ?? false),
+    thinkingEnabled: String(model.parameters.thinkingEnabled ?? model.capabilities.reasoning ?? false),
+    reasoningEffort: String(model.parameters.reasoningEffort ?? ''),
+    dimensions: String(model.parameters.dimensions ?? model.limits.embeddingDimensions ?? ''),
+    batchSize: String(model.parameters.batchSize ?? ''),
+    encodingFormat: String(model.parameters.encodingFormat ?? 'float'),
+    timeoutMs: String(model.parameters.timeoutMs ?? ''),
   };
 }
 
@@ -171,9 +236,33 @@ function toStatusLabel(enabled: boolean): StatusLabel {
   return enabled ? '启用' : '停用';
 }
 
-function toNumber(value: string, fallback: number) {
+function toNumber(value: string, fallback?: number) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isFinite(parsed) && value.trim() !== '' ? parsed : fallback;
+}
+
+function toBoolean(value: string) {
+  return value === 'true';
+}
+
+function resolveProtocol(providerType: ProviderType, modelType: ModelType): ModelProtocol {
+  if (providerType === 'QWEN') return modelType === 'EMBEDDING' ? 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' : 'DASHSCOPE_COMPATIBLE_CHAT';
+  if (providerType === 'DEEPSEEK') return 'DEEPSEEK_CHAT_COMPLETIONS';
+  return modelType === 'EMBEDDING' ? 'OPENAI_EMBEDDINGS' : 'OPENAI_CHAT_COMPLETIONS';
+}
+
+function toReasoningEffort(value: string): ModelParameters['reasoningEffort'] {
+  return value === 'low' || value === 'medium' || value === 'high' || value === 'max' ? value : undefined;
+}
+
+function readSavedProvider(result: ProviderSaveResponse): Partial<ProviderSaveResponse> {
+  if (result.data?.providerCode) return result.data as Partial<ProviderSaveResponse>;
+  return result;
+}
+
+function readSavedModel(result: GatewayResponse & ModelRecordResponse): ModelRecordResponse {
+  if (result.data?.id) return result.data as ModelRecordResponse;
+  return result;
 }
 
 function buildLocalProviderCode(name: string, type: ProviderType, existingProviders: ModelProviderRecord[]) {
@@ -194,20 +283,13 @@ function buildLocalProviderCode(name: string, type: ProviderType, existingProvid
   return nextCode;
 }
 
-function readSavedProvider(result: ProviderSaveResponse): Partial<ProviderRecordResponse> {
-  if (result.data?.providerCode) {
-    return result.data as Partial<ProviderRecordResponse>;
-  }
-  return result;
-}
-
 async function postAi(path: string, payload: Record<string, unknown>) {
   const response = await fetch(getGatewayApiUrl('ai', path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const result = (await response.json().catch(() => ({}))) as GatewayResponse;
+  const result = (await response.json().catch(() => ({}))) as GatewayResponse & Record<string, unknown>;
   if (!response.ok || result.success === false) {
     throw new Error(result.message ?? result.data?.message ?? '操作失败');
   }
@@ -216,7 +298,7 @@ async function postAi(path: string, payload: Record<string, unknown>) {
 
 /**
  * @author codex
- * Presents models and global providers as sibling management tabs.
+ * Presents models and global providers as sibling management tabs with provider-aware model parameters.
  */
 export function ModelCenterPage({ initialModels, initialProviders }: ModelCenterPageProps) {
   const [models, setModels] = useState(initialModels);
@@ -224,12 +306,16 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const [activeTab, setActiveTab] = useState<ModelCenterTab>('models');
   const [query, setQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState('全部');
+  const [modelTypeFilter, setModelTypeFilter] = useState<'全部' | ModelType>('全部');
   const [statusFilter, setStatusFilter] = useState<'全部' | StatusLabel>('全部');
   const [modelDialogMode, setModelDialogMode] = useState<DialogMode | null>(null);
-  const [modelForm, setModelForm] = useState<ModelFormState>(() => buildModelForm(initialProviders[0]?.code ?? ''));
+  const [modelForm, setModelForm] = useState<ModelFormState>(() => buildModelForm(initialProviders[0]?.code ?? '', initialProviders[0]?.type));
+  const [modelErrors, setModelErrors] = useState<FieldErrors<ModelFormState>>({});
+  const [editingModelId, setEditingModelId] = useState('');
   const [providerPanelOpen, setProviderPanelOpen] = useState(false);
   const [providerFormMode, setProviderFormMode] = useState<DialogMode>('create');
   const [providerForm, setProviderForm] = useState<ProviderFormState>(() => buildProviderForm());
+  const [providerErrors, setProviderErrors] = useState<FieldErrors<ProviderFormState>>({});
   const [editingProviderCode, setEditingProviderCode] = useState('');
   const [providerTesting, setProviderTesting] = useState(false);
   const [pendingModelDelete, setPendingModelDelete] = useState<ModelCenterRecord | null>(null);
@@ -242,37 +328,46 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   };
 
   const providersByCode = useMemo(() => new Map(providers.map((provider) => [provider.code, provider])), [providers]);
-  const enabledProviderOptions = useMemo(
-    () => providers.filter((provider) => provider.status === '启用'),
-    [providers],
-  );
+  const enabledProviderOptions = useMemo(() => providers.filter((provider) => provider.status === '启用'), [providers]);
+  const selectedModelProvider = providersByCode.get(modelForm.provider);
+  const providerMeta = PROVIDER_TYPE_META[providerForm.type];
 
   const visibleModels = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return models.filter((model) => {
       const provider = providersByCode.get(model.provider);
-      const searchable = [
-        model.code,
-        model.name,
-        model.modelId,
-        model.provider,
-        model.providerName,
-        provider?.name,
-        provider?.type,
-        PURPOSE_META[model.purpose].label,
-      ]
-        .join(' ')
-        .toLowerCase();
+      const searchable = [model.name, model.modelId, model.modelType, model.protocol, model.providerName, provider?.name, provider?.type].join(' ').toLowerCase();
       return (
         (!normalizedQuery || searchable.includes(normalizedQuery)) &&
         (providerFilter === '全部' || model.provider === providerFilter) &&
+        (modelTypeFilter === '全部' || model.modelType === modelTypeFilter) &&
         (statusFilter === '全部' || model.status === statusFilter)
       );
     });
-  }, [models, providerFilter, providersByCode, query, statusFilter]);
+  }, [modelTypeFilter, models, providerFilter, providersByCode, query, statusFilter]);
 
   const enabledModels = models.filter((model) => model.status === '启用').length;
   const enabledProviders = providers.filter((provider) => provider.status === '启用').length;
+
+  const updateModelField = <K extends keyof ModelFormState>(key: K, value: ModelFormState[K]) => {
+    setModelForm((current) => {
+      const next = { ...current, [key]: value };
+      if (key === 'provider') {
+        const provider = providersByCode.get(String(value));
+        return { ...buildModelForm(String(value), provider?.type, current.modelType), name: current.name };
+      }
+      if (key === 'modelType') {
+        return { ...buildModelForm(current.provider, selectedModelProvider?.type, value as ModelType), name: current.name };
+      }
+      return next;
+    });
+    setModelErrors((current) => ({ ...current, [key]: undefined }));
+  };
+
+  const updateProviderField = <K extends keyof ProviderFormState>(key: K, value: ProviderFormState[K]) => {
+    setProviderForm((current) => ({ ...current, [key]: value }));
+    setProviderErrors((current) => ({ ...current, [key]: undefined }));
+  };
 
   const openModelDialog = (mode: DialogMode, model?: ModelCenterRecord) => {
     if (mode === 'create' && enabledProviderOptions.length === 0) {
@@ -281,15 +376,16 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       openProviderPanel('create');
       return;
     }
+    setModelErrors({});
     setModelDialogMode(mode);
-    setModelForm(
-      mode === 'edit' && model ? modelToForm(model) : buildModelForm(enabledProviderOptions[0]?.code ?? ''),
-    );
+    setEditingModelId(mode === 'edit' && model ? model.id : '');
+    setModelForm(mode === 'edit' && model ? modelToForm(model) : buildModelForm(enabledProviderOptions[0]?.code ?? '', enabledProviderOptions[0]?.type));
   };
 
   const openProviderPanel = (mode: DialogMode, provider?: ModelProviderRecord) => {
     setActiveTab('providers');
     setProviderPanelOpen(true);
+    setProviderErrors({});
     setProviderFormMode(mode);
     setEditingProviderCode(mode === 'edit' && provider ? provider.code : '');
     setProviderForm(mode === 'edit' && provider ? providerToForm(provider) : buildProviderForm());
@@ -297,75 +393,132 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
 
   const closeModelDialog = () => {
     setModelDialogMode(null);
-    setModelForm(buildModelForm(enabledProviderOptions[0]?.code ?? ''));
+    setModelErrors({});
+    setEditingModelId('');
+    setModelForm(buildModelForm(enabledProviderOptions[0]?.code ?? '', enabledProviderOptions[0]?.type));
   };
 
   const updateProviderType = (nextType: ProviderType) => {
-    setProviderForm((current) => {
-      const providerPreset = PROVIDER_TYPE_META[nextType];
-      return {
-        ...current,
-        type: nextType,
-        baseUrl: current.baseUrl || providerPreset.defaultBaseUrl,
-        defaultModel: current.defaultModel || providerPreset.modelExample,
-      };
-    });
+    setProviderForm((current) => ({
+      ...current,
+      type: nextType,
+      baseUrl: current.baseUrl || PROVIDER_TYPE_META[nextType].defaultBaseUrl,
+    }));
+    setProviderErrors((current) => ({ ...current, type: undefined }));
+  };
+
+  const validateProviderForm = () => {
+    const errors: FieldErrors<ProviderFormState> = {};
+    if (!providerForm.name.trim()) errors.name = '请填写供应商名称。';
+    if (!providerForm.baseUrl.trim()) errors.baseUrl = '请填写接口地址。';
+    if (!providerForm.apiKey.trim()) errors.apiKey = '请填写 API Key。';
+    setProviderErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validateModelForm = () => {
+    const errors: FieldErrors<ModelFormState> = {};
+    const provider = providersByCode.get(modelForm.provider);
+    if (!modelForm.name.trim()) errors.name = '请填写模型名称。';
+    if (!modelForm.provider || !provider) errors.provider = '请选择供应商。';
+    if (!modelForm.modelId.trim()) errors.modelId = '请填写供应商模型 ID。';
+    if (provider?.type === 'DEEPSEEK' && modelForm.modelType === 'EMBEDDING') errors.modelType = 'DeepSeek 官方供应商暂不支持 Embedding。';
+    if (modelForm.modelType === 'LLM') {
+      if (!toNumber(modelForm.contextWindow)) errors.contextWindow = '请填写有效上下文窗口。';
+      if (!toNumber(modelForm.maxOutputTokens)) errors.maxOutputTokens = '请填写有效最大输出 Token。';
+    }
+    if (modelForm.modelType === 'EMBEDDING' && modelForm.dimensions && !toNumber(modelForm.dimensions)) {
+      errors.dimensions = '维度必须是数字。';
+    }
+    setModelErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const buildModelPayload = () => {
+    const provider = providersByCode.get(modelForm.provider);
+    const modelType = modelForm.modelType;
+    const parameters =
+      modelType === 'EMBEDDING'
+        ? {
+            dimensions: toNumber(modelForm.dimensions),
+            batchSize: toNumber(modelForm.batchSize, 16),
+            encodingFormat: (modelForm.encodingFormat === 'base64' ? 'base64' : 'float') as 'float' | 'base64',
+            timeoutMs: toNumber(modelForm.timeoutMs, 30000),
+          }
+        : {
+            temperature: toNumber(modelForm.temperature, provider?.type === 'DEEPSEEK' ? 1 : 0.2),
+            topP: toNumber(modelForm.topP, 1),
+            topK: provider?.type === 'QWEN' ? toNumber(modelForm.topK, 0) : undefined,
+            maxOutputTokens: toNumber(modelForm.maxOutputTokens, 4096),
+            stream: toBoolean(modelForm.stream),
+            jsonMode: toBoolean(modelForm.jsonMode),
+            toolCalling: toBoolean(modelForm.toolCalling),
+            thinkingEnabled: toBoolean(modelForm.thinkingEnabled),
+            reasoningEffort: toReasoningEffort(modelForm.reasoningEffort),
+            timeoutMs: toNumber(modelForm.timeoutMs, 60000),
+          };
+    const capabilities =
+      modelType === 'EMBEDDING'
+        ? { embedding: true }
+        : {
+            stream: toBoolean(modelForm.stream),
+            jsonMode: toBoolean(modelForm.jsonMode),
+            toolCalling: toBoolean(modelForm.toolCalling),
+            reasoning: toBoolean(modelForm.thinkingEnabled),
+          };
+    const limits =
+      modelType === 'EMBEDDING'
+        ? {
+            embeddingDimensions: toNumber(modelForm.dimensions),
+            maxInputTokens: 8192,
+          }
+        : {
+            contextWindow: toNumber(modelForm.contextWindow, 128000),
+            maxOutputTokens: toNumber(modelForm.maxOutputTokens, 4096),
+          };
+    return {
+      modelName: modelForm.name.trim(),
+      providerCode: modelForm.provider,
+      modelId: modelForm.modelId.trim(),
+      modelType,
+      protocol: resolveProtocol(provider?.type ?? 'OPENAI_COMPATIBLE', modelType),
+      parameters,
+      capabilities,
+      limits,
+    };
   };
 
   const saveModel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!validateModelForm()) return;
     const provider = providersByCode.get(modelForm.provider);
-    if (!provider) {
-      notify('请选择有效供应商');
-      return;
-    }
-    if (provider.status !== '启用') {
+    if (!provider || provider.status !== '启用') {
       notify('请选择启用状态的供应商');
       return;
     }
-    const payload = {
-      modelCode: modelForm.code.trim(),
-      modelName: modelForm.name.trim(),
-      providerCode: modelForm.provider,
-      modelId: modelForm.modelId.trim(),
-      purpose: modelForm.purpose,
-      contextWindow: toNumber(modelForm.context, 0),
-      temperature: toNumber(modelForm.temperature, 0),
-    };
+    const payload = buildModelPayload();
     try {
-      if (modelDialogMode === 'edit') {
-        await postAi('/provider/model/update.do', {
-          modelCode: modelForm.code,
-          data: {
-            modelName: payload.modelName,
-            providerCode: payload.providerCode,
-            modelId: payload.modelId,
-            purpose: payload.purpose,
-            contextWindow: payload.contextWindow,
-            temperature: payload.temperature,
-          },
-        });
-      } else {
-        await postAi('/provider/model/create.do', payload);
-      }
+      const result =
+        modelDialogMode === 'edit'
+          ? await postAi('/provider/model/update.do', { id: editingModelId, data: payload })
+          : await postAi('/provider/model/create.do', payload);
+      const saved = readSavedModel(result);
+      const id = String(saved.id ?? (modelDialogMode === 'edit' ? editingModelId : Date.now()));
       const nextModel: ModelCenterRecord = {
-        id: payload.modelCode,
-        code: payload.modelCode,
-        name: payload.modelName,
-        provider: provider.code,
+        id,
+        name: String(saved.modelName ?? payload.modelName),
+        provider: String(saved.providerCode ?? provider.code),
         providerName: provider.name,
         providerType: provider.type,
-        modelId: payload.modelId,
-        purpose: payload.purpose,
-        context: String(payload.contextWindow),
-        temperature: String(payload.temperature),
-        status: models.find((model) => model.code === payload.modelCode)?.status ?? '启用',
+        modelId: String(saved.modelId ?? payload.modelId),
+        modelType: String(saved.modelType ?? payload.modelType) as ModelType,
+        protocol: String(saved.protocol ?? payload.protocol) as ModelProtocol,
+        parameters: (saved.parameters as ModelParameters | undefined) ?? payload.parameters,
+        capabilities: (saved.capabilities as ModelCapabilities | undefined) ?? payload.capabilities,
+        limits: (saved.limits as ModelLimits | undefined) ?? payload.limits,
+        status: toStatusLabel(saved.enabled !== false),
       };
-      setModels((current) =>
-        modelDialogMode === 'edit'
-          ? current.map((model) => (model.code === nextModel.code ? nextModel : model))
-          : [nextModel, ...current],
-      );
+      setModels((current) => (modelDialogMode === 'edit' ? current.map((model) => (model.id === nextModel.id ? nextModel : model)) : [nextModel, ...current]));
       notify(modelDialogMode === 'edit' ? '模型已更新' : '模型已添加');
       closeModelDialog();
     } catch (error) {
@@ -375,51 +528,29 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
 
   const saveProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!validateProviderForm()) return;
     const payload = {
       providerName: providerForm.name.trim(),
       providerType: providerForm.type,
       baseUrl: providerForm.baseUrl.trim(),
       apiKey: providerForm.apiKey.trim(),
-      defaultModel: providerForm.defaultModel.trim() || PROVIDER_TYPE_META[providerForm.type].modelExample,
-      enabled: providerFormMode === 'create' ? true : providerForm.enabled,
+      enabled: true,
     };
     try {
-      let savedProvider: Partial<ProviderRecordResponse> = {};
-      if (providerFormMode === 'edit') {
-        if (!editingProviderCode) {
-          notify('供应商不存在，请刷新后重试');
-          return;
-        }
-        const result = (await postAi('/provider/update.do', {
-          providerCode: editingProviderCode,
-          data: {
-            providerName: payload.providerName,
-            providerType: payload.providerType,
-            baseUrl: payload.baseUrl,
-            apiKey: payload.apiKey,
-            defaultModel: payload.defaultModel,
-            enabled: payload.enabled,
-          },
-        })) as ProviderSaveResponse;
-        savedProvider = readSavedProvider(result);
-      } else {
-        const result = (await postAi('/provider/create.do', payload)) as ProviderSaveResponse;
-        savedProvider = readSavedProvider(result);
-      }
-      const nextProviderCode =
-        savedProvider.providerCode ||
-        (providerFormMode === 'edit'
-          ? editingProviderCode
-          : buildLocalProviderCode(payload.providerName, payload.providerType, providers));
+      const result =
+        providerFormMode === 'edit'
+          ? await postAi('/provider/update.do', { providerCode: editingProviderCode, data: payload })
+          : await postAi('/provider/create.do', payload);
+      const savedProvider = readSavedProvider(result);
+      const generatedCode = providerFormMode === 'create' ? buildLocalProviderCode(payload.providerName, payload.providerType, providers) : editingProviderCode;
       const nextProvider: ModelProviderRecord = {
-        id: nextProviderCode,
-        code: nextProviderCode,
-        name: savedProvider.providerName ?? payload.providerName,
-        type: savedProvider.providerType ?? payload.providerType,
-        baseUrl: savedProvider.baseUrl ?? payload.baseUrl,
-        apiKey: savedProvider.apiKey ?? payload.apiKey,
-        defaultModel: savedProvider.defaultModel ?? payload.defaultModel,
-        status: toStatusLabel(savedProvider.enabled ?? payload.enabled),
+        id: String(savedProvider.providerCode ?? generatedCode),
+        code: String(savedProvider.providerCode ?? generatedCode),
+        name: String(savedProvider.providerName ?? payload.providerName),
+        type: (savedProvider.providerType ?? payload.providerType) as ProviderType,
+        baseUrl: String(savedProvider.baseUrl ?? payload.baseUrl),
+        apiKey: String(savedProvider.apiKey ?? payload.apiKey),
+        status: toStatusLabel(savedProvider.enabled !== false),
       };
       setProviders((current) =>
         providerFormMode === 'edit'
@@ -428,19 +559,10 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       );
       setModels((current) =>
         current.map((model) =>
-          model.provider === nextProvider.code
-            ? { ...model, providerName: nextProvider.name, providerType: nextProvider.type }
-            : model,
+          model.provider === nextProvider.code ? { ...model, providerName: nextProvider.name, providerType: nextProvider.type } : model,
         ),
       );
-      setModelForm((current) => ({
-        ...current,
-        provider: current.provider || (nextProvider.status === '启用' ? nextProvider.code : ''),
-      }));
-      notify(providerFormMode === 'edit' ? '供应商配置已更新' : '供应商已添加，可在新增模型时选择');
-      setProviderFormMode('create');
-      setProviderForm(buildProviderForm());
-      setEditingProviderCode('');
+      notify(providerFormMode === 'edit' ? '供应商已更新' : '供应商已添加');
       setProviderPanelOpen(false);
     } catch (error) {
       notify(error instanceof Error ? error.message : '供应商保存失败');
@@ -450,13 +572,11 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const toggleModelStatus = async (model: ModelCenterRecord) => {
     const enabled = model.status !== '启用';
     try {
-      await postAi('/provider/model/change-status.do', { modelCode: model.code, enabled });
-      setModels((current) =>
-        current.map((item) => (item.code === model.code ? { ...item, status: toStatusLabel(enabled) } : item)),
-      );
+      await postAi('/provider/model/change-status.do', { id: model.id, enabled });
+      setModels((current) => current.map((item) => (item.id === model.id ? { ...item, status: toStatusLabel(enabled) } : item)));
       notify(enabled ? '模型已启用' : '模型已停用');
     } catch (error) {
-      notify(error instanceof Error ? error.message : '模型状态更新失败');
+      notify(error instanceof Error ? error.message : '状态更新失败');
     }
   };
 
@@ -464,38 +584,33 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     const enabled = provider.status !== '启用';
     try {
       await postAi('/provider/change-status.do', { providerCode: provider.code, enabled });
-      setProviders((current) =>
-        current.map((item) => (item.code === provider.code ? { ...item, status: toStatusLabel(enabled) } : item)),
-      );
+      setProviders((current) => current.map((item) => (item.code === provider.code ? { ...item, status: toStatusLabel(enabled) } : item)));
       notify(enabled ? '供应商已启用' : '供应商已停用');
     } catch (error) {
-      notify(error instanceof Error ? error.message : '供应商状态更新失败');
+      notify(error instanceof Error ? error.message : '状态更新失败');
     }
   };
 
   const testModel = async (model: ModelCenterRecord) => {
     try {
-      const result = await postAi('/provider/model/test-connection.do', { modelCode: model.code });
-      notify(result.message ?? result.data?.message ?? '模型连接配置可用');
+      const result = await postAi('/provider/model/test-connection.do', { id: model.id });
+      notify(result.message ?? result.data?.message ?? '模型测试完成');
     } catch (error) {
-      notify(error instanceof Error ? error.message : '模型连接测试失败');
+      notify(error instanceof Error ? error.message : '模型测试失败');
     }
   };
 
   const testProvider = async (provider: ModelProviderRecord) => {
     try {
       const result = await postAi('/provider/test-connection.do', { providerCode: provider.code });
-      notify(result.message ?? result.data?.message ?? '供应商连接配置可用');
+      notify(result.message ?? result.data?.message ?? '供应商测试完成');
     } catch (error) {
-      notify(error instanceof Error ? error.message : '供应商连接测试失败');
+      notify(error instanceof Error ? error.message : '供应商测试失败');
     }
   };
 
   const testProviderForm = async () => {
-    if (!providerForm.baseUrl.trim() || !providerForm.apiKey.trim()) {
-      notify('请先填写接口地址和 API Key');
-      return;
-    }
+    if (!validateProviderForm()) return;
     setProviderTesting(true);
     try {
       const result = await postAi('/provider/test-config.do', {
@@ -503,9 +618,9 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
         baseUrl: providerForm.baseUrl.trim(),
         apiKey: providerForm.apiKey.trim(),
       });
-      notify(result.message ?? result.data?.message ?? '供应商连接测试完成');
+      notify(result.message ?? result.data?.message ?? '供应商测试完成');
     } catch (error) {
-      notify(error instanceof Error ? error.message : '供应商连接测试失败');
+      notify(error instanceof Error ? error.message : '供应商测试失败');
     } finally {
       setProviderTesting(false);
     }
@@ -514,10 +629,10 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const deleteModel = async () => {
     if (!pendingModelDelete) return;
     try {
-      await postAi('/provider/model/delete.do', { modelCode: pendingModelDelete.code });
-      setModels((current) => current.filter((model) => model.code !== pendingModelDelete.code));
-      setPendingModelDelete(null);
+      await postAi('/provider/model/delete.do', { id: pendingModelDelete.id });
+      setModels((current) => current.filter((model) => model.id !== pendingModelDelete.id));
       notify('模型已删除');
+      setPendingModelDelete(null);
     } catch (error) {
       notify(error instanceof Error ? error.message : '模型删除失败');
     }
@@ -525,36 +640,24 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
 
   const deleteProvider = async () => {
     if (!pendingProviderDelete) return;
-    if (models.some((model) => model.provider === pendingProviderDelete.code)) {
-      notify('该供应商下仍有模型，请先迁移或删除相关模型');
-      setPendingProviderDelete(null);
-      return;
-    }
     try {
       await postAi('/provider/delete.do', { providerCode: pendingProviderDelete.code });
       setProviders((current) => current.filter((provider) => provider.code !== pendingProviderDelete.code));
-      setPendingProviderDelete(null);
       notify('供应商已删除');
+      setPendingProviderDelete(null);
     } catch (error) {
       notify(error instanceof Error ? error.message : '供应商删除失败');
     }
   };
 
-  const providerMeta = PROVIDER_TYPE_META[providerForm.type];
-  const selectedModelProvider = providersByCode.get(modelForm.provider);
-  const modelProviderOptions =
-    modelDialogMode === 'edit'
-      ? providers.filter((provider) => provider.status === '启用' || provider.code === modelForm.provider)
-      : enabledProviderOptions;
-
   return (
-    <section className="model-center-page" aria-label="模型中心">
-      <header className="console-heading model-center-heading">
+    <section className="model-center-page">
+      <header className="model-center-heading">
         <div>
           <h1>模型中心</h1>
-          <p>以模型为主维护评估、执行和 Embedding 能力；供应商仅作为可复用的全局凭证与端点配置。</p>
+          <p>以模型资产为主维护 LLM 与 Embedding 能力；供应商仅作为可复用的全局凭证与端点配置。</p>
         </div>
-        <span className="console-soft-badge">
+        <span className="model-center-summary">
           {enabledModels} 个模型启用 · {enabledProviders} 个供应商启用
         </span>
       </header>
@@ -565,25 +668,15 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
         </div>
       ) : null}
 
+      {providers.length === 0 ? <div className="console-message">请先添加或启用至少一个供应商，再添加模型。</div> : null}
+
       <div className="preset-admin-tabs model-center-tabs" role="tablist" aria-label="模型中心管理">
-        <button
-          aria-selected={activeTab === 'models'}
-          className={activeTab === 'models' ? 'is-active' : ''}
-          role="tab"
-          type="button"
-          onClick={() => setActiveTab('models')}
-        >
+        <button aria-selected={activeTab === 'models'} className={activeTab === 'models' ? 'is-active' : ''} role="tab" type="button" onClick={() => setActiveTab('models')}>
           <Boxes size={14} strokeWidth={1.9} aria-hidden="true" />
           模型列表
           <span>{models.length}</span>
         </button>
-        <button
-          aria-selected={activeTab === 'providers'}
-          className={activeTab === 'providers' ? 'is-active' : ''}
-          role="tab"
-          type="button"
-          onClick={() => setActiveTab('providers')}
-        >
+        <button aria-selected={activeTab === 'providers'} className={activeTab === 'providers' ? 'is-active' : ''} role="tab" type="button" onClick={() => setActiveTab('providers')}>
           <ServerCog size={14} strokeWidth={1.9} aria-hidden="true" />
           供应商列表
           <span>{providers.length}</span>
@@ -591,119 +684,92 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       </div>
 
       {activeTab === 'models' ? (
-      <div className="model-center-grid" role="tabpanel" aria-label="模型列表">
-        <section className="model-center-surface" aria-label="模型列表">
-          <div className="model-center-toolbar">
-            <TextInput
-              aria-label="搜索模型"
-              className="console-search"
-              prefix={<Search size={15} strokeWidth={1.9} aria-hidden="true" />}
-              value={query}
-              placeholder="搜索模型名称、模型 ID、供应商或用途"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <div className="model-filter-group" aria-label="模型筛选">
-              <ConsoleSelect
-                ariaLabel="按供应商筛选"
-                value={providerFilter}
-                onValueChange={setProviderFilter}
-                options={[
-                  { label: '全部供应商', value: '全部' },
-                  ...providers.map((provider) => ({ label: provider.name, value: provider.code })),
-                ]}
-              />
-              <ConsoleSelect
-                ariaLabel="按状态筛选"
-                value={statusFilter}
-                onValueChange={(value) => setStatusFilter(value as '全部' | StatusLabel)}
-                options={[
-                  { label: '全部状态', value: '全部' },
-                  { label: '启用', value: '启用' },
-                  { label: '停用', value: '停用' },
-                ]}
-              />
+        <div className="model-center-grid" role="tabpanel" aria-label="模型列表">
+          <section className="model-center-surface" aria-label="模型列表">
+            <div className="model-center-toolbar">
+              <TextInput aria-label="搜索模型" className="console-search" prefix={<Search size={15} strokeWidth={1.9} aria-hidden="true" />} value={query} placeholder="搜索模型名称、模型 ID、供应商或协议" onChange={(event) => setQuery(event.target.value)} />
+              <div className="model-filter-group" aria-label="模型筛选">
+                <ConsoleSelect ariaLabel="按模型能力筛选" value={modelTypeFilter} onValueChange={(value) => setModelTypeFilter(value as '全部' | ModelType)} options={[{ label: '全部能力', value: '全部' }, ...Object.entries(MODEL_TYPE_META).map(([value, meta]) => ({ label: meta.label, value }))]} />
+                <ConsoleSelect ariaLabel="按供应商筛选" value={providerFilter} onValueChange={setProviderFilter} options={[{ label: '全部供应商', value: '全部' }, ...providers.map((provider) => ({ label: provider.name, value: provider.code }))]} />
+                <ConsoleSelect ariaLabel="按状态筛选" value={statusFilter} onValueChange={(value) => setStatusFilter(value as '全部' | StatusLabel)} options={[{ label: '全部状态', value: '全部' }, { label: '启用', value: '启用' }, { label: '停用', value: '停用' }]} />
+              </div>
+              <button className="console-button console-button-primary" type="button" onClick={() => openModelDialog('create')}>
+                <Plus size={14} strokeWidth={2} aria-hidden="true" />
+                添加模型
+              </button>
             </div>
-            <button className="console-button console-button-primary" type="button" onClick={() => openModelDialog('create')}>
-              <Plus size={14} strokeWidth={2} aria-hidden="true" />
-              添加模型
-            </button>
-          </div>
 
-          <div className="model-table-wrap">
-            <table className="console-table model-table">
-              <thead>
-                <tr>
-                  <th>模型</th>
-                  <th>供应商</th>
-                  <th>模型 ID</th>
-                  <th>用途</th>
-                  <th>上下文</th>
-                  <th>温度</th>
-                  <th>状态</th>
-                  <th className="console-action-cell">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleModels.map((model) => {
-                  const provider = providersByCode.get(model.provider);
-                  return (
-                    <tr key={model.code}>
-                      <td>
-                        <strong className="model-name-cell">{model.name}</strong>
-                        <span>{model.code}</span>
-                      </td>
-                      <td>
-                        <span className="model-provider-badge">{provider?.name ?? model.providerName}</span>
-                        <small>{PROVIDER_TYPE_META[provider?.type ?? model.providerType].label}</small>
-                      </td>
-                      <td>{model.modelId}</td>
-                      <td>{PURPOSE_META[model.purpose].label}</td>
-                      <td>{Number(model.context).toLocaleString()}</td>
-                      <td>{model.temperature}</td>
-                      <td>
-                        <span className={`console-status-pill console-status-${model.status}`}>{model.status}</span>
-                      </td>
-                      <td className="console-row-actions">
-                        <button type="button" onClick={() => openModelDialog('edit', model)}>
-                          <Pencil size={13} strokeWidth={1.9} aria-hidden="true" />
-                          编辑
-                        </button>
-                        <PopoverConfirm
-                          aria-label="模型状态变更确认"
-                          description={`该模型会被${model.status === '启用' ? '停用' : '启用'}，历史执行记录不会变化。`}
-                          onConfirm={() => void toggleModelStatus(model)}
-                          title={`确认${model.status === '启用' ? '停用' : '启用'}这个模型？`}
-                        >
-                          <button type="button">
-                            <ShieldCheck size={13} strokeWidth={1.9} aria-hidden="true" />
-                            {model.status === '启用' ? '停用' : '启用'}
-                          </button>
-                        </PopoverConfirm>
-                        <button type="button" onClick={() => testModel(model)}>
-                          <FlaskConical size={13} strokeWidth={1.9} aria-hidden="true" />
-                          测试连接
-                        </button>
-                        <button className="is-danger" type="button" onClick={() => setPendingModelDelete(model)}>
-                          <Trash2 size={13} strokeWidth={1.9} aria-hidden="true" />
-                          删除
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {visibleModels.length === 0 ? (
+            <div className="model-table-wrap">
+              <table className="console-table model-table">
+                <thead>
                   <tr>
-                    <td className="console-empty" colSpan={8}>
-                      <strong>{models.length === 0 ? '暂无模型' : '暂无匹配模型'}</strong>
-                      <p>{models.length === 0 ? '添加第一个评估、执行或 Embedding 模型。' : '调整筛选条件或添加新的模型配置。'}</p>
-                    </td>
+                    <th>模型</th>
+                    <th>能力</th>
+                    <th>供应商</th>
+                    <th>模型 ID</th>
+                    <th>协议</th>
+                    <th>默认参数</th>
+                    <th>状态</th>
+                    <th className="console-action-cell">操作</th>
                   </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
+                </thead>
+                <tbody>
+                  {visibleModels.map((model) => {
+                    const provider = providersByCode.get(model.provider);
+                    return (
+                      <tr key={model.id}>
+                        <td>
+                          <strong className="model-name-cell">{model.name}</strong>
+                          <span>{model.id}</span>
+                        </td>
+                        <td>{MODEL_TYPE_META[model.modelType].label}</td>
+                        <td>
+                          <span className="model-provider-badge">{provider?.name ?? model.providerName}</span>
+                          <small>{PROVIDER_TYPE_META[provider?.type ?? model.providerType].label}</small>
+                        </td>
+                        <td>{model.modelId}</td>
+                        <td>{PROTOCOL_META[model.protocol]}</td>
+                        <td>{model.modelType === 'EMBEDDING' ? `${model.parameters.dimensions ?? '-'} 维 / batch ${model.parameters.batchSize ?? '-'}` : `${model.limits.contextWindow?.toLocaleString() ?? '-'} ctx / temp ${model.parameters.temperature ?? '-'}`}</td>
+                        <td>
+                          <span className={`console-status-pill console-status-${model.status}`}>{model.status}</span>
+                        </td>
+                        <td className="console-row-actions">
+                          <button type="button" onClick={() => openModelDialog('edit', model)}>
+                            <Pencil size={13} strokeWidth={1.9} aria-hidden="true" />
+                            编辑
+                          </button>
+                          <PopoverConfirm aria-label="模型状态变更确认" description={`该模型会被${model.status === '启用' ? '停用' : '启用'}，历史执行记录不会变化。`} onConfirm={() => void toggleModelStatus(model)} title={`确认${model.status === '启用' ? '停用' : '启用'}这个模型？`}>
+                            <button type="button">
+                              <ShieldCheck size={13} strokeWidth={1.9} aria-hidden="true" />
+                              {model.status === '启用' ? '停用' : '启用'}
+                            </button>
+                          </PopoverConfirm>
+                          <button type="button" onClick={() => testModel(model)}>
+                            <FlaskConical size={13} strokeWidth={1.9} aria-hidden="true" />
+                            测试连接
+                          </button>
+                          <button className="is-danger" type="button" onClick={() => setPendingModelDelete(model)}>
+                            <Trash2 size={13} strokeWidth={1.9} aria-hidden="true" />
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {visibleModels.length === 0 ? (
+                <div className="model-empty-state">
+                  <strong>{models.length === 0 ? '暂无模型' : '暂无匹配模型'}</strong>
+                  <span>{models.length === 0 ? '添加第一个 LLM 或 Embedding 模型，后续测试计划再引用这些模型。' : '调整筛选条件或添加新的模型配置。'}</span>
+                  <button className="console-button" type="button" onClick={() => openModelDialog('create')}>
+                    添加模型
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </div>
       ) : null}
 
       {activeTab === 'providers' ? (
@@ -745,12 +811,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                         <Pencil size={13} strokeWidth={1.9} aria-hidden="true" />
                         编辑
                       </button>
-                      <PopoverConfirm
-                        aria-label="供应商状态变更确认"
-                        description={`该供应商会被${provider.status === '启用' ? '停用' : '启用'}，已创建模型仍会保留配置。`}
-                        onConfirm={() => void toggleProviderStatus(provider)}
-                        title={`确认${provider.status === '启用' ? '停用' : '启用'}这个供应商？`}
-                      >
+                      <PopoverConfirm aria-label="供应商状态变更确认" description={`该供应商会被${provider.status === '启用' ? '停用' : '启用'}，已创建模型仍会保留配置。`} onConfirm={() => void toggleProviderStatus(provider)} title={`确认${provider.status === '启用' ? '停用' : '启用'}这个供应商？`}>
                         <button type="button">
                           <ShieldCheck size={13} strokeWidth={1.9} aria-hidden="true" />
                           {provider.status === '启用' ? '停用' : '启用'}
@@ -767,222 +828,112 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                     </td>
                   </tr>
                 ))}
-                {providers.length === 0 ? (
-                  <tr>
-                    <td className="console-empty" colSpan={5}>
-                      <strong>暂无供应商</strong>
-                      <p>先添加 OpenAI 兼容、通义千问或 DeepSeek 供应商，再绑定模型。</p>
-                    </td>
-                  </tr>
-                ) : null}
               </tbody>
             </table>
+            {providers.length === 0 ? (
+              <div className="model-empty-state">
+                <strong>暂无供应商</strong>
+                <span>先添加 OpenAI 兼容、通义千问或 DeepSeek 供应商，再绑定模型。</span>
+                <button className="console-button" type="button" onClick={() => openProviderPanel('create')}>
+                  添加供应商
+                </button>
+              </div>
+            ) : null}
           </div>
         </section>
       ) : null}
 
       <DialogRoot open={Boolean(modelDialogMode)} onOpenChange={(open) => !open && closeModelDialog()}>
         {modelDialogMode ? (
-          <DialogContent
-            className="model-editor-modal"
-            description={modelForm.name || '绑定供应商侧模型 ID、用途和默认调用参数。'}
-            title={modelDialogMode === 'create' ? '添加模型' : '编辑模型'}
-          >
-          <form className="console-dialog-form" aria-label={modelDialogMode === 'create' ? '添加模型表单' : '编辑模型表单'} onSubmit={saveModel}>
-            <div className="console-form-grid">
-              <TextInput
-                className="console-form-field"
-                label="模型编码"
-                value={modelForm.code}
-                disabled={modelDialogMode === 'edit'}
-                required
-                placeholder="如 deepseek-chat-judge"
-                onChange={(event) => setModelForm((current) => ({ ...current, code: event.target.value }))}
-              />
-              <TextInput
-                className="console-form-field"
-                label="模型名称"
-                value={modelForm.name}
-                required
-                placeholder="如 DeepSeek 评估模型"
-                onChange={(event) => setModelForm((current) => ({ ...current, name: event.target.value }))}
-              />
-              <label className="console-form-field">
-                <span>供应商</span>
-                <ConsoleSelect
-                  ariaLabel="供应商"
-                  value={modelForm.provider}
-                  onValueChange={(value) => setModelForm((current) => ({ ...current, provider: value }))}
-                  placeholder="请选择供应商"
-                  options={modelProviderOptions.map((provider) => ({
-                    label: `${provider.name} (${PROVIDER_TYPE_META[provider.type].label}${provider.status === '启用' ? '' : ' / 停用'})`,
-                    value: provider.code,
-                  }))}
-                />
-              </label>
-              <TextInput
-                className="console-form-field"
-                label="供应商模型 ID"
-                value={modelForm.modelId}
-                required
-                placeholder={selectedModelProvider?.defaultModel || '供应商侧模型 slug'}
-                onChange={(event) => setModelForm((current) => ({ ...current, modelId: event.target.value }))}
-              />
-              <label className="console-form-field">
-                <span>用途</span>
-                <ConsoleSelect
-                  ariaLabel="用途"
-                  value={modelForm.purpose}
-                  onValueChange={(value) => setModelForm((current) => ({ ...current, purpose: value as ModelPurpose }))}
-                  options={(Object.keys(PURPOSE_META) as ModelPurpose[]).map((purpose) => ({ label: PURPOSE_META[purpose].label, value: purpose }))}
-                />
-              </label>
-              <TextInput
-                className="console-form-field"
-                label="上下文窗口"
-                value={modelForm.context}
-                inputMode="numeric"
-                onChange={(event) => setModelForm((current) => ({ ...current, context: event.target.value }))}
-              />
-              <TextInput
-                className="console-form-field"
-                label="默认温度"
-                value={modelForm.temperature}
-                inputMode="decimal"
-                onChange={(event) => setModelForm((current) => ({ ...current, temperature: event.target.value }))}
-              />
-              <div className="model-config-hint">
-                <span>配置提示</span>
-                <p>{selectedModelProvider ? PROVIDER_TYPE_META[selectedModelProvider.type].configHint : '请先选择供应商。'}</p>
+          <DialogContent className="model-editor-modal" description={modelForm.name || '绑定供应商侧模型 ID、能力类型和默认调用参数。'} title={modelDialogMode === 'create' ? '添加模型' : '编辑模型'}>
+            <form className="console-dialog-form" aria-label={modelDialogMode === 'create' ? '添加模型表单' : '编辑模型表单'} noValidate onSubmit={saveModel}>
+              <div className="console-form-grid">
+                <TextInput className="console-form-field" label="模型名称" value={modelForm.name} error={modelErrors.name} required placeholder="如 Qwen3.6-Plus" onChange={(event) => updateModelField('name', event.target.value)} />
+                <ConsoleSelect className="console-form-field" ariaLabel="模型能力" label="模型能力" required value={modelForm.modelType} error={modelErrors.modelType} onValueChange={(value) => updateModelField('modelType', value as ModelType)} options={(Object.keys(MODEL_TYPE_META) as ModelType[]).map((type) => ({ label: MODEL_TYPE_META[type].label, value: type }))} />
+                <ConsoleSelect className="console-form-field" ariaLabel="供应商" label="供应商" required value={modelForm.provider} error={modelErrors.provider} onValueChange={(value) => updateModelField('provider', value)} placeholder="请选择供应商" options={enabledProviderOptions.map((provider) => ({ label: `${provider.name} (${PROVIDER_TYPE_META[provider.type].label})`, value: provider.code }))} />
+                <TextInput className="console-form-field" label="供应商模型 ID" value={modelForm.modelId} error={modelErrors.modelId} required placeholder={selectedModelProvider ? (modelForm.modelType === 'EMBEDDING' ? (PROVIDER_TYPE_META[selectedModelProvider.type].embeddingExample ?? '') : PROVIDER_TYPE_META[selectedModelProvider.type].llmExample) : '供应商侧模型 slug'} onChange={(event) => updateModelField('modelId', event.target.value)} />
+                {modelForm.modelType === 'LLM' ? (
+                  <>
+                    <TextInput className="console-form-field" label="上下文窗口" value={modelForm.contextWindow} error={modelErrors.contextWindow} required inputMode="numeric" onChange={(event) => updateModelField('contextWindow', event.target.value)} />
+                    <TextInput className="console-form-field" label="最大输出 Token" value={modelForm.maxOutputTokens} error={modelErrors.maxOutputTokens} required inputMode="numeric" onChange={(event) => updateModelField('maxOutputTokens', event.target.value)} />
+                    <TextInput className="console-form-field" label="温度 temperature" value={modelForm.temperature} inputMode="decimal" onChange={(event) => updateModelField('temperature', event.target.value)} />
+                    <TextInput className="console-form-field" label="Top P" value={modelForm.topP} inputMode="decimal" onChange={(event) => updateModelField('topP', event.target.value)} />
+                    {selectedModelProvider?.type === 'QWEN' ? <TextInput className="console-form-field" label="Top K" value={modelForm.topK} inputMode="numeric" onChange={(event) => updateModelField('topK', event.target.value)} /> : null}
+                    <ConsoleSelect className="console-form-field" ariaLabel="流式响应" label="流式响应" value={modelForm.stream} onValueChange={(value) => updateModelField('stream', value)} options={BOOLEAN_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="JSON 输出" label="JSON 输出" value={modelForm.jsonMode} onValueChange={(value) => updateModelField('jsonMode', value)} options={BOOLEAN_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="工具调用" label="工具调用" value={modelForm.toolCalling} onValueChange={(value) => updateModelField('toolCalling', value)} options={BOOLEAN_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="推理模式" label="推理模式" value={modelForm.thinkingEnabled} onValueChange={(value) => updateModelField('thinkingEnabled', value)} options={BOOLEAN_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="推理强度" label="推理强度" value={modelForm.reasoningEffort || 'high'} onValueChange={(value) => updateModelField('reasoningEffort', value)} options={['low', 'medium', 'high', 'max'].map((item) => ({ label: item, value: item }))} />
+                    <TextInput className="console-form-field" label="超时毫秒" value={modelForm.timeoutMs} inputMode="numeric" onChange={(event) => updateModelField('timeoutMs', event.target.value)} />
+                  </>
+                ) : (
+                  <>
+                    <TextInput className="console-form-field" label="输出维度" value={modelForm.dimensions} error={modelErrors.dimensions} inputMode="numeric" placeholder="如 1024" onChange={(event) => updateModelField('dimensions', event.target.value)} />
+                    <TextInput className="console-form-field" label="批量大小" value={modelForm.batchSize} inputMode="numeric" placeholder="16" onChange={(event) => updateModelField('batchSize', event.target.value)} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="编码格式" label="编码格式" value={modelForm.encodingFormat} onValueChange={(value) => updateModelField('encodingFormat', value)} options={[{ label: 'float', value: 'float' }, { label: 'base64', value: 'base64' }]} />
+                    <TextInput className="console-form-field" label="超时毫秒" value={modelForm.timeoutMs} inputMode="numeric" onChange={(event) => updateModelField('timeoutMs', event.target.value)} />
+                  </>
+                )}
+                <div className="model-config-hint">
+                  <span>配置提示</span>
+                  <p>{selectedModelProvider ? PROVIDER_TYPE_META[selectedModelProvider.type].configHint : '请先选择供应商。'} 当前协议：{selectedModelProvider ? PROTOCOL_META[resolveProtocol(selectedModelProvider.type, modelForm.modelType)] : '-'}</p>
+                </div>
               </div>
-            </div>
-            <div className="console-modal-actions">
-              <button className="console-button" type="button" onClick={closeModelDialog}>
-                取消
-              </button>
-              <button className="console-button console-button-primary" type="submit">
-                <Check size={14} strokeWidth={2} aria-hidden="true" />
-                保存模型
-              </button>
-            </div>
-          </form>
+              <div className="console-modal-actions">
+                <button className="console-button" type="button" onClick={closeModelDialog}>
+                  取消
+                </button>
+                <button className="console-button console-button-primary" type="submit">
+                  <Check size={14} strokeWidth={2} aria-hidden="true" />
+                  保存模型
+                </button>
+              </div>
+            </form>
           </DialogContent>
         ) : null}
       </DialogRoot>
 
       <DialogRoot open={providerPanelOpen} onOpenChange={setProviderPanelOpen}>
         {providerPanelOpen ? (
-          <DialogContent
-            className="provider-config-modal"
-            description={providerForm.name || '维护全局供应商凭证与端点，模型从这里复用配置。'}
-            title={providerFormMode === 'create' ? '添加供应商' : '编辑供应商'}
-          >
-          <form className="console-dialog-form" aria-label={providerFormMode === 'create' ? '添加供应商表单' : '编辑供应商表单'} onSubmit={saveProvider}>
-            <div className="provider-config-grid">
-              <TextInput
-                className="console-form-field"
-                label="供应商名称"
-                value={providerForm.name}
-                required
-                placeholder="如 DeepSeek 生产环境"
-                onChange={(event) => setProviderForm((current) => ({ ...current, name: event.target.value }))}
-              />
-              <label className="console-form-field">
-                <span>供应商类型</span>
-                <ConsoleSelect
-                  ariaLabel="供应商类型"
-                  value={providerForm.type}
-                  onValueChange={(value) => updateProviderType(value as ProviderType)}
-                  options={(Object.keys(PROVIDER_TYPE_META) as ProviderType[]).map((type) => ({ label: PROVIDER_TYPE_META[type].label, value: type }))}
-                />
-              </label>
-              <TextInput
-                className="console-form-field is-wide"
-                label="接口地址"
-                value={providerForm.baseUrl}
-                required
-                placeholder={providerMeta.defaultBaseUrl}
-                onChange={(event) => setProviderForm((current) => ({ ...current, baseUrl: event.target.value }))}
-              />
-              <TextInput
-                className="console-form-field is-wide"
-                label="API Key"
-                value={providerForm.apiKey}
-                required
-                type="password"
-                placeholder="sk-..."
-                onChange={(event) => setProviderForm((current) => ({ ...current, apiKey: event.target.value }))}
-              />
-              <div className="model-config-hint is-wide">
-                <span>供应商参数</span>
-                <p>{providerMeta.configHint}</p>
+          <DialogContent className="provider-config-modal" description={providerForm.name || '维护全局供应商凭证与端点，模型从这里复用配置。'} title={providerFormMode === 'create' ? '添加供应商' : '编辑供应商'}>
+            <form className="console-dialog-form" aria-label={providerFormMode === 'create' ? '添加供应商表单' : '编辑供应商表单'} noValidate onSubmit={saveProvider}>
+              <div className="provider-config-grid">
+                <TextInput className="console-form-field" label="供应商名称" value={providerForm.name} error={providerErrors.name} required placeholder="如 DeepSeek 生产环境" onChange={(event) => updateProviderField('name', event.target.value)} />
+                <ConsoleSelect className="console-form-field" ariaLabel="供应商类型" label="供应商类型" required value={providerForm.type} error={providerErrors.type} onValueChange={(value) => updateProviderType(value as ProviderType)} options={(Object.keys(PROVIDER_TYPE_META) as ProviderType[]).map((type) => ({ label: PROVIDER_TYPE_META[type].label, value: type }))} />
+                <TextInput className="console-form-field is-wide" label="接口地址" value={providerForm.baseUrl} error={providerErrors.baseUrl} required placeholder={providerMeta.defaultBaseUrl} onChange={(event) => updateProviderField('baseUrl', event.target.value)} />
+                <TextInput className="console-form-field is-wide" label="API Key" value={providerForm.apiKey} error={providerErrors.apiKey} required type="password" placeholder="sk-..." onChange={(event) => updateProviderField('apiKey', event.target.value)} />
+                <div className="model-config-hint is-wide">
+                  <span>供应商参数</span>
+                  <p>{providerMeta.configHint}</p>
+                </div>
               </div>
-            </div>
-            <div className="console-modal-actions">
-              <button
-                className="console-button provider-config-test-button"
-                disabled={providerTesting}
-                type="button"
-                onClick={testProviderForm}
-              >
-                <FlaskConical size={14} strokeWidth={1.9} aria-hidden="true" />
-                {providerTesting ? '测试中' : '测试连接'}
-              </button>
-              {providerFormMode === 'edit' ? (
-                <button className="console-button" type="button" onClick={() => openProviderPanel('create')}>
-                  新增模式
+              <div className="console-modal-actions">
+                <button className="console-button provider-config-test-button" disabled={providerTesting} type="button" onClick={testProviderForm}>
+                  <FlaskConical size={14} strokeWidth={1.9} aria-hidden="true" />
+                  {providerTesting ? '测试中' : '测试连接'}
                 </button>
-              ) : null}
-              <button className="console-button" type="button" onClick={() => setProviderPanelOpen(false)}>
-                取消
-              </button>
-              <button className="console-button console-button-primary" type="submit">
-                <Check size={14} strokeWidth={2} aria-hidden="true" />
-                保存供应商
-              </button>
-            </div>
-          </form>
+                <button className="console-button" type="button" onClick={() => setProviderPanelOpen(false)}>
+                  取消
+                </button>
+                <button className="console-button console-button-primary" type="submit">
+                  <Check size={14} strokeWidth={2} aria-hidden="true" />
+                  保存供应商
+                </button>
+              </div>
+            </form>
           </DialogContent>
         ) : null}
       </DialogRoot>
 
       <DialogRoot open={Boolean(pendingModelDelete)} onOpenChange={(open) => !open && setPendingModelDelete(null)}>
         {pendingModelDelete ? (
-          <DialogContent
-            description={`确认删除 ${pendingModelDelete.name}？已绑定计划后续需要重新选择模型。`}
-            footer={
-              <>
-                <button className="console-button" type="button" onClick={() => setPendingModelDelete(null)}>
-                  取消
-                </button>
-                <button className="console-button console-button-danger" type="button" onClick={deleteModel}>
-                  <Trash2 size={14} strokeWidth={1.9} aria-hidden="true" />
-                  确认删除
-                </button>
-              </>
-            }
-            title="删除模型确认"
-          />
+          <DialogContent className="app-catalog-danger-modal" description={`确认删除 ${pendingModelDelete.name}？删除后，测试策略后续需要重新选择模型。`} footer={<><button className="console-button" type="button" onClick={() => setPendingModelDelete(null)}>取消</button><button className="console-button console-button-danger" type="button" onClick={deleteModel}><Trash2 size={14} strokeWidth={2} aria-hidden="true" />确认删除</button></>} title="删除模型确认" />
         ) : null}
       </DialogRoot>
 
       <DialogRoot open={Boolean(pendingProviderDelete)} onOpenChange={(open) => !open && setPendingProviderDelete(null)}>
         {pendingProviderDelete ? (
-          <DialogContent
-            description={`确认删除 ${pendingProviderDelete.name}？如果该供应商仍有关联模型，系统会阻止删除。`}
-            footer={
-              <>
-                <button className="console-button" type="button" onClick={() => setPendingProviderDelete(null)}>
-                  取消
-                </button>
-                <button className="console-button console-button-danger" type="button" onClick={deleteProvider}>
-                  <Trash2 size={14} strokeWidth={1.9} aria-hidden="true" />
-                  确认删除
-                </button>
-              </>
-            }
-            title="删除供应商确认"
-          />
+          <DialogContent className="app-catalog-danger-modal" description={`确认删除 ${pendingProviderDelete.name}？删除前请确认没有模型引用该供应商。`} footer={<><button className="console-button" type="button" onClick={() => setPendingProviderDelete(null)}>取消</button><button className="console-button console-button-danger" type="button" onClick={deleteProvider}><Trash2 size={14} strokeWidth={2} aria-hidden="true" />确认删除</button></>} title="删除供应商确认" />
         ) : null}
       </DialogRoot>
     </section>

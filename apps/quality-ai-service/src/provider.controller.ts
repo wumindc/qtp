@@ -64,22 +64,22 @@ export class ProviderController {
   }
 
   @Post('model/update.do')
-  updateModel(@Body() request: { modelCode: string; data: ModelUpdateRequest }) {
-    return this.providerService.updateModel(request.modelCode, request.data);
+  updateModel(@Body() request: { id: string; data: ModelUpdateRequest }) {
+    return this.providerService.updateModel(request.id, request.data);
   }
 
   @Post('model/change-status.do')
-  changeModelStatus(@Body() request: { modelCode: string; enabled: ModelRecord['enabled'] }) {
-    return this.providerService.changeModelStatus(request.modelCode, request.enabled);
+  changeModelStatus(@Body() request: { id: string; enabled: ModelRecord['enabled'] }) {
+    return this.providerService.changeModelStatus(request.id, request.enabled);
   }
 
   @Post('model/test-connection.do')
-  testModelConnection(@Body() request: { modelCode: string }) {
-    return this.providerService.testModelConnection(request.modelCode);
+  testModelConnection(@Body() request: { id: string }) {
+    return this.providerService.testModelConnection(request.id);
   }
 
   @Post('model/delete.do')
-  deleteModel(@Body() request: { modelCode: string }) {
-    return this.providerService.deleteModel(request.modelCode);
+  deleteModel(@Body() request: { id: string }) {
+    return this.providerService.deleteModel(request.id);
   }
 }

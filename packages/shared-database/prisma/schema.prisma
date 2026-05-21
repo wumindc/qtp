@@ -45,7 +45,6 @@ model AiProvider {
   providerType String   @db.VarChar(50)
   baseUrl      String   @db.VarChar(500)
   apiKey       String   @db.VarChar(500)
-  defaultModel String?  @db.VarChar(200)
   enabled      Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -54,19 +53,21 @@ model AiProvider {
 }
 
 model AiModel {
-  id            BigInt   @id @default(autoincrement())
-  modelCode     String   @unique @db.VarChar(100)
-  modelName     String   @db.VarChar(200)
-  providerCode  String   @db.VarChar(100)
-  modelId       String   @db.VarChar(200)
-  purpose       String   @db.VarChar(50)
-  contextWindow Int      @default(0)
-  temperature   Decimal  @default(0.2) @db.Decimal(5, 2)
-  enabled       Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               BigInt   @id @default(autoincrement())
+  modelName        String   @db.VarChar(200)
+  providerCode     String   @db.VarChar(100)
+  modelId          String   @db.VarChar(200)
+  modelType        String   @db.VarChar(50)
+  protocol         String   @db.VarChar(80)
+  parametersJson   Json?
+  capabilitiesJson Json?
+  limitsJson       Json?
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([providerCode])
+  @@index([modelType])
   @@map("ai_model")
 }
 

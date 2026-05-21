@@ -10,23 +10,23 @@ const providers: ModelProviderRecord[] = [
     type: 'OPENAI_COMPATIBLE',
     baseUrl: 'http://127.0.0.1:8080/v1',
     apiKey: 'sk-demo',
-    defaultModel: 'gpt-compatible-test',
     status: '启用',
   },
 ];
 
 const models: ModelCenterRecord[] = [
   {
-    id: 'gpt-compatible-test-judge',
-    code: 'gpt-compatible-test-judge',
+    id: '1',
     name: 'OpenAI 兼容评估模型',
     provider: 'openai-compatible-test',
     providerName: 'OpenAI 兼容测试供应商',
     providerType: 'OPENAI_COMPATIBLE',
     modelId: 'gpt-compatible-test',
-    purpose: 'JUDGE',
-    context: '128000',
-    temperature: '0.2',
+    modelType: 'LLM',
+    protocol: 'OPENAI_CHAT_COMPLETIONS',
+    parameters: { temperature: 0.2, maxOutputTokens: 4096, stream: true },
+    capabilities: { stream: true, jsonMode: true, toolCalling: true },
+    limits: { contextWindow: 128000, maxOutputTokens: 4096 },
     status: '启用',
   },
 ];
@@ -34,7 +34,7 @@ const models: ModelCenterRecord[] = [
 function mockGateway() {
   return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
     ok: true,
-    json: async () => ({ success: true, message: '模型连接配置可用' }),
+    json: async () => ({ success: true, message: '模型连接配置可用', id: '2', enabled: true }),
   } as Response);
 }
 
@@ -59,7 +59,7 @@ describe('ModelCenterPage', () => {
     expect(screen.getByRole('form', { name: '添加供应商表单' })).toBeInTheDocument();
   });
 
-  it('adds a provider from the panel and then creates a model bound to that provider', async () => {
+  it('adds a provider and then creates an LLM model without user-facing model code', async () => {
     const fetchMock = mockGateway();
     render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
 
@@ -68,68 +68,51 @@ describe('ModelCenterPage', () => {
     const providerForm = screen.getByRole('form', { name: '添加供应商表单' });
     expect(within(providerForm).queryByLabelText('供应商编码')).not.toBeInTheDocument();
     fireEvent.change(within(providerForm).getByLabelText('供应商名称'), { target: { value: 'DeepSeek 生产环境' } });
-    fireEvent.change(within(providerForm).getByLabelText('接口地址'), { target: { value: 'https://api.deepseek.com/v1' } });
+    fireEvent.change(within(providerForm).getByLabelText('接口地址'), { target: { value: 'https://api.deepseek.com' } });
     fireEvent.change(within(providerForm).getByLabelText('API Key'), { target: { value: 'sk-deepseek' } });
     fireEvent.click(within(providerForm).getByRole('button', { name: '保存供应商' }));
 
-    await waitFor(() => expect(screen.getAllByText('DeepSeek 生产环境').length).toBeGreaterThan(0));
-    expect(screen.queryByRole('form', { name: '添加供应商表单' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('form', { name: '添加供应商表单' })).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole('tab', { name: /模型列表/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加模型' }));
 
     const modelForm = screen.getByRole('form', { name: '添加模型表单' });
-    fireEvent.change(within(modelForm).getByLabelText('模型编码'), { target: { value: 'deepseek-chat-judge' } });
-    fireEvent.change(within(modelForm).getByLabelText('模型名称'), { target: { value: 'DeepSeek 评估模型' } });
+    expect(within(modelForm).queryByLabelText('模型编码')).not.toBeInTheDocument();
+    expect(within(modelForm).queryByLabelText('用途')).not.toBeInTheDocument();
+    fireEvent.change(within(modelForm).getByLabelText('模型名称'), { target: { value: 'DeepSeek Chat' } });
     fireEvent.change(within(modelForm).getByLabelText('供应商模型 ID'), { target: { value: 'deepseek-chat' } });
     fireEvent.click(within(modelForm).getByRole('button', { name: '保存模型' }));
 
-    await waitFor(() => expect(screen.getByRole('table')).toHaveTextContent('DeepSeek 评估模型'));
-    expect(screen.getByRole('table')).toHaveTextContent('DeepSeek 生产环境');
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/create.do',
-      expect.objectContaining({
-        body: expect.stringContaining('"enabled":true'),
-        method: 'POST',
-      }),
-    );
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/create.do',
-      expect.objectContaining({
-        body: expect.not.stringContaining('providerCode'),
-        method: 'POST',
-      }),
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
+        expect.objectContaining({
+          body: expect.stringContaining('"modelType":"LLM"'),
+          method: 'POST',
+        }),
+      ),
     );
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
       expect.objectContaining({
-        body: expect.stringContaining('"providerCode":"provider-deepseek"'),
+        body: expect.not.stringContaining('modelCode'),
         method: 'POST',
       }),
     );
   });
 
-  it('creates providers as enabled by default', async () => {
-    const fetchMock = mockGateway();
+  it('uses controlled provider validation without native required bubbles', () => {
     render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
 
     fireEvent.click(screen.getByRole('tab', { name: /供应商列表/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加供应商' }));
     const providerForm = screen.getByRole('form', { name: '添加供应商表单' });
-    fireEvent.change(within(providerForm).getByLabelText('供应商名称'), { target: { value: '停用供应商' } });
-    fireEvent.change(within(providerForm).getByLabelText('接口地址'), { target: { value: 'https://api.example.com/v1' } });
-    fireEvent.change(within(providerForm).getByLabelText('API Key'), { target: { value: 'sk-disabled' } });
-    expect(within(providerForm).queryByLabelText('保存后启用该供应商')).not.toBeInTheDocument();
+    expect(providerForm).toHaveAttribute('novalidate');
     fireEvent.click(within(providerForm).getByRole('button', { name: '保存供应商' }));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/create.do',
-        expect.objectContaining({
-          body: expect.stringContaining('"enabled":true'),
-          method: 'POST',
-        }),
-      ),
-    );
+    expect(within(providerForm).getByText('请填写供应商名称。')).toBeInTheDocument();
+    expect(within(providerForm).getByText('请填写接口地址。')).toBeInTheDocument();
+    expect(within(providerForm).getByText('请填写 API Key。')).toBeInTheDocument();
   });
 
   it('tests provider form configuration before saving', async () => {
@@ -139,7 +122,8 @@ describe('ModelCenterPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: /供应商列表/ }));
     fireEvent.click(screen.getByRole('button', { name: '添加供应商' }));
     const providerForm = screen.getByRole('form', { name: '添加供应商表单' });
-    fireEvent.change(within(providerForm).getByLabelText('接口地址'), { target: { value: 'https://api.deepseek.com/v1' } });
+    fireEvent.change(within(providerForm).getByLabelText('供应商名称'), { target: { value: 'DeepSeek 生产环境' } });
+    fireEvent.change(within(providerForm).getByLabelText('接口地址'), { target: { value: 'https://api.deepseek.com' } });
     fireEvent.change(within(providerForm).getByLabelText('API Key'), { target: { value: 'sk-deepseek' } });
     fireEvent.click(within(providerForm).getByRole('button', { name: '测试连接' }));
 
@@ -147,21 +131,14 @@ describe('ModelCenterPage', () => {
       expect(fetchMock).toHaveBeenCalledWith(
         'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/test-config.do',
         expect.objectContaining({
-          body: expect.stringContaining('"baseUrl":"https://api.deepseek.com/v1"'),
+          body: expect.stringContaining('"baseUrl":"https://api.deepseek.com"'),
           method: 'POST',
         }),
       ),
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/test-config.do',
-      expect.objectContaining({
-        body: expect.not.stringContaining('providerCode'),
-        method: 'POST',
-      }),
-    );
   });
 
-  it('tests model connection through the gateway row action', async () => {
+  it('tests model connection through the gateway row action using id', async () => {
     const fetchMock = mockGateway();
     render(<ModelCenterPage initialModels={models} initialProviders={providers} />);
 
@@ -171,7 +148,7 @@ describe('ModelCenterPage', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/test-connection.do',
       expect.objectContaining({
-        body: expect.stringContaining('"modelCode":"gpt-compatible-test-judge"'),
+        body: expect.stringContaining('"id":"1"'),
         method: 'POST',
       }),
     );

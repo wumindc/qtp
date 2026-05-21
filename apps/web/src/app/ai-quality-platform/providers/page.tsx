@@ -16,7 +16,6 @@ export default async function ProvidersPage() {
       type: String(item.providerType) as ModelProviderRecord['type'],
       baseUrl: String(item.baseUrl),
       apiKey: String(item.apiKey ?? ''),
-      defaultModel: String(item.defaultModel ?? ''),
       status: item.enabled === false ? '停用' : '启用',
     }),
   );
@@ -24,16 +23,17 @@ export default async function ProvidersPage() {
   const models = modelData.records.map((item): ModelCenterRecord => {
     const provider = providerLookup.get(String(item.providerCode));
     return {
-      id: String(item.modelCode),
-      code: String(item.modelCode),
+      id: String(item.id),
       name: String(item.modelName),
       provider: String(item.providerCode),
       providerName: provider?.name ?? String(item.providerCode),
       providerType: provider?.type ?? 'OPENAI_COMPATIBLE',
       modelId: String(item.modelId),
-      purpose: String(item.purpose) as ModelCenterRecord['purpose'],
-      context: String(item.contextWindow),
-      temperature: String(item.temperature),
+      modelType: String(item.modelType ?? 'LLM') as ModelCenterRecord['modelType'],
+      protocol: String(item.protocol ?? 'OPENAI_CHAT_COMPLETIONS') as ModelCenterRecord['protocol'],
+      parameters: (item.parameters ?? item.parametersJson ?? {}) as ModelCenterRecord['parameters'],
+      capabilities: (item.capabilities ?? item.capabilitiesJson ?? {}) as ModelCenterRecord['capabilities'],
+      limits: (item.limits ?? item.limitsJson ?? {}) as ModelCenterRecord['limits'],
       status: item.enabled === false ? '停用' : '启用',
     };
   });

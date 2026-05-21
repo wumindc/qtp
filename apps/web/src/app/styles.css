@@ -2566,7 +2566,7 @@ button {
 
 .model-filter-group {
   display: grid;
-  grid-template-columns: repeat(2, minmax(9rem, 12rem));
+  grid-template-columns: repeat(3, minmax(8.5rem, 12rem));
   align-items: center;
   gap: 0.5rem;
 }
@@ -2586,6 +2586,27 @@ button {
 
 .model-provider-table {
   min-width: 58rem;
+}
+
+.model-empty-state {
+  display: grid;
+  min-height: 12rem;
+  place-items: center;
+  gap: 0.55rem;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.model-empty-state strong {
+  color: #111827;
+  font-size: 1rem;
+}
+
+.model-empty-state span {
+  max-width: 26rem;
+  font-size: 0.82rem;
+  line-height: 1.55;
 }
 
 .model-table td {
@@ -3393,6 +3414,7 @@ textarea:focus-visible {
 .ui-field {
   display: grid;
   gap: 0.38rem;
+  grid-template-rows: auto auto auto minmax(1rem, auto);
   min-width: 0;
   color: #242529;
   font-size: 0.8125rem;
@@ -3426,6 +3448,11 @@ textarea:focus-visible {
   color: #c81e1e;
   font-size: 0.75rem;
   line-height: 1.35;
+  min-height: 1rem;
+}
+
+.ui-field__error:empty {
+  visibility: hidden;
 }
 
 .ui-text-input {
@@ -3510,13 +3537,15 @@ textarea:focus-visible {
 }
 
 .ui-text-input.is-invalid,
-.ui-text-area.is-invalid {
+.ui-text-area.is-invalid,
+.ui-select-trigger.is-invalid {
   border-color: #ef4444;
   background: #fffafa;
 }
 
 .ui-text-input.is-invalid:focus-within,
-.ui-text-area.is-invalid:focus-visible {
+.ui-text-area.is-invalid:focus-visible,
+.ui-select-trigger.is-invalid:focus-visible {
   border-color: #dc2626;
   box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
 }

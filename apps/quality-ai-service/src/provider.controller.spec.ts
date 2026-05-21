@@ -27,26 +27,22 @@ describe('ProviderController', () => {
       providerType: 'OPENAI_COMPATIBLE',
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'sk-test',
-      defaultModel: 'quality-judge',
     });
-    await service.createModel({
-      modelCode: 'quality-judge',
+    const model = await service.createModel({
       modelName: '质量评估模型',
       providerCode: 'openai-compatible-main',
       modelId: 'quality-judge',
-      purpose: 'JUDGE',
-      contextWindow: 128000,
-      temperature: 0.2,
+      modelType: 'LLM',
     });
     const controller = new ProviderController(service);
 
     const response = await controller.modelList({
       page: { currentPage: 1, linesPerPage: 10 },
-      data: { purpose: 'JUDGE' },
+      data: { modelType: 'LLM' },
     });
 
-    expect(response.list[0]?.modelCode).toBe('quality-judge');
-    expect((await controller.testModelConnection({ modelCode: 'quality-judge' })).status).toBe('SUCCESS');
+    expect(response.list[0]?.id).toBe(model.id);
+    expect((await controller.testModelConnection({ id: model.id })).status).toBe('SUCCESS');
   });
 
   it('tests unsaved provider configuration from the form', async () => {
