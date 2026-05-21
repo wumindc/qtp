@@ -4410,3 +4410,25 @@ textarea:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.qtp-empty-state,
+.qtp-error-state,
+.qtp-loading-state {
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.qtp-empty-state strong,
+.qtp-error-state strong {
+  color: var(--color-text);
+  font-size: 0.95rem;
+}
+
+.qtp-model-center {
+  display: grid;
+  gap: 1rem;
+}
