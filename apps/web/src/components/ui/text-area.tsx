@@ -24,6 +24,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
   ({ className, disabled, error, hint, id, label, onInput, onInvalid, readOnly, required, ...props }, ref) => {
     const [localError, setLocalError] = useState('');
     const shownError = error ?? localError;
+    const reservesMeta = Boolean(label || hint || required || shownError);
     const describedBy =
       [hint ? `${id}-hint` : null, shownError ? `${id}-error` : null].filter(Boolean).join(' ') || undefined;
 
@@ -44,6 +45,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
     return (
       <label
         className={cn('ui-field', (disabled || readOnly) && 'is-readonly', className)}
+        data-has-meta={reservesMeta ? 'true' : undefined}
         data-required={required ? 'true' : undefined}
       >
         {label ? (
@@ -68,9 +70,11 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
             {hint}
           </span>
         ) : null}
-        <span className="ui-field__error" id={id ? `${id}-error` : undefined}>
-          {shownError}
-        </span>
+        {reservesMeta ? (
+          <span className="ui-field__error" id={id ? `${id}-error` : undefined}>
+            {shownError}
+          </span>
+        ) : null}
       </label>
     );
   },

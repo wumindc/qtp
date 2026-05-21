@@ -79,6 +79,11 @@ describe('ModelCenterPage', () => {
     const modelForm = screen.getByRole('form', { name: '添加模型表单' });
     expect(within(modelForm).queryByLabelText('模型编码')).not.toBeInTheDocument();
     expect(within(modelForm).queryByLabelText('用途')).not.toBeInTheDocument();
+    expect(within(modelForm).queryByLabelText('温度 temperature')).not.toBeInTheDocument();
+    expect(within(modelForm).queryByLabelText('Top P')).not.toBeInTheDocument();
+    expect(within(modelForm).getByLabelText('支持流式响应')).toBeInTheDocument();
+    expect(within(modelForm).getByLabelText('支持 JSON 输出')).toBeInTheDocument();
+    expect(within(modelForm).getByLabelText('支持工具调用')).toBeInTheDocument();
     fireEvent.change(within(modelForm).getByLabelText('模型名称'), { target: { value: 'DeepSeek Chat' } });
     fireEvent.change(within(modelForm).getByLabelText('供应商模型 ID'), { target: { value: 'deepseek-chat' } });
     fireEvent.click(within(modelForm).getByRole('button', { name: '保存模型' }));
@@ -96,6 +101,13 @@ describe('ModelCenterPage', () => {
       'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
       expect.objectContaining({
         body: expect.not.stringContaining('modelCode'),
+        method: 'POST',
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
+      expect.objectContaining({
+        body: expect.not.stringContaining('temperature'),
         method: 'POST',
       }),
     );

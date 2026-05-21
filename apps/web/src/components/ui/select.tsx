@@ -86,7 +86,7 @@ export function ConsoleSelect({
   if (!label && !hint && !error) return select;
 
   return (
-    <label className={cn('ui-field', disabled && 'is-readonly', className)} data-required={required ? 'true' : undefined}>
+    <label className={cn('ui-field', disabled && 'is-readonly', className)} data-has-meta="true" data-required={required ? 'true' : undefined}>
       {label ? <span className="ui-field__label">{label}</span> : null}
       {select}
       {hint ? (

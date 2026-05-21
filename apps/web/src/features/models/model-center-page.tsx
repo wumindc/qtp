@@ -86,18 +86,11 @@ interface ModelFormState {
   modelType: ModelType;
   contextWindow: string;
   maxOutputTokens: string;
-  temperature: string;
-  topP: string;
-  topK: string;
   stream: string;
   jsonMode: string;
   toolCalling: string;
   thinkingEnabled: string;
-  reasoningEffort: string;
   dimensions: string;
-  batchSize: string;
-  encodingFormat: string;
-  timeoutMs: string;
 }
 
 interface ProviderFormState {
@@ -133,20 +126,20 @@ const PROVIDER_TYPE_META: Record<ProviderType, { label: string; defaultBaseUrl: 
     defaultBaseUrl: 'https://api.openai.com/v1',
     llmExample: 'gpt-4.1-mini',
     embeddingExample: 'text-embedding-3-large',
-    configHint: '适合 OpenAI、自建网关、OpenRouter、Vercel AI Gateway 或任何 /v1 兼容端点。',
+    configHint: '适合 OpenAI、自建网关、OpenRouter、Vercel AI Gateway 等 /v1 兼容端点，按实际模型记录能力支持情况。',
   },
   QWEN: {
     label: '阿里云百炼（通义千问）',
     defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     llmExample: 'qwen-plus',
     embeddingExample: 'text-embedding-v4',
-    configHint: '默认使用百炼 OpenAI 兼容模式；LLM 可配置 top_k，Embedding 可配置输出维度。',
+    configHint: '默认使用百炼 OpenAI 兼容模式；LLM 与 Embedding 分开登记，参数在调用策略中单独维护。',
   },
   DEEPSEEK: {
     label: 'DeepSeek 官方',
     defaultBaseUrl: 'https://api.deepseek.com',
     llmExample: 'deepseek-chat',
-    configHint: 'DeepSeek 官方端点用于对话模型；思考模式下部分采样参数可能被供应商忽略。',
+    configHint: 'DeepSeek 官方端点用于 Chat 模型；当前不作为 Embedding 供应商。',
   },
 };
 
@@ -163,9 +156,9 @@ const PROTOCOL_META: Record<ModelProtocol, string> = {
   DEEPSEEK_CHAT_COMPLETIONS: 'DeepSeek Chat Completions',
 };
 
-const BOOLEAN_OPTIONS = [
-  { label: '开启', value: 'true' },
-  { label: '关闭', value: 'false' },
+const SUPPORT_OPTIONS = [
+  { label: '支持', value: 'true' },
+  { label: '不支持', value: 'false' },
 ];
 
 function buildModelForm(providerCode = '', providerType: ProviderType = 'OPENAI_COMPATIBLE', modelType: ModelType = 'LLM'): ModelFormState {
@@ -177,18 +170,11 @@ function buildModelForm(providerCode = '', providerType: ProviderType = 'OPENAI_
     modelType,
     contextWindow: '128000',
     maxOutputTokens: '4096',
-    temperature: providerType === 'DEEPSEEK' ? '1' : '0.2',
-    topP: '1',
-    topK: providerType === 'QWEN' ? '0' : '',
     stream: 'true',
     jsonMode: providerType === 'DEEPSEEK' ? 'false' : 'true',
     toolCalling: providerType === 'DEEPSEEK' ? 'false' : 'true',
     thinkingEnabled: providerType === 'DEEPSEEK' ? 'true' : 'false',
-    reasoningEffort: providerType === 'DEEPSEEK' ? 'high' : '',
     dimensions: modelType === 'EMBEDDING' ? '1024' : '',
-    batchSize: modelType === 'EMBEDDING' ? '16' : '',
-    encodingFormat: 'float',
-    timeoutMs: modelType === 'EMBEDDING' ? '30000' : '60000',
   };
 }
 
@@ -217,18 +203,11 @@ function modelToForm(model: ModelCenterRecord): ModelFormState {
     modelId: model.modelId,
     contextWindow: String(model.limits.contextWindow ?? ''),
     maxOutputTokens: String(model.parameters.maxOutputTokens ?? model.limits.maxOutputTokens ?? ''),
-    temperature: String(model.parameters.temperature ?? ''),
-    topP: String(model.parameters.topP ?? ''),
-    topK: String(model.parameters.topK ?? ''),
     stream: String(model.parameters.stream ?? model.capabilities.stream ?? true),
     jsonMode: String(model.parameters.jsonMode ?? model.capabilities.jsonMode ?? false),
     toolCalling: String(model.parameters.toolCalling ?? model.capabilities.toolCalling ?? false),
     thinkingEnabled: String(model.parameters.thinkingEnabled ?? model.capabilities.reasoning ?? false),
-    reasoningEffort: String(model.parameters.reasoningEffort ?? ''),
     dimensions: String(model.parameters.dimensions ?? model.limits.embeddingDimensions ?? ''),
-    batchSize: String(model.parameters.batchSize ?? ''),
-    encodingFormat: String(model.parameters.encodingFormat ?? 'float'),
-    timeoutMs: String(model.parameters.timeoutMs ?? ''),
   };
 }
 
@@ -249,10 +228,6 @@ function resolveProtocol(providerType: ProviderType, modelType: ModelType): Mode
   if (providerType === 'QWEN') return modelType === 'EMBEDDING' ? 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' : 'DASHSCOPE_COMPATIBLE_CHAT';
   if (providerType === 'DEEPSEEK') return 'DEEPSEEK_CHAT_COMPLETIONS';
   return modelType === 'EMBEDDING' ? 'OPENAI_EMBEDDINGS' : 'OPENAI_CHAT_COMPLETIONS';
-}
-
-function toReasoningEffort(value: string): ModelParameters['reasoningEffort'] {
-  return value === 'low' || value === 'medium' || value === 'high' || value === 'max' ? value : undefined;
 }
 
 function readSavedProvider(result: ProviderSaveResponse): Partial<ProviderSaveResponse> {
@@ -441,21 +416,13 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       modelType === 'EMBEDDING'
         ? {
             dimensions: toNumber(modelForm.dimensions),
-            batchSize: toNumber(modelForm.batchSize, 16),
-            encodingFormat: (modelForm.encodingFormat === 'base64' ? 'base64' : 'float') as 'float' | 'base64',
-            timeoutMs: toNumber(modelForm.timeoutMs, 30000),
           }
         : {
-            temperature: toNumber(modelForm.temperature, provider?.type === 'DEEPSEEK' ? 1 : 0.2),
-            topP: toNumber(modelForm.topP, 1),
-            topK: provider?.type === 'QWEN' ? toNumber(modelForm.topK, 0) : undefined,
             maxOutputTokens: toNumber(modelForm.maxOutputTokens, 4096),
             stream: toBoolean(modelForm.stream),
             jsonMode: toBoolean(modelForm.jsonMode),
             toolCalling: toBoolean(modelForm.toolCalling),
             thinkingEnabled: toBoolean(modelForm.thinkingEnabled),
-            reasoningEffort: toReasoningEffort(modelForm.reasoningEffort),
-            timeoutMs: toNumber(modelForm.timeoutMs, 60000),
           };
     const capabilities =
       modelType === 'EMBEDDING'
@@ -708,7 +675,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                     <th>供应商</th>
                     <th>模型 ID</th>
                     <th>协议</th>
-                    <th>默认参数</th>
+                    <th>能力边界</th>
                     <th>状态</th>
                     <th className="console-action-cell">操作</th>
                   </tr>
@@ -729,7 +696,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                         </td>
                         <td>{model.modelId}</td>
                         <td>{PROTOCOL_META[model.protocol]}</td>
-                        <td>{model.modelType === 'EMBEDDING' ? `${model.parameters.dimensions ?? '-'} 维 / batch ${model.parameters.batchSize ?? '-'}` : `${model.limits.contextWindow?.toLocaleString() ?? '-'} ctx / temp ${model.parameters.temperature ?? '-'}`}</td>
+                        <td>{model.modelType === 'EMBEDDING' ? `${model.limits.embeddingDimensions ?? model.parameters.dimensions ?? '-'} 维` : `${model.limits.contextWindow?.toLocaleString() ?? '-'} ctx / ${model.limits.maxOutputTokens?.toLocaleString() ?? model.parameters.maxOutputTokens ?? '-'} out`}</td>
                         <td>
                           <span className={`console-status-pill console-status-${model.status}`}>{model.status}</span>
                         </td>
@@ -845,7 +812,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
 
       <DialogRoot open={Boolean(modelDialogMode)} onOpenChange={(open) => !open && closeModelDialog()}>
         {modelDialogMode ? (
-          <DialogContent className="model-editor-modal" description={modelForm.name || '绑定供应商侧模型 ID、能力类型和默认调用参数。'} title={modelDialogMode === 'create' ? '添加模型' : '编辑模型'}>
+          <DialogContent className="model-editor-modal" description={modelForm.name || '登记供应商侧模型 ID、能力类型和模型能力边界。'} title={modelDialogMode === 'create' ? '添加模型' : '编辑模型'}>
             <form className="console-dialog-form" aria-label={modelDialogMode === 'create' ? '添加模型表单' : '编辑模型表单'} noValidate onSubmit={saveModel}>
               <div className="console-form-grid">
                 <TextInput className="console-form-field" label="模型名称" value={modelForm.name} error={modelErrors.name} required placeholder="如 Qwen3.6-Plus" onChange={(event) => updateModelField('name', event.target.value)} />
@@ -856,26 +823,18 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                   <>
                     <TextInput className="console-form-field" label="上下文窗口" value={modelForm.contextWindow} error={modelErrors.contextWindow} required inputMode="numeric" onChange={(event) => updateModelField('contextWindow', event.target.value)} />
                     <TextInput className="console-form-field" label="最大输出 Token" value={modelForm.maxOutputTokens} error={modelErrors.maxOutputTokens} required inputMode="numeric" onChange={(event) => updateModelField('maxOutputTokens', event.target.value)} />
-                    <TextInput className="console-form-field" label="温度 temperature" value={modelForm.temperature} inputMode="decimal" onChange={(event) => updateModelField('temperature', event.target.value)} />
-                    <TextInput className="console-form-field" label="Top P" value={modelForm.topP} inputMode="decimal" onChange={(event) => updateModelField('topP', event.target.value)} />
-                    {selectedModelProvider?.type === 'QWEN' ? <TextInput className="console-form-field" label="Top K" value={modelForm.topK} inputMode="numeric" onChange={(event) => updateModelField('topK', event.target.value)} /> : null}
-                    <ConsoleSelect className="console-form-field" ariaLabel="流式响应" label="流式响应" value={modelForm.stream} onValueChange={(value) => updateModelField('stream', value)} options={BOOLEAN_OPTIONS} />
-                    <ConsoleSelect className="console-form-field" ariaLabel="JSON 输出" label="JSON 输出" value={modelForm.jsonMode} onValueChange={(value) => updateModelField('jsonMode', value)} options={BOOLEAN_OPTIONS} />
-                    <ConsoleSelect className="console-form-field" ariaLabel="工具调用" label="工具调用" value={modelForm.toolCalling} onValueChange={(value) => updateModelField('toolCalling', value)} options={BOOLEAN_OPTIONS} />
-                    <ConsoleSelect className="console-form-field" ariaLabel="推理模式" label="推理模式" value={modelForm.thinkingEnabled} onValueChange={(value) => updateModelField('thinkingEnabled', value)} options={BOOLEAN_OPTIONS} />
-                    <ConsoleSelect className="console-form-field" ariaLabel="推理强度" label="推理强度" value={modelForm.reasoningEffort || 'high'} onValueChange={(value) => updateModelField('reasoningEffort', value)} options={['low', 'medium', 'high', 'max'].map((item) => ({ label: item, value: item }))} />
-                    <TextInput className="console-form-field" label="超时毫秒" value={modelForm.timeoutMs} inputMode="numeric" onChange={(event) => updateModelField('timeoutMs', event.target.value)} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="支持流式响应" label="支持流式响应" value={modelForm.stream} onValueChange={(value) => updateModelField('stream', value)} options={SUPPORT_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="支持 JSON 输出" label="支持 JSON 输出" value={modelForm.jsonMode} onValueChange={(value) => updateModelField('jsonMode', value)} options={SUPPORT_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="支持工具调用" label="支持工具调用" value={modelForm.toolCalling} onValueChange={(value) => updateModelField('toolCalling', value)} options={SUPPORT_OPTIONS} />
+                    <ConsoleSelect className="console-form-field" ariaLabel="支持推理思考" label="支持推理/思考" value={modelForm.thinkingEnabled} onValueChange={(value) => updateModelField('thinkingEnabled', value)} options={SUPPORT_OPTIONS} />
                   </>
                 ) : (
                   <>
                     <TextInput className="console-form-field" label="输出维度" value={modelForm.dimensions} error={modelErrors.dimensions} inputMode="numeric" placeholder="如 1024" onChange={(event) => updateModelField('dimensions', event.target.value)} />
-                    <TextInput className="console-form-field" label="批量大小" value={modelForm.batchSize} inputMode="numeric" placeholder="16" onChange={(event) => updateModelField('batchSize', event.target.value)} />
-                    <ConsoleSelect className="console-form-field" ariaLabel="编码格式" label="编码格式" value={modelForm.encodingFormat} onValueChange={(value) => updateModelField('encodingFormat', value)} options={[{ label: 'float', value: 'float' }, { label: 'base64', value: 'base64' }]} />
-                    <TextInput className="console-form-field" label="超时毫秒" value={modelForm.timeoutMs} inputMode="numeric" onChange={(event) => updateModelField('timeoutMs', event.target.value)} />
                   </>
                 )}
                 <div className="model-config-hint">
-                  <span>配置提示</span>
+                  <span>能力提示</span>
                   <p>{selectedModelProvider ? PROVIDER_TYPE_META[selectedModelProvider.type].configHint : '请先选择供应商。'} 当前协议：{selectedModelProvider ? PROTOCOL_META[resolveProtocol(selectedModelProvider.type, modelForm.modelType)] : '-'}</p>
                 </div>
               </div>
