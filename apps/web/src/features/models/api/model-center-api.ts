@@ -1,37 +1,65 @@
 import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
 import { buildModelPayload, toStatusLabel } from '../model-center-schema';
-import type { ModelCenterRecord, ModelFormState, ModelProviderRecord, ProviderFormState } from '../types';
+import type { ModelCenterRecord, ModelFormState, ModelProtocol, ModelProviderRecord, ModelType, ProviderFormState, ProviderType } from '../types';
 
 type GatewayRow = Record<string, unknown>;
+const PROVIDER_TYPES: ProviderType[] = ['OPENAI_COMPATIBLE', 'QWEN', 'DEEPSEEK'];
+const MODEL_TYPES: ModelType[] = ['LLM', 'EMBEDDING'];
+const MODEL_PROTOCOLS: ModelProtocol[] = [
+  'OPENAI_CHAT_COMPLETIONS',
+  'OPENAI_EMBEDDINGS',
+  'DASHSCOPE_COMPATIBLE_CHAT',
+  'DASHSCOPE_COMPATIBLE_EMBEDDINGS',
+  'DEEPSEEK_CHAT_COMPLETIONS',
+];
 
 export interface ModelCenterInitialData {
   models: ModelCenterRecord[];
   providers: ModelProviderRecord[];
 }
 
+function toStringField(value: unknown, fallback = '') {
+  if (value === undefined || value === null) return fallback;
+  return String(value);
+}
+
+function toProviderType(value: unknown): ProviderType {
+  return PROVIDER_TYPES.includes(value as ProviderType) ? (value as ProviderType) : 'OPENAI_COMPATIBLE';
+}
+
+function toModelType(value: unknown): ModelType {
+  return MODEL_TYPES.includes(value as ModelType) ? (value as ModelType) : 'LLM';
+}
+
+function toModelProtocol(value: unknown): ModelProtocol {
+  return MODEL_PROTOCOLS.includes(value as ModelProtocol) ? (value as ModelProtocol) : 'OPENAI_CHAT_COMPLETIONS';
+}
+
 function mapProvider(item: GatewayRow): ModelProviderRecord {
+  const providerCode = toStringField(item.providerCode);
   return {
-    id: String(item.providerCode),
-    code: String(item.providerCode),
-    name: String(item.providerName),
-    type: String(item.providerType) as ModelProviderRecord['type'],
-    baseUrl: String(item.baseUrl),
-    apiKey: String(item.apiKey ?? ''),
+    id: providerCode,
+    code: providerCode,
+    name: toStringField(item.providerName),
+    type: toProviderType(item.providerType),
+    baseUrl: toStringField(item.baseUrl),
+    apiKey: toStringField(item.apiKey),
     status: item.enabled === false ? '停用' : '启用',
   };
 }
 
 function mapModel(item: GatewayRow, providerLookup: Map<string, ModelProviderRecord>): ModelCenterRecord {
-  const provider = providerLookup.get(String(item.providerCode));
+  const providerCode = toStringField(item.providerCode);
+  const provider = providerLookup.get(providerCode);
   return {
-    id: String(item.id),
-    name: String(item.modelName),
-    provider: String(item.providerCode),
-    providerName: provider?.name ?? String(item.providerCode),
+    id: toStringField(item.id),
+    name: toStringField(item.modelName),
+    provider: providerCode,
+    providerName: provider?.name ?? providerCode,
     providerType: provider?.type ?? 'OPENAI_COMPATIBLE',
-    modelId: String(item.modelId),
-    modelType: String(item.modelType ?? 'LLM') as ModelCenterRecord['modelType'],
-    protocol: String(item.protocol ?? 'OPENAI_CHAT_COMPLETIONS') as ModelCenterRecord['protocol'],
+    modelId: toStringField(item.modelId),
+    modelType: toModelType(item.modelType),
+    protocol: toModelProtocol(item.protocol),
     parameters: (item.parameters ?? item.parametersJson ?? {}) as ModelCenterRecord['parameters'],
     capabilities: (item.capabilities ?? item.capabilitiesJson ?? {}) as ModelCenterRecord['capabilities'],
     limits: (item.limits ?? item.limitsJson ?? {}) as ModelCenterRecord['limits'],
