@@ -1,9 +1,13 @@
+'use client';
+
 import { Chip, Spinner } from '@heroui/react';
 import type { ReactNode } from 'react';
-import type { StatusLabel } from '@/features/models/types';
+
+type QStatusTone = 'success' | 'default' | 'danger' | 'warning';
 
 interface QStatusChipProps {
-  status: StatusLabel;
+  status: string;
+  tone?: QStatusTone;
 }
 
 interface QStateProps {
@@ -12,13 +16,21 @@ interface QStateProps {
   action?: ReactNode;
 }
 
+function resolveStatusTone(status: string, tone?: QStatusTone) {
+  if (tone) {
+    return tone;
+  }
+
+  return status === '启用' ? 'success' : 'default';
+}
+
 /**
  * @author codex
- * Maps business status labels to semantic HeroUI chip colors.
+ * Maps common status labels to semantic HeroUI chip colors while staying feature-agnostic.
  */
-export function QStatusChip({ status }: QStatusChipProps) {
+export function QStatusChip({ status, tone }: QStatusChipProps) {
   return (
-    <Chip color={status === '启用' ? 'success' : 'default'} data-radius="sm" size="sm" variant="soft">
+    <Chip className="qtp-status-chip" color={resolveStatusTone(status, tone)} size="sm" variant="soft">
       {status}
     </Chip>
   );

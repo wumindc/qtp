@@ -1,5 +1,8 @@
-import { Button, Modal, ModalBody, ModalFooter, ModalHeader, type ModalProps } from '@heroui/react';
-import type { ReactNode } from 'react';
+'use client';
+
+import { Modal, ModalBody, ModalFooter, ModalHeader, type ModalProps } from '@heroui/react';
+import { useId, type ReactNode } from 'react';
+import { QButton } from './q-button';
 
 export type QModalProps = Omit<ModalProps, 'children'> & {
   title: string;
@@ -23,19 +26,21 @@ export interface QConfirmDialogProps {
  * Standard modal wrapper for management-console dialogs.
  */
 export function QModal({ title, description, children, footer, ...props }: QModalProps) {
+  const titleId = useId();
+
   return (
     <Modal {...props}>
       <Modal.Backdrop>
-        <Modal.Container data-radius="sm" scroll="inside">
-          <Modal.Dialog aria-labelledby="qtp-modal-title">
-        <ModalHeader>
-          <div>
-            <Modal.Heading id="qtp-modal-title">{title}</Modal.Heading>
-            {description ? <p>{description}</p> : null}
-          </div>
-        </ModalHeader>
-        <ModalBody>{children}</ModalBody>
-        {footer ? <ModalFooter>{footer}</ModalFooter> : null}
+        <Modal.Container className="qtp-modal" scroll="inside">
+          <Modal.Dialog aria-labelledby={titleId}>
+            <ModalHeader>
+              <div>
+                <Modal.Heading id={titleId}>{title}</Modal.Heading>
+                {description ? <p>{description}</p> : null}
+              </div>
+            </ModalHeader>
+            <ModalBody>{children}</ModalBody>
+            {footer ? <ModalFooter>{footer}</ModalFooter> : null}
           </Modal.Dialog>
         </Modal.Container>
       </Modal.Backdrop>
@@ -52,12 +57,12 @@ export function QConfirmDialog({ isOpen, title, description, confirmLabel, cance
       onOpenChange={onOpenChange}
       footer={
         <>
-          <Button data-radius="sm" variant="secondary" onPress={() => onOpenChange(false)}>
+          <QButton color="default" variant="secondary" onPress={() => onOpenChange(false)}>
             {cancelLabel}
-          </Button>
-          <Button data-color="danger" data-radius="sm" variant="danger" onPress={onConfirm}>
+          </QButton>
+          <QButton color="danger" onPress={onConfirm}>
             {confirmLabel}
-          </Button>
+          </QButton>
         </>
       }
     />

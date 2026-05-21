@@ -4432,3 +4432,42 @@ textarea:focus-visible {
   display: grid;
   gap: 1rem;
 }
+
+.qtp-button,
+.qtp-button--radius-sm {
+  border-radius: var(--radius-sm);
+}
+
+.qtp-button__loading {
+  margin-right: 0.375rem;
+  font-size: 0.75rem;
+}
+
+.qtp-field,
+.qtp-field--radius-sm {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.qtp-data-table,
+.qtp-data-table--radius-sm {
+  border-radius: var(--radius-sm);
+}
+
+.qtp-data-table__scroll {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.qtp-data-table__content {
+  min-width: 100%;
+}
+
+.qtp-modal {
+  border-radius: var(--radius-sm);
+}
+
+.qtp-status-chip {
+  border-radius: var(--radius-sm);
+}
