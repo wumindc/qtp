@@ -8,7 +8,9 @@ import {
   saveModel,
   saveProvider,
   testModel,
+  testModelForm,
   testProvider,
+  testProviderForm,
   type ModelCenterInitialData,
 } from './api/model-center-api';
 import type { ModelCenterRecord, ModelFormState, ModelProviderRecord, ProviderFormState } from './types';
@@ -47,5 +49,9 @@ export function useModelCenterMutations() {
     deleteProvider: useMutation({ mutationFn: (provider: ModelProviderRecord) => deleteProvider(provider), onSuccess: invalidate }),
     testModel: useMutation({ mutationFn: (model: ModelCenterRecord) => testModel(model) }),
     testProvider: useMutation({ mutationFn: (provider: ModelProviderRecord) => testProvider(provider) }),
+    testProviderForm: useMutation({ mutationFn: (form: ProviderFormState) => testProviderForm(form) }),
+    testModelForm: useMutation({
+      mutationFn: ({ form, provider }: { form: ModelFormState; provider: ModelProviderRecord }) => testModelForm(form, provider),
+    }),
   };
 }

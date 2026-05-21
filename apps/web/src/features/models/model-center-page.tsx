@@ -2,9 +2,8 @@
 
 import { Card, CardContent as CardBody, CardHeader, Chip, Tab, Tabs, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { Boxes, Check, FlaskConical, Pencil, Plus, Search, ServerCog, ShieldCheck, Trash2 } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { getGatewayApiUrl } from '@ai-quality-platform/shared-config';
 import { QButton, QConfirmDialog, QDataTable, QEmptyState, QModal, QSelectField, QStatusChip, QTextField } from '@/components/qtp-ui';
 import { buildModelForm, buildModelPayload, buildProviderForm, formatTokenDisplay, MODEL_TYPE_META, PROVIDER_TYPE_META, PROTOCOL_META, SUPPORT_OPTIONS, providerToOptionLabel } from './model-center-schema';
 import { useModelCenterData, useModelCenterMutations } from './model-center-queries';
@@ -92,19 +91,6 @@ function buildLocalProviderCode(name: string, type: ProviderType, existingProvid
   return nextCode;
 }
 
-async function postAi(path: string, payload: Record<string, unknown>) {
-  const response = await fetch(getGatewayApiUrl('ai', path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const result = (await response.json().catch(() => ({}))) as GatewayMessage & Record<string, unknown>;
-  if (!response.ok || result.success === false) {
-    throw new Error(result.message ?? result.data?.message ?? '操作失败');
-  }
-  return result;
-}
-
 function mutationMessage(result: GatewayMessage, fallback: string) {
   return result.message ?? result.data?.message ?? fallback;
 }
@@ -114,7 +100,7 @@ function mutationMessage(result: GatewayMessage, fallback: string) {
  * Renders the HeroUI POC Model Center while preserving the original console workflows.
  */
 export function ModelCenterPage({ initialModels, initialProviders }: ModelCenterPageProps) {
-  useModelCenterData({ models: initialModels, providers: initialProviders });
+  const { data } = useModelCenterData({ models: initialModels, providers: initialProviders });
   const mutations = useModelCenterMutations();
   const [models, setModels] = useState(initialModels);
   const [providers, setProviders] = useState(initialProviders);
@@ -138,6 +124,11 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const [actionMessage, setActionMessage] = useState('');
   const [modelTesting, setModelTesting] = useState(false);
   const [providerTesting, setProviderTesting] = useState(false);
+
+  useEffect(() => {
+    setModels(data.models);
+    setProviders(data.providers);
+  }, [data.models, data.providers]);
 
   const notify = (message: string) => {
     setActionMessage(message);
@@ -317,11 +308,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     if (!validateProviderForm()) return;
     setProviderTesting(true);
     try {
-      const result = await postAi('/provider/test-config.do', {
-        providerType: providerForm.type,
-        baseUrl: providerForm.baseUrl.trim(),
-        apiKey: providerForm.apiKey.trim(),
-      });
+      const result = (await mutations.testProviderForm.mutateAsync(providerForm)) as GatewayMessage;
       notify(mutationMessage(result, '供应商测试完成'));
     } catch (error) {
       notify(error instanceof Error ? error.message : '供应商测试失败');
@@ -339,7 +326,7 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     }
     setModelTesting(true);
     try {
-      const result = await postAi('/provider/model/test-config.do', buildModelPayload(modelForm, provider));
+      const result = (await mutations.testModelForm.mutateAsync({ form: modelForm, provider })) as GatewayMessage;
       notify(mutationMessage(result, '模型测试完成'));
     } catch (error) {
       notify(error instanceof Error ? error.message : '模型测试失败');

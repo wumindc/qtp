@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { postGateway } from '@/lib/api/gateway-client';
-import { loadModelCenterData } from './model-center-api';
+import { loadModelCenterData, testModelForm, testProviderForm } from './model-center-api';
+import type { ModelProviderRecord } from '../types';
 
 vi.mock('@/lib/api/gateway-client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/gateway-client')>('@/lib/api/gateway-client');
@@ -64,5 +65,68 @@ describe('loadModelCenterData', () => {
         },
       ],
     });
+  });
+});
+
+describe('model center form connection tests', () => {
+  beforeEach(() => {
+    vi.mocked(postGateway).mockReset();
+  });
+
+  it('tests provider form configuration through the gateway client', async () => {
+    vi.mocked(postGateway).mockResolvedValue({ message: '供应商连接配置可用' });
+
+    await testProviderForm({
+      name: 'DeepSeek 生产环境',
+      type: 'DEEPSEEK',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+    });
+
+    expect(postGateway).toHaveBeenCalledWith('ai', '/provider/test-config.do', {
+      providerType: 'DEEPSEEK',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+    });
+  });
+
+  it('tests model form configuration through the gateway client', async () => {
+    vi.mocked(postGateway).mockResolvedValue({ message: '模型连接配置可用' });
+    const provider: ModelProviderRecord = {
+      id: 'deepseek-prod',
+      code: 'deepseek-prod',
+      name: 'DeepSeek 生产环境',
+      type: 'DEEPSEEK',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      status: '启用',
+    };
+
+    await testModelForm(
+      {
+        name: 'DeepSeek Chat',
+        provider: 'deepseek-prod',
+        modelId: 'deepseek-chat',
+        modelType: 'LLM',
+        contextWindow: '128k',
+        maxOutputTokens: '4k',
+        stream: 'true',
+        jsonMode: 'false',
+        toolCalling: 'false',
+        thinkingEnabled: 'true',
+        dimensions: '',
+      },
+      provider,
+    );
+
+    expect(postGateway).toHaveBeenCalledWith(
+      'ai',
+      '/provider/model/test-config.do',
+      expect.objectContaining({
+        modelId: 'deepseek-chat',
+        modelType: 'LLM',
+        providerCode: 'deepseek-prod',
+      }),
+    );
   });
 });

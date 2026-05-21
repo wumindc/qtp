@@ -131,3 +131,15 @@ export async function testModel(model: ModelCenterRecord) {
 export async function testProvider(provider: ModelProviderRecord) {
   return postGateway<{ message?: string }>('ai', '/provider/test-connection.do', { providerCode: provider.code });
 }
+
+export async function testProviderForm(form: ProviderFormState) {
+  return postGateway<{ message?: string }>('ai', '/provider/test-config.do', {
+    providerType: form.type,
+    baseUrl: form.baseUrl.trim(),
+    apiKey: form.apiKey.trim(),
+  });
+}
+
+export async function testModelForm(form: ModelFormState, provider: ModelProviderRecord) {
+  return postGateway<{ message?: string }>('ai', '/provider/model/test-config.do', buildModelPayload(form, provider));
+}

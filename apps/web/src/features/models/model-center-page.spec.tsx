@@ -35,10 +35,53 @@ const models: ModelCenterRecord[] = [
 ];
 
 function mockGateway() {
-  return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-    ok: true,
-    json: async () => ({ success: true, message: '模型连接配置可用', id: '2', enabled: true }),
-  } as Response);
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith('/provider/list.do')) {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            list: providers.map((provider) => ({
+              apiKey: provider.apiKey,
+              baseUrl: provider.baseUrl,
+              enabled: provider.status === '启用',
+              providerCode: provider.code,
+              providerName: provider.name,
+              providerType: provider.type,
+            })),
+          },
+        }),
+      } as Response;
+    }
+    if (url.endsWith('/provider/model/list.do')) {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            list: models.map((model) => ({
+              capabilities: model.capabilities,
+              enabled: model.status === '启用',
+              id: model.id,
+              limits: model.limits,
+              modelId: model.modelId,
+              modelName: model.name,
+              modelType: model.modelType,
+              parameters: model.parameters,
+              protocol: model.protocol,
+              providerCode: model.provider,
+            })),
+          },
+        }),
+      } as Response;
+    }
+    return {
+      ok: true,
+      json: async () => ({ success: true, message: '模型连接配置可用', id: '2', enabled: true }),
+    } as Response;
+  });
 }
 
 function renderModelCenter() {
