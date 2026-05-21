@@ -49,10 +49,17 @@ function getFieldClassName(radius: QFieldChromeProps['radius'], className?: stri
  * Keeps text fields compact and consistent across QTP management screens.
  */
 export function QTextField({ radius = 'sm', variant = 'bordered', ...props }: QTextFieldProps) {
-  const { className, label, errorMessage, ...inputProps } = props;
+  const { className, label, errorMessage, id, 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy, ...inputProps } = props;
+  const fieldLabelProps = label ? {} : { 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy };
 
   return (
-    <TextField className={getFieldClassName(radius, className)} isInvalid={Boolean(errorMessage)} variant={resolveTextVariant(variant)}>
+    <TextField
+      {...fieldLabelProps}
+      className={getFieldClassName(radius, className)}
+      id={id}
+      isInvalid={Boolean(errorMessage)}
+      variant={resolveTextVariant(variant)}
+    >
       {label ? <Label>{label}</Label> : null}
       <Input {...inputProps} />
       {errorMessage ? <FieldError>{errorMessage}</FieldError> : null}
@@ -61,10 +68,17 @@ export function QTextField({ radius = 'sm', variant = 'bordered', ...props }: QT
 }
 
 export function QTextareaField({ radius = 'sm', variant = 'bordered', ...props }: QTextareaFieldProps) {
-  const { className, label, errorMessage, ...textareaProps } = props;
+  const { className, label, errorMessage, id, 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy, ...textareaProps } = props;
+  const fieldLabelProps = label ? {} : { 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy };
 
   return (
-    <TextField className={getFieldClassName(radius, className)} isInvalid={Boolean(errorMessage)} variant={resolveTextVariant(variant)}>
+    <TextField
+      {...fieldLabelProps}
+      className={getFieldClassName(radius, className)}
+      id={id}
+      isInvalid={Boolean(errorMessage)}
+      variant={resolveTextVariant(variant)}
+    >
       {label ? <Label>{label}</Label> : null}
       <TextArea {...textareaProps} />
       {errorMessage ? <FieldError>{errorMessage}</FieldError> : null}

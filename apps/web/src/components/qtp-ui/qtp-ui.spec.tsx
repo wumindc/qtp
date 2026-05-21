@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -8,6 +8,7 @@ import {
   QEmptyState,
   QErrorState,
   QLoadingState,
+  QModal,
   QSelectField,
   QTextareaField,
   QTextField,
@@ -36,6 +37,36 @@ describe('QTP UI Kit', () => {
     expect(screen.getByLabelText('模型说明')).toHaveValue('用于通用问答');
     expect(screen.getByText('名称重复')).toBeInTheDocument();
     expect(screen.getByLabelText('模型能力')).toBeInTheDocument();
+  });
+
+  it('passes hidden text field labels to the React Aria field root', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    render(<QTextField aria-label="搜索模型" placeholder="搜索模型名称" value="" onChange={() => undefined} />);
+
+    expect(screen.getByLabelText('搜索模型')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('If you do not provide a visible label'),
+      ),
+    );
+  });
+
+  it('renders controlled modals without requiring a trigger child', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    render(
+      <QModal isOpen title="添加模型" onOpenChange={() => undefined}>
+        <p>模型表单</p>
+      </QModal>,
+    );
+
+    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('A PressResponder was rendered without a pressable child'),
+      ),
+    );
   });
 
   it('renders status, empty, error, and loading states with stable text', () => {
