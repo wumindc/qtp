@@ -255,6 +255,8 @@ describe('ModelCenterPage', () => {
         method: 'POST',
       }),
     );
+    await waitFor(() => expect(screen.queryByRole('form', { name: '添加模型表单' })).not.toBeInTheDocument());
+    expect(screen.queryByText('紧凑单位模型')).not.toBeInTheDocument();
   });
 
   it('tests model connection through the gateway row action using id', async () => {

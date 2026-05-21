@@ -72,10 +72,12 @@ function mapModel(item: GatewayRow, providerLookup: Map<string, ModelProviderRec
  * Loads Model Center records through the existing AI gateway endpoints.
  */
 export async function loadModelCenterData(): Promise<ModelCenterInitialData> {
-  const [providerPayload, modelPayload] = await Promise.all([
+  const [providerResult, modelResult] = await Promise.allSettled([
     postGateway<unknown>('ai', '/provider/list.do', { page: { currentPage: 1, linesPerPage: 50 }, data: {} }, { cache: 'no-store' }),
     postGateway<unknown>('ai', '/provider/model/list.do', { page: { currentPage: 1, linesPerPage: 50 }, data: {} }, { cache: 'no-store' }),
   ]);
+  const providerPayload = providerResult.status === 'fulfilled' ? providerResult.value : undefined;
+  const modelPayload = modelResult.status === 'fulfilled' ? modelResult.value : undefined;
   const providers = readGatewayList<GatewayRow>(providerPayload).map(mapProvider);
   const providerLookup = new Map(providers.map((provider) => [provider.code, provider]));
   const models = readGatewayList<GatewayRow>(modelPayload).map((item) => mapModel(item, providerLookup));

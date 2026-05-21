@@ -5,7 +5,7 @@ import { Boxes, Check, FlaskConical, Pencil, Plus, Search, ServerCog, ShieldChec
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { QButton, QConfirmDialog, QDataTable, QEmptyState, QModal, QSelectField, QStatusChip, QTextField } from '@/components/qtp-ui';
-import { buildModelForm, buildModelPayload, buildProviderForm, formatTokenDisplay, MODEL_TYPE_META, PROVIDER_TYPE_META, PROTOCOL_META, SUPPORT_OPTIONS, providerToOptionLabel } from './model-center-schema';
+import { buildModelForm, buildModelPayload, buildProviderForm, formatTokenDisplay, MODEL_TYPE_META, parseTokenCount, PROVIDER_TYPE_META, PROTOCOL_META, SUPPORT_OPTIONS, providerToOptionLabel } from './model-center-schema';
 import { useModelCenterData, useModelCenterMutations } from './model-center-queries';
 import type { DialogMode, FieldErrors, ModelCenterRecord, ModelCenterTab, ModelFormState, ModelProviderRecord, ProviderFormState, ProviderType, StatusLabel } from './types';
 
@@ -24,23 +24,9 @@ interface GatewayMessage {
   data?: { message?: string };
 }
 
-function toStatusLabel(enabled: boolean): StatusLabel {
-  return enabled ? '启用' : '停用';
-}
-
 function toNumber(value: string, fallback?: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && value.trim() !== '' ? parsed : fallback;
-}
-
-function parseTokenInput(value: string, fallback?: number) {
-  const normalized = value.trim().replace(/,/g, '').replace(/\s+/g, '').toLowerCase();
-  if (!normalized) return fallback;
-  const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
-  if (!match) return fallback;
-  const multiplier = match[2] === 'm' ? 1_000_000 : match[2] === 'k' ? 1_000 : 1;
-  const parsed = Number(match[1]) * multiplier;
-  return Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed) ? parsed : fallback;
 }
 
 function formatTokenInput(value?: number) {
@@ -72,23 +58,6 @@ function modelToForm(model: ModelCenterRecord): ModelFormState {
     thinkingEnabled: String(model.parameters.thinkingEnabled ?? model.capabilities.reasoning ?? false),
     dimensions: String(model.parameters.dimensions ?? model.limits.embeddingDimensions ?? ''),
   };
-}
-
-function buildLocalProviderCode(name: string, type: ProviderType, existingProviders: ModelProviderRecord[]) {
-  const nameSlug = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  const baseCode = `provider-${nameSlug || type.toLowerCase().replace(/_/g, '-')}`;
-  const usedCodes = new Set(existingProviders.map((provider) => provider.code));
-  let nextCode = baseCode;
-  let index = 2;
-  while (usedCodes.has(nextCode)) {
-    nextCode = `${baseCode}-${index}`;
-    index += 1;
-  }
-  return nextCode;
 }
 
 function mutationMessage(result: GatewayMessage, fallback: string) {
@@ -227,8 +196,8 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     if (!modelForm.modelId.trim()) errors.modelId = '请填写供应商模型 ID。';
     if (provider?.type === 'DEEPSEEK' && modelForm.modelType === 'EMBEDDING') errors.modelType = 'DeepSeek 官方供应商暂不支持 Embedding。';
     if (modelForm.modelType === 'LLM') {
-      if (!parseTokenInput(modelForm.contextWindow)) errors.contextWindow = '请输入有效 token 数量，例如 128k 或 1000000。';
-      if (!parseTokenInput(modelForm.maxOutputTokens)) errors.maxOutputTokens = '请输入有效 token 数量，例如 4k 或 4096。';
+      if (!parseTokenCount(modelForm.contextWindow)) errors.contextWindow = '请输入有效 token 数量，例如 128k 或 1000000。';
+      if (!parseTokenCount(modelForm.maxOutputTokens)) errors.maxOutputTokens = '请输入有效 token 数量，例如 4k 或 4096。';
     }
     if (modelForm.modelType === 'EMBEDDING' && modelForm.dimensions && !toNumber(modelForm.dimensions)) {
       errors.dimensions = '维度必须是数字。';
@@ -241,24 +210,10 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
     event.preventDefault();
     if (!validateProviderForm()) return;
     try {
-      const saved = (await mutations.saveProvider.mutateAsync({
+      await mutations.saveProvider.mutateAsync({
         form: providerForm,
         editingProviderCode: providerFormMode === 'edit' ? editingProviderCode : undefined,
-      })) as Record<string, unknown>;
-      const generatedCode = providerFormMode === 'create' ? buildLocalProviderCode(providerForm.name, providerForm.type, providers) : editingProviderCode;
-      const nextProvider: ModelProviderRecord = {
-        id: String(saved.providerCode ?? generatedCode),
-        code: String(saved.providerCode ?? generatedCode),
-        name: String(saved.providerName ?? providerForm.name.trim()),
-        type: (saved.providerType ?? providerForm.type) as ProviderType,
-        baseUrl: String(saved.baseUrl ?? providerForm.baseUrl.trim()),
-        apiKey: String(saved.apiKey ?? providerForm.apiKey.trim()),
-        status: toStatusLabel(saved.enabled !== false),
-      };
-      setProviders((current) =>
-        providerFormMode === 'edit' ? current.map((provider) => (provider.code === nextProvider.code ? nextProvider : provider)) : [nextProvider, ...current],
-      );
-      setModels((current) => current.map((model) => (model.provider === nextProvider.code ? { ...model, providerName: nextProvider.name, providerType: nextProvider.type } : model)));
+      });
       notify(providerFormMode === 'edit' ? '供应商已更新' : '供应商已添加');
       setProviderDialogOpen(false);
     } catch (error) {
@@ -275,28 +230,11 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       return;
     }
     try {
-      const saved = (await mutations.saveModel.mutateAsync({
+      await mutations.saveModel.mutateAsync({
         form: modelForm,
         provider,
         editingModelId: modelDialogMode === 'edit' ? editingModelId : undefined,
-      })) as Record<string, unknown>;
-      const payload = buildModelPayload(modelForm, provider);
-      const id = String(saved.id ?? (modelDialogMode === 'edit' ? editingModelId : Date.now()));
-      const nextModel: ModelCenterRecord = {
-        id,
-        name: String(saved.modelName ?? payload.modelName),
-        provider: String(saved.providerCode ?? provider.code),
-        providerName: provider.name,
-        providerType: provider.type,
-        modelId: String(saved.modelId ?? payload.modelId),
-        modelType: payload.modelType,
-        protocol: payload.protocol,
-        parameters: (saved.parameters as ModelCenterRecord['parameters'] | undefined) ?? payload.parameters,
-        capabilities: (saved.capabilities as ModelCenterRecord['capabilities'] | undefined) ?? payload.capabilities,
-        limits: (saved.limits as ModelCenterRecord['limits'] | undefined) ?? payload.limits,
-        status: toStatusLabel(saved.enabled !== false),
-      };
-      setModels((current) => (modelDialogMode === 'edit' ? current.map((model) => (model.id === nextModel.id ? nextModel : model)) : [nextModel, ...current]));
+      });
       notify(modelDialogMode === 'edit' ? '模型已更新' : '模型已添加');
       closeModelDialog();
     } catch (error) {

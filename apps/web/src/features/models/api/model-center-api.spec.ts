@@ -66,6 +66,15 @@ describe('loadModelCenterData', () => {
       ],
     });
   });
+
+  it('returns an empty model center when gateway list loading fails', async () => {
+    vi.mocked(postGateway).mockRejectedValue(new Error('gateway down'));
+
+    await expect(loadModelCenterData()).resolves.toEqual({
+      models: [],
+      providers: [],
+    });
+  });
 });
 
 describe('model center form connection tests', () => {
