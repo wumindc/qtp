@@ -4,6 +4,8 @@
 
 The Model Center POC uses HeroUI, QTP UI Kit wrappers, TanStack Query, and the existing backend `.do` endpoints. The slice keeps the existing `/ai-quality-platform/providers` route while moving model-center UI, data loading, mutation calls, and schema mapping into the new rewrite structure.
 
+The implemented HeroUI v3 integration uses `@import "@heroui/styles";` at the app stylesheet boundary and HeroUI's `RouterProvider` in `AppProviders`. It does not use the earlier plan draft's Tailwind plugin entry or `HeroUIProvider`, because those exports are not available in the installed HeroUI v3 package shape.
+
 ## Verified Commands
 
 - `pnpm --filter web test` - 16 files and 53 tests passed.
@@ -24,3 +26,5 @@ The Model Center POC uses HeroUI, QTP UI Kit wrappers, TanStack Query, and the e
 ## Decision
 
 Continue the HeroUI + TanStack rewrite route. The POC passed unit tests, type checking, production build, and browser smoke checks after fixing the React Aria label and controlled-modal warning paths in the QTP UI Kit.
+
+Before expanding to complex data-heavy pages, add a shared loading-error path for failed list queries and decide how much TanStack Table behavior should live inside `QDataTable`.
