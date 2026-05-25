@@ -1,0 +1,51 @@
+<!-- @author codex: HeroUI adoption options for the QTP frontend rewrite discussion. -->
+<h2>HeroUI 用在 QTP 前端重写里：我会这样拆</h2>
+<p class="subtitle">HeroUI 适合做“漂亮、可访问、动效自然”的基础组件层，但管理端还需要补数据请求、复杂表格、权限菜单、业务工作区结构。</p>
+
+<div class="options">
+  <div class="option" data-choice="heroui-main" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>HeroUI 做主组件库</h3>
+      <p>Button、Input、Select、Modal、Drawer、Tabs、Toast、Card、Chip、Table 都优先用 HeroUI。我们补一层 QTP Design System 包装，统一业务语义和中文后台交互。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="hybrid" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>HeroUI + TanStack 的混合路线</h3>
+      <p>HeroUI 负责基础视觉和通用控件；复杂数据表、查询缓存、表单状态、虚拟列表仍用 TanStack / React Hook Form 等专业库承接。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="visual-only" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>HeroUI 只做视觉参考</h3>
+      <p>保留 shadcn/Radix 自研组件路线，但把 HeroUI 的视觉语言、圆角、动效、色彩层次作为设计参考。控制力最高，开发量也最大。</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>适合它的部分</h4>
+    <ul>
+      <li>登录页、全局布局、应用目录、设置表单、弹窗抽屉、状态提示。</li>
+      <li>需要现代感和轻量动效的管理台体验。</li>
+      <li>React 19 / Tailwind v4 新项目。</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>要谨慎的部分</h4>
+    <ul>
+      <li>复杂表格、批量操作、列配置、服务端分页排序要先做 POC。</li>
+      <li>本项目是 pnpm monorepo，要确认依赖提升和 Tailwind 扫描配置。</li>
+      <li>不能直接让组件库决定业务架构，仍要自己设计模块边界。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我目前更推荐 B</h3>
+  <p>用 HeroUI 把视觉和基础交互拉起来，同时让 TanStack Query/Table、React Hook Form/Zod 这类库承担复杂业务能力。这样能拿到 HeroUI 的美观，又不会在测试计划、执行历史、评估报告这类重业务页面里被单一组件库卡住。</p>
+</div>
