@@ -16,6 +16,6 @@ describe('ReportController', () => {
     expect((await controller.list({
       page: { currentPage: 1, linesPerPage: 10 },
       data: { appCode: 'credit_assistant', runCode: 'SMOKE_RUN_10' },
-    })).list).toHaveLength(1);
+    })).data.list).toHaveLength(1);
   });
 });

@@ -3,7 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
 describe('AppController', () => {
-  it('wraps empty list responses in page format', async () => {
+  it('wraps empty list responses in the platform response envelope', async () => {
     const controller = new AppController(new AppService());
 
     const response = await controller.list({
@@ -11,8 +11,26 @@ describe('AppController', () => {
       data: {},
     });
 
-    expect(response.list).toHaveLength(0);
-    expect(response.page.currentPage).toBe(1);
+    expect(response.success).toBe(true);
+    expect(response.data.list).toHaveLength(0);
+    expect(response.data.page.currentPage).toBe(1);
+  });
+
+  it('wraps single app detail responses in the platform response envelope', async () => {
+    const service = new AppService();
+    await service.create({
+      appCode: 'workspace_app',
+      appName: '工作区应用',
+      appType: 'CHATBOT',
+      businessDomain: '应用工作台',
+      invokeUrl: 'http://example.com/workspace',
+    });
+    const controller = new AppController(service);
+
+    const response = await controller.detail({ appCode: 'workspace_app' });
+
+    expect(response.success).toBe(true);
+    expect(response.data.appCode).toBe('workspace_app');
   });
 
   it('exposes protocol detail, save, and test endpoints', async () => {

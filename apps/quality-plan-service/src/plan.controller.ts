@@ -17,8 +17,8 @@ export class PlanController {
    * Lists configured test plans.
    */
   @Post('list.do')
-  list(@Body() request: { page: { currentPage: number; linesPerPage: number }; data: Record<string, unknown> }) {
-    return this.planService.list(request.data ?? {}, request.page);
+  async list(@Body() request: { page: { currentPage: number; linesPerPage: number }; data: Record<string, unknown> }) {
+    return ok(await this.planService.list(request.data ?? {}, request.page));
   }
 
   @Post('create.do')

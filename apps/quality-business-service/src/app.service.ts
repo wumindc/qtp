@@ -296,6 +296,14 @@ export class AppService {
     return this.persist({ ...app, status });
   }
 
+  /**
+   * @author codex
+   * Returns the canonical application record used by frontend workspace pages.
+   */
+  async detail(appCode: string): Promise<AppRecord> {
+    return this.getApp(appCode);
+  }
+
   async update(appCode: string, request: UpdateAppRequest): Promise<AppRecord> {
     const app = await this.getApp(appCode);
     const protocolRequest = request as AppProtocolSaveRequest;

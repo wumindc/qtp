@@ -16,13 +16,13 @@ export class ExecutionController {
   }
 
   @Post('run-list.do')
-  runList(@Body() request: { page: { currentPage: number; linesPerPage: number }; data: Record<string, unknown> }) {
-    return this.executionService.runList(request.data ?? {}, request.page);
+  async runList(@Body() request: { page: { currentPage: number; linesPerPage: number }; data: Record<string, unknown> }) {
+    return ok(await this.executionService.runList(request.data ?? {}, request.page));
   }
 
   @Post('result-list.do')
   async resultList(@Body() request: { runCode: string; page: { currentPage: number; linesPerPage: number } }) {
-    return this.executionService.resultList(request.runCode, request.page);
+    return ok(await this.executionService.resultList(request.runCode, request.page));
   }
 
   @Post('rerun.do')

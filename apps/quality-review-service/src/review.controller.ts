@@ -11,8 +11,8 @@ export class ReviewController {
    * Lists manual review tasks.
    */
   @Post('list.do')
-  list(@Body() request: { page: { currentPage: number; linesPerPage: number } }) {
-    return this.reviewService.list(request.page);
+  async list(@Body() request: { page: { currentPage: number; linesPerPage: number } }) {
+    return ok(await this.reviewService.list(request.page));
   }
 
   @Post('submit.do')

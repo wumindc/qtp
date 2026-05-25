@@ -1,10 +1,9 @@
 'use client';
 
-import { Card, CardContent as CardBody, CardHeader, Chip, Tab, Tabs, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
-import { Boxes, Check, FlaskConical, Pencil, Plus, Search, ServerCog, ShieldCheck, Trash2 } from 'lucide-react';
+import { Boxes, Check, FlaskConical, Pencil, Plus, RefreshCw, Search, ServerCog, ShieldCheck, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { QButton, QConfirmDialog, QDataTable, QEmptyState, QModal, QSelectField, QStatusChip, QTextField } from '@/components/qtp-ui';
+import { QButton, QConfirmDialog, QEmptyState, QModal, QSelectField, QStatusChip, QTextField } from '@/components/qtp-ui';
 import { buildModelForm, buildModelPayload, buildProviderForm, formatTokenDisplay, MODEL_TYPE_META, parseTokenCount, PROVIDER_TYPE_META, PROTOCOL_META, SUPPORT_OPTIONS, providerToOptionLabel } from './model-center-schema';
 import { useModelCenterData, useModelCenterMutations } from './model-center-queries';
 import type { DialogMode, FieldErrors, ModelCenterRecord, ModelCenterTab, ModelFormState, ModelProviderRecord, ProviderFormState, ProviderType, StatusLabel } from './types';
@@ -69,7 +68,7 @@ function mutationMessage(result: GatewayMessage, fallback: string) {
  * Renders the HeroUI POC Model Center while preserving the original console workflows.
  */
 export function ModelCenterPage({ initialModels, initialProviders }: ModelCenterPageProps) {
-  const { data } = useModelCenterData({ models: initialModels, providers: initialProviders });
+  const { data, isFetching, refetch } = useModelCenterData({ models: initialModels, providers: initialProviders });
   const mutations = useModelCenterMutations();
   const [models, setModels] = useState(initialModels);
   const [providers, setProviders] = useState(initialProviders);
@@ -102,6 +101,15 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const notify = (message: string) => {
     setActionMessage(message);
     toast(message);
+  };
+
+  const refreshModelCenter = async () => {
+    const result = await refetch();
+    if (result.error) {
+      notify(result.error instanceof Error ? result.error.message : '模型中心刷新失败');
+      return;
+    }
+    notify('模型中心已刷新');
   };
 
   const providersByCode = useMemo(() => new Map(providers.map((provider) => [provider.code, provider])), [providers]);
@@ -348,45 +356,66 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
 
   return (
     <section className="model-center-page">
-      <Card className="model-center-surface" variant="secondary">
-        <CardHeader className="model-center-heading">
-          <div>
-            <div className="model-center-title-line">
-              <h1>模型中心</h1>
-              <Chip color="accent" size="sm" variant="soft">
-                HeroUI POC
-              </Chip>
-            </div>
-            <p>以模型资产为主维护 LLM 与 Embedding 能力；供应商仅作为可复用的全局凭证与端点配置。</p>
-          </div>
-          <span className="model-center-summary">
-            {models.filter((model) => model.status === '启用').length} 个模型启用 · {providers.filter((provider) => provider.status === '启用').length} 个供应商启用
-          </span>
-        </CardHeader>
-        <CardBody>
-          {actionMessage ? (
-            <div className="console-message" role="status">
-              {actionMessage}
-            </div>
-          ) : null}
+      <header className="app-catalog-hero model-center-heading">
+        <div>
+          <h1>模型中心</h1>
+          <p>以模型资产为主维护 LLM 与 Embedding 能力；供应商仅作为可复用的全局凭证与端点配置。</p>
+        </div>
+        <div className="app-catalog-page-actions">
+          <button className="console-button" type="button" disabled={isFetching} onClick={() => void refreshModelCenter()}>
+            <RefreshCw size={14} strokeWidth={1.9} aria-hidden="true" />
+            {isFetching ? '刷新中' : '刷新'}
+          </button>
+          <button
+            className="console-button console-button-primary app-catalog-new-button"
+            type="button"
+            onClick={() => (activeTab === 'providers' ? openProviderPanel('create') : openModelDialog('create'))}
+          >
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />
+            {activeTab === 'providers' ? '添加供应商' : '添加模型'}
+          </button>
+        </div>
+      </header>
 
-          <Tabs selectedKey={activeTab} onSelectionChange={(key) => setActiveTab(key as ModelCenterTab)} variant="secondary">
-            <Tabs.List aria-label="模型中心管理" className="preset-admin-tabs model-center-tabs">
-              <Tab id="models">
-                <Boxes size={14} strokeWidth={1.9} aria-hidden="true" />
-                模型列表
-                <span>{models.length}</span>
-              </Tab>
-              <Tab id="providers">
-                <ServerCog size={14} strokeWidth={1.9} aria-hidden="true" />
-                供应商列表
-                <span>{providers.length}</span>
-              </Tab>
-            </Tabs.List>
-          </Tabs>
+      <div className="app-catalog-summary model-center-summary" aria-label="模型中心统计">
+        <span>模型 {models.length}</span>
+        <span>启用模型 {models.filter((model) => model.status === '启用').length}</span>
+        <span>供应商 {providers.length}</span>
+        <span>启用供应商 {providers.filter((provider) => provider.status === '启用').length}</span>
+      </div>
+      {actionMessage ? (
+        <div className="console-message" role="status">
+          {actionMessage}
+        </div>
+      ) : null}
 
-          {activeTab === 'models' ? (
-            <section className="model-center-grid" role="tabpanel" aria-label="模型列表">
+      <div className="preset-admin-tabs model-center-tabs" role="tablist" aria-label="模型中心管理">
+        <button
+          aria-selected={activeTab === 'models'}
+          className={activeTab === 'models' ? 'is-active' : ''}
+          role="tab"
+          type="button"
+          onClick={() => setActiveTab('models')}
+        >
+          <Boxes size={14} strokeWidth={1.9} aria-hidden="true" />
+          模型列表
+          <span>{models.length}</span>
+        </button>
+        <button
+          aria-selected={activeTab === 'providers'}
+          className={activeTab === 'providers' ? 'is-active' : ''}
+          role="tab"
+          type="button"
+          onClick={() => setActiveTab('providers')}
+        >
+          <ServerCog size={14} strokeWidth={1.9} aria-hidden="true" />
+          供应商列表
+          <span>{providers.length}</span>
+        </button>
+      </div>
+
+      {activeTab === 'models' ? (
+        <section className="model-center-grid" role="tabpanel" aria-label="模型列表">
               <div className="model-center-toolbar">
                 <div className="console-search">
                   <Search size={15} strokeWidth={1.9} aria-hidden="true" />
@@ -402,72 +431,70 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                   <QSelectField label="按供应商筛选" selectedKey={providerFilter} onSelectionChange={(key) => setProviderFilter(String(key))} options={[{ label: '全部供应商', value: '全部' }, ...providers.map((provider) => ({ label: provider.name, value: provider.code }))]} />
                   <QSelectField label="按状态筛选" selectedKey={statusFilter} onSelectionChange={(key) => setStatusFilter(key as '全部' | StatusLabel)} options={[{ label: '全部状态', value: '全部' }, { label: '启用', value: '启用' }, { label: '停用', value: '停用' }]} />
                 </div>
-                <QButton onPress={() => openModelDialog('create')}>
-                  <Plus size={14} strokeWidth={2} aria-hidden="true" />
-                  添加模型
-                </QButton>
               </div>
 
-              <QDataTable aria-label="模型列表">
-                <TableHeader>
-                  <TableColumn isRowHeader>模型</TableColumn>
-                  <TableColumn>能力</TableColumn>
-                  <TableColumn isRowHeader>供应商</TableColumn>
-                  <TableColumn>模型 ID</TableColumn>
-                  <TableColumn>协议</TableColumn>
-                  <TableColumn>能力边界</TableColumn>
-                  <TableColumn>状态</TableColumn>
-                  <TableColumn>操作</TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {visibleModels.map((model) => {
-                    const provider = providersByCode.get(model.provider);
-                    return (
-                      <TableRow id={model.id} key={model.id}>
-                        <TableCell>
-                          <strong className="model-name-cell">{model.name}</strong>
-                          <span>{model.id}</span>
-                        </TableCell>
-                        <TableCell>{MODEL_TYPE_META[model.modelType].label}</TableCell>
-                        <TableCell>
-                          <span className="model-provider-badge">{provider?.name ?? model.providerName}</span>
-                          <small>{PROVIDER_TYPE_META[provider?.type ?? model.providerType].label}</small>
-                        </TableCell>
-                        <TableCell>{model.modelId}</TableCell>
-                        <TableCell>{PROTOCOL_META[model.protocol]}</TableCell>
-                        <TableCell>
-                          {model.modelType === 'EMBEDDING'
-                            ? `${model.limits.embeddingDimensions ?? model.parameters.dimensions ?? '-'} 维`
-                            : `${formatTokenDisplay(model.limits.contextWindow)} ctx / ${formatTokenDisplay(model.limits.maxOutputTokens ?? model.parameters.maxOutputTokens)} out`}
-                        </TableCell>
-                        <TableCell>
-                          <QStatusChip status={model.status} />
-                        </TableCell>
-                        <TableCell>
-                          <div className="console-row-actions">
-                            <QButton color="default" variant="secondary" onPress={() => openModelDialog('edit', model)}>
-                              <Pencil size={13} strokeWidth={1.9} aria-hidden="true" />
-                              编辑
-                            </QButton>
-                            <QButton color="default" variant="secondary" onPress={() => setPendingConfirm({ kind: 'model-status', model })}>
-                              <ShieldCheck size={13} strokeWidth={1.9} aria-hidden="true" />
-                              {model.status === '启用' ? '停用' : '启用'}
-                            </QButton>
-                            <QButton color="default" variant="secondary" onPress={() => void testModel(model)}>
-                              <FlaskConical size={13} strokeWidth={1.9} aria-hidden="true" />
-                              测试连接
-                            </QButton>
-                            <QButton color="danger" onPress={() => setPendingModelDelete(model)}>
-                              <Trash2 size={13} strokeWidth={1.9} aria-hidden="true" />
-                              删除
-                            </QButton>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </QDataTable>
+              <div className="model-rich-list" role="list" aria-label="模型列表">
+                {visibleModels.map((model) => {
+                  const provider = providersByCode.get(model.provider);
+                  const limitText =
+                    model.modelType === 'EMBEDDING'
+                      ? `${model.limits.embeddingDimensions ?? model.parameters.dimensions ?? '-'} 维`
+                      : `${formatTokenDisplay(model.limits.contextWindow)} ctx / ${formatTokenDisplay(model.limits.maxOutputTokens ?? model.parameters.maxOutputTokens)} out`;
+                  const capabilityText =
+                    model.modelType === 'EMBEDDING'
+                      ? '向量召回'
+                      : [
+                          model.capabilities.stream ? '流式' : null,
+                          model.capabilities.jsonMode ? 'JSON' : null,
+                          model.capabilities.toolCalling ? '工具' : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' / ') || '基础对话';
+
+                  return (
+                    <article className={`model-rich-row ${model.status === '启用' ? 'is-success' : 'is-muted'}`} key={model.id} role="listitem">
+                      <div className="model-rich-identity">
+                        <div className="app-project-title-row">
+                          <Boxes size={17} strokeWidth={1.9} aria-hidden="true" />
+                          <strong>{model.name}</strong>
+                        </div>
+                        <span>{model.modelId}</span>
+                        <div className="app-project-subline">
+                          <span className="app-catalog-meta-chip">{MODEL_TYPE_META[model.modelType].label}</span>
+                          <span>{PROTOCOL_META[model.protocol]}</span>
+                        </div>
+                      </div>
+                      <div className="model-rich-meta">
+                        <span className="app-project-meta-label">供应商</span>
+                        <strong>{provider?.name ?? model.providerName}</strong>
+                        <span>{PROVIDER_TYPE_META[provider?.type ?? model.providerType].label}</span>
+                      </div>
+                      <div className="model-rich-meta">
+                        <span className="app-project-meta-label">能力边界</span>
+                        <strong>{limitText}</strong>
+                        <span>{capabilityText}</span>
+                      </div>
+                      <div className="model-rich-status">
+                        <QStatusChip status={model.status} />
+                      </div>
+                      <div className="app-project-actions">
+                        <button className="app-project-icon-action" type="button" aria-label={`编辑 ${model.name}`} title="编辑模型" onClick={() => openModelDialog('edit', model)}>
+                          <Pencil size={16} strokeWidth={1.8} aria-hidden="true" />
+                        </button>
+                        <button className="app-project-icon-action" type="button" aria-label={`${model.status === '启用' ? '停用' : '启用'} ${model.name}`} title={model.status === '启用' ? '停用' : '启用'} onClick={() => setPendingConfirm({ kind: 'model-status', model })}>
+                          <ShieldCheck size={16} strokeWidth={1.8} aria-hidden="true" />
+                        </button>
+                        <button className="app-project-icon-action" type="button" aria-label={`测试连接 ${model.name}`} title="测试连接" onClick={() => void testModel(model)}>
+                          <FlaskConical size={16} strokeWidth={1.8} aria-hidden="true" />
+                        </button>
+                        <button className="app-project-icon-action is-danger" type="button" aria-label={`删除 ${model.name}`} title="删除模型" onClick={() => setPendingModelDelete(model)}>
+                          <Trash2 size={16} strokeWidth={1.8} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
               {visibleModels.length === 0 ? (
                 <QEmptyState
                   title={models.length === 0 ? '暂无模型' : '暂无匹配模型'}
@@ -475,71 +502,60 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
                   action={<QButton onPress={() => openModelDialog('create')}>添加模型</QButton>}
                 />
               ) : null}
-            </section>
-          ) : null}
+        </section>
+      ) : null}
 
-          {activeTab === 'providers' ? (
-            <section className="provider-tab-panel" role="tabpanel" aria-label="供应商列表">
-              <div className="model-center-toolbar">
-                <div className="model-center-toolbar-copy">
-                  <strong>供应商列表</strong>
-                  <span>维护全局凭证和端点；模型配置只引用这些供应商。</span>
+      {activeTab === 'providers' ? (
+        <section className="provider-tab-panel" role="tabpanel" aria-label="供应商列表">
+          <div className="model-center-toolbar">
+            <div className="model-center-toolbar-copy">
+              <strong>供应商列表</strong>
+              <span>维护全局凭证和端点；模型配置只引用这些供应商。</span>
+            </div>
+          </div>
+          <div className="model-rich-list" role="list" aria-label="供应商列表">
+            {providers.map((provider) => (
+              <article className={`model-rich-row provider-rich-row ${provider.status === '启用' ? 'is-success' : 'is-muted'}`} key={provider.code} role="listitem">
+                <div className="model-rich-identity">
+                  <div className="app-project-title-row">
+                    <ServerCog size={17} strokeWidth={1.9} aria-hidden="true" />
+                    <strong>{provider.name}</strong>
+                  </div>
+                  <span>{provider.code}</span>
+                  <div className="app-project-subline">
+                    <span className="app-catalog-meta-chip">{PROVIDER_TYPE_META[provider.type].label}</span>
+                  </div>
                 </div>
-                <QButton onPress={() => openProviderPanel('create')}>
-                  <Plus size={14} strokeWidth={2} aria-hidden="true" />
-                  添加供应商
-                </QButton>
-              </div>
-              <QDataTable aria-label="供应商列表">
-                <TableHeader>
-                  <TableColumn isRowHeader>供应商</TableColumn>
-                  <TableColumn>类型</TableColumn>
-                  <TableColumn>接口地址</TableColumn>
-                  <TableColumn>状态</TableColumn>
-                  <TableColumn>操作</TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {providers.map((provider) => (
-                    <TableRow id={provider.code} key={provider.code}>
-                      <TableCell>
-                        <strong className="model-name-cell">{provider.name}</strong>
-                      </TableCell>
-                      <TableCell>{PROVIDER_TYPE_META[provider.type].label}</TableCell>
-                      <TableCell>{provider.baseUrl}</TableCell>
-                      <TableCell>
-                        <QStatusChip status={provider.status} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="console-row-actions">
-                          <QButton color="default" variant="secondary" onPress={() => openProviderPanel('edit', provider)}>
-                            <Pencil size={13} strokeWidth={1.9} aria-hidden="true" />
-                            编辑
-                          </QButton>
-                          <QButton color="default" variant="secondary" onPress={() => setPendingConfirm({ kind: 'provider-status', provider })}>
-                            <ShieldCheck size={13} strokeWidth={1.9} aria-hidden="true" />
-                            {provider.status === '启用' ? '停用' : '启用'}
-                          </QButton>
-                          <QButton color="default" variant="secondary" onPress={() => void testProvider(provider)}>
-                            <FlaskConical size={13} strokeWidth={1.9} aria-hidden="true" />
-                            测试
-                          </QButton>
-                          <QButton color="danger" onPress={() => setPendingProviderDelete(provider)}>
-                            <Trash2 size={13} strokeWidth={1.9} aria-hidden="true" />
-                            删除
-                          </QButton>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </QDataTable>
-              {providers.length === 0 ? (
-                <QEmptyState title="暂无供应商" description="先添加 OpenAI 兼容、通义千问或 DeepSeek 供应商，再绑定模型。" action={<QButton onPress={() => openProviderPanel('create')}>添加供应商</QButton>} />
-              ) : null}
-            </section>
+                <div className="model-rich-meta provider-url-meta">
+                  <span className="app-project-meta-label">接口地址</span>
+                  <strong>{provider.baseUrl}</strong>
+                  <span>全局凭证配置</span>
+                </div>
+                <div className="model-rich-status">
+                  <QStatusChip status={provider.status} />
+                </div>
+                <div className="app-project-actions">
+                  <button className="app-project-icon-action" type="button" aria-label={`编辑 ${provider.name}`} title="编辑供应商" onClick={() => openProviderPanel('edit', provider)}>
+                    <Pencil size={16} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                  <button className="app-project-icon-action" type="button" aria-label={`${provider.status === '启用' ? '停用' : '启用'} ${provider.name}`} title={provider.status === '启用' ? '停用' : '启用'} onClick={() => setPendingConfirm({ kind: 'provider-status', provider })}>
+                    <ShieldCheck size={16} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                  <button className="app-project-icon-action" type="button" aria-label={`测试 ${provider.name}`} title="测试供应商" onClick={() => void testProvider(provider)}>
+                    <FlaskConical size={16} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                  <button className="app-project-icon-action is-danger" type="button" aria-label={`删除 ${provider.name}`} title="删除供应商" onClick={() => setPendingProviderDelete(provider)}>
+                    <Trash2 size={16} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+          {providers.length === 0 ? (
+            <QEmptyState title="暂无供应商" description="先添加 OpenAI 兼容、通义千问或 DeepSeek 供应商，再绑定模型。" action={<QButton onPress={() => openProviderPanel('create')}>添加供应商</QButton>} />
           ) : null}
-        </CardBody>
-      </Card>
+        </section>
+      ) : null}
 
       <QModal isOpen={Boolean(modelDialogMode)} onOpenChange={(open) => !open && closeModelDialog()} title={modelDialogMode === 'create' ? '添加模型' : '编辑模型'} description={modelForm.name || '登记供应商侧模型 ID、能力类型和模型能力边界。'}>
         {modelDialogMode ? (

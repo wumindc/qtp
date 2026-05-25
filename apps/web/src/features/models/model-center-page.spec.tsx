@@ -102,8 +102,8 @@ describe('ModelCenterPage', () => {
     renderModelCenter();
 
     expect(screen.getByRole('heading', { name: '模型中心' })).toBeInTheDocument();
-    expect(screen.getByRole('table')).toHaveTextContent('OpenAI 兼容评估模型');
-    expect(screen.getByRole('table')).toHaveTextContent('128K ctx / 4,096 out');
+    expect(screen.getByRole('list', { name: '模型列表' })).toHaveTextContent('OpenAI 兼容评估模型');
+    expect(screen.getByRole('list', { name: '模型列表' })).toHaveTextContent('128K ctx / 4,096 out');
     expect(screen.getByRole('tab', { name: /模型列表/ })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: /供应商列表/ })).toHaveAttribute('aria-selected', 'false');
 
@@ -263,7 +263,7 @@ describe('ModelCenterPage', () => {
     const fetchMock = mockGateway();
     renderModelCenter();
 
-    fireEvent.click(screen.getByRole('button', { name: '测试连接' }));
+    fireEvent.click(screen.getByRole('button', { name: '测试连接 OpenAI 兼容评估模型' }));
 
     await waitFor(() => expect(screen.getByText('模型连接配置可用')).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledWith(
@@ -275,11 +275,12 @@ describe('ModelCenterPage', () => {
     );
   });
 
-  it('renders the HeroUI POC shell with the project table wrapper', () => {
+  it('renders the reference-style model rich list without the POC table wrapper', () => {
     renderModelCenter();
 
     expect(screen.getByRole('heading', { name: '模型中心' })).toBeInTheDocument();
-    expect(screen.getByText('HeroUI POC')).toBeInTheDocument();
-    expect(screen.getByRole('table')).toHaveTextContent('OpenAI 兼容评估模型');
+    expect(screen.queryByText('HeroUI POC')).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.getByRole('list', { name: '模型列表' })).toHaveTextContent('OpenAI 兼容评估模型');
   });
 });

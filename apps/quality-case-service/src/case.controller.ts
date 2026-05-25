@@ -27,13 +27,13 @@ export class CaseController {
    * Lists AI evaluation cases.
    */
   @Post('list.do')
-  list(@Body() request: { page: PageQuery; data: CaseQuery }) {
-    return this.caseService.list(request.data ?? {}, request.page);
+  async list(@Body() request: { page: PageQuery; data: CaseQuery }) {
+    return ok(await this.caseService.list(request.data ?? {}, request.page));
   }
 
   @Post('category/list.do')
-  categoryList(@Body() request: { page: PageQuery; data: CaseCategoryQuery }) {
-    return this.caseService.listCategories(request.data ?? {}, request.page);
+  async categoryList(@Body() request: { page: PageQuery; data: CaseCategoryQuery }) {
+    return ok(await this.caseService.listCategories(request.data ?? {}, request.page));
   }
 
   /**
@@ -61,8 +61,8 @@ export class CaseController {
   }
 
   @Post('preset/list.do')
-  presetList(@Body() request: { page: PageQuery; data: CaseQuery }) {
-    return this.caseService.listPresetCases(request.data ?? {}, request.page);
+  async presetList(@Body() request: { page: PageQuery; data: CaseQuery }) {
+    return ok(await this.caseService.listPresetCases(request.data ?? {}, request.page));
   }
 
   /**
@@ -128,8 +128,8 @@ export class CaseController {
    * Lists case suites for the selected AI application.
    */
   @Post('suite/list.do')
-  suiteList(@Body() request: { page: PageQuery; data: SuiteQuery }) {
-    return this.caseService.listSuites(request.data ?? {}, request.page);
+  async suiteList(@Body() request: { page: PageQuery; data: SuiteQuery }) {
+    return ok(await this.caseService.listSuites(request.data ?? {}, request.page));
   }
 
   @Post('suite/create.do')

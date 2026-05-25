@@ -17,7 +17,7 @@ export class ReportController {
 
   @Post('list.do')
   async list(@Body() request: { page: { currentPage: number; linesPerPage: number }; data?: Record<string, string> }) {
-    return this.reportService.list(request.data ?? {}, request.page);
+    return ok(await this.reportService.list(request.data ?? {}, request.page));
   }
 
   @Get('detail/:reportCode.do')

@@ -28,6 +28,25 @@ describe('AppService', () => {
     expect(disabled.status).toBe('DISABLED');
   });
 
+  it('returns a single AI application by code for workspace detail pages', async () => {
+    const service = new AppService();
+    await service.create({
+      appCode: 'workspace_app',
+      appName: '工作区应用',
+      appType: 'CHATBOT',
+      businessDomain: '应用工作台',
+      invokeUrl: 'http://example.com/workspace',
+      owner: 'workspace-owner',
+    });
+
+    await expect(service.detail('workspace_app')).resolves.toMatchObject({
+      appCode: 'workspace_app',
+      appName: '工作区应用',
+      owner: 'workspace-owner',
+    });
+    await expect(service.detail('missing_app')).rejects.toThrow('应用不存在');
+  });
+
   it('updates and deletes an AI application', async () => {
     const service = new AppService();
     await service.create({

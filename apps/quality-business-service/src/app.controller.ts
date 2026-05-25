@@ -24,28 +24,37 @@ export class AppController {
    * Returns AI applications in the shared list response format.
    */
   @Post('list.do')
-  list(@Body() request: ListRequest) {
-    return this.appService.list(request.data ?? {}, request.page);
+  async list(@Body() request: ListRequest) {
+    return ok(await this.appService.list(request.data ?? {}, request.page));
   }
 
   @Post('create.do')
-  create(@Body() request: CreateAppRequest) {
-    return this.appService.create(request);
+  async create(@Body() request: CreateAppRequest) {
+    return ok(await this.appService.create(request));
   }
 
   @Post('update.do')
-  update(@Body() request: { appCode: string; data: UpdateAppRequest }) {
-    return this.appService.update(request.appCode, request.data);
+  async update(@Body() request: { appCode: string; data: UpdateAppRequest }) {
+    return ok(await this.appService.update(request.appCode, request.data));
   }
 
   @Post('change-status.do')
-  changeStatus(@Body() request: { appCode: string; status: AppRecord['status'] }) {
-    return this.appService.changeStatus(request.appCode, request.status);
+  async changeStatus(@Body() request: { appCode: string; status: AppRecord['status'] }) {
+    return ok(await this.appService.changeStatus(request.appCode, request.status));
+  }
+
+  /**
+   * @author codex
+   * Returns one AI application for the Semi workspace detail page.
+   */
+  @Post('detail.do')
+  async detail(@Body() request: { appCode: string }) {
+    return ok(await this.appService.detail(request.appCode));
   }
 
   @Post('delete.do')
-  delete(@Body() request: { appCode: string }) {
-    return this.appService.delete(request.appCode);
+  async delete(@Body() request: { appCode: string }) {
+    return ok(await this.appService.delete(request.appCode));
   }
 
   /**

@@ -1,10 +1,9 @@
-import { loadApps } from '../../../features/apps/app-data';
-import { AppCatalogPage } from '../../../features/apps/app-catalog-page';
+/**
+ * AI 应用列表页
+ * @author Antigravity/Gemini-2.5-Pro
+ */
+import { AppListPage } from '@/features/apps/app-list';
 
-export const dynamic = 'force-dynamic';
-
-export default async function AppsPage() {
-  const apps = await loadApps();
-
-  return <AppCatalogPage initialApps={apps} />;
+export default function Page() {
+  return <AppListPage />;
 }

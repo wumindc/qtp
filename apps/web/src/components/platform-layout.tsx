@@ -15,5 +15,6 @@ export function PlatformLayout({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  return <AppShell currentPath={pathname}>{children}</AppShell>;
+  return <AppShell>{children}</AppShell>;
+
 }

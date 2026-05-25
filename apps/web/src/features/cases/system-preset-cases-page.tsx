@@ -2,6 +2,7 @@
 
 import { FormEvent, useMemo, useState } from 'react';
 import { getGatewayApiUrl } from '@ai-quality-platform/shared-config';
+import { FileText, FolderTree, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { ManagementConsoleRecord } from '../management-console-page';
 import { ConsoleSelect, DialogContent, DialogRoot, TextArea, TextInput } from '@/components/ui';
 
@@ -31,6 +32,40 @@ type PresetAdminTab = 'cases' | 'categories';
 const ALL_CATEGORY = 'ALL';
 const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH'];
 
+type GatewayRow = Record<string, unknown>;
+
+function readGatewayRows(payload: unknown) {
+  const source = payload as { list?: GatewayRow[]; records?: GatewayRow[]; data?: { list?: GatewayRow[]; records?: GatewayRow[] } };
+  if (Array.isArray(source)) return source as GatewayRow[];
+  if (Array.isArray(source?.list)) return source.list;
+  if (Array.isArray(source?.records)) return source.records;
+  if (Array.isArray(source?.data?.list)) return source.data.list;
+  if (Array.isArray(source?.data?.records)) return source.data.records;
+  return [];
+}
+
+function mapCategory(item: GatewayRow): PresetCategory {
+  return {
+    id: String(item.id),
+    name: String(item.name ?? '未命名分类'),
+    description: String(item.description ?? '未配置说明'),
+    sortOrder: String(item.sortOrder ?? '0'),
+    status: item.enabled === false || item.status === '停用' ? '停用' : '启用',
+  };
+}
+
+function mapPresetCase(item: GatewayRow): PresetCase {
+  return {
+    id: String(item.id ?? item.caseCode ?? item.code),
+    name: String(item.caseName ?? item.name ?? '未命名预置用例'),
+    categoryId: String(item.categoryId ?? item.categoryCode ?? item.category ?? 'GENERAL'),
+    risk: String(item.riskLevel ?? item.risk ?? 'MEDIUM'),
+    input: String(item.query ?? item.input ?? '未配置测试输入'),
+    expected: String(item.expectedBehavior ?? item.expected ?? '未配置期望行为'),
+    status: item.enabled === false || item.status === '停用' ? '停用' : '启用',
+  };
+}
+
 /**
  * @author codex
  * Provides global system preset case management for categories and reusable preset cases.
@@ -44,6 +79,7 @@ export function SystemPresetCasesPage({ initialCategories, initialCases, live }:
   const [selectedCategoryId, setSelectedCategoryId] = useState(ALL_CATEGORY);
   const [caseModalOpen, setCaseModalOpen] = useState(false);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState({ name: '', description: '' });
   const [caseDraft, setCaseDraft] = useState({
     name: '',
@@ -82,17 +118,37 @@ export function SystemPresetCasesPage({ initialCategories, initialCases, live }:
     [categories],
   );
 
-  const postAction = async (path: string, payload: Record<string, unknown>) => {
+  const postAction = async (path: string, payload: Record<string, unknown>, options?: { paged?: boolean }) => {
     const response = await fetch(getGatewayApiUrl('case', path), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(options?.paged ? { page: { currentPage: 1, linesPerPage: 50 }, data: payload } : payload),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result.success === false) {
       throw new Error(result.message ?? '服务端暂未确认操作结果');
     }
     return result.data ?? result;
+  };
+
+  const refreshPresetData = async () => {
+    setRefreshing(true);
+    try {
+      const [categoryPayload, casePayload] = await Promise.all([
+        postAction('/case/category/list.do', {}, { paged: true }),
+        postAction('/case/preset/list.do', {}, { paged: true }),
+      ]);
+      const nextCategories = readGatewayRows(categoryPayload).map(mapCategory);
+      const nextCases = readGatewayRows(casePayload).map(mapPresetCase);
+      setCategories(nextCategories);
+      setPresetCases(nextCases);
+      setSelectedCategoryId((current) => (current === ALL_CATEGORY || nextCategories.some((category) => category.id === current) ? current : ALL_CATEGORY));
+      setNotice({ type: 'success', text: '预置用例库已刷新。' });
+    } catch (error) {
+      setNotice({ type: 'warning', text: error instanceof Error ? error.message : '预置用例库刷新失败。' });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const createCategory = async (event: FormEvent<HTMLFormElement>) => {
@@ -173,12 +229,27 @@ export function SystemPresetCasesPage({ initialCategories, initialCases, live }:
 
   return (
     <section className="preset-admin-page">
-      <header className="console-heading">
+      <header className="app-catalog-hero">
         <div>
           <h1>系统预置测试用例</h1>
           <p>全局维护平台可复用的测试分类和预置测试用例，应用内只能引用，不在这里绑定具体应用。</p>
         </div>
-        <span className="console-soft-badge">{live ? '服务端数据' : '加载失败'}</span>
+        <div className="app-catalog-page-actions">
+          <span className="console-soft-badge">{live ? '服务端数据' : '加载失败'}</span>
+          <button className="console-button" type="button" disabled={refreshing} onClick={() => void refreshPresetData()}>
+            <RefreshCw size={14} strokeWidth={1.9} aria-hidden="true" />
+            {refreshing ? '刷新中' : '刷新'}
+          </button>
+          <button
+            className="console-button console-button-primary app-catalog-new-button"
+            type="button"
+            disabled={activeTab === 'cases' && categories.length === 0}
+            onClick={() => (activeTab === 'categories' ? setCategoryModalOpen(true) : setCaseModalOpen(true))}
+          >
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />
+            {activeTab === 'categories' ? '新增分类' : '新增预置用例'}
+          </button>
+        </div>
       </header>
 
       {notice ? <div className={`app-action-message is-${notice.type}`}>{notice.text}</div> : null}
@@ -261,47 +332,37 @@ export function SystemPresetCasesPage({ initialCategories, initialCases, live }:
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <button className="console-button console-button-primary" type="button" disabled={categories.length === 0} onClick={() => setCaseModalOpen(true)}>
-                  新增预置用例
-                </button>
               </div>
 
-              <div className="console-table-wrap preset-admin-table-wrap">
-                <table className={`console-table preset-admin-table app-case-table ${isAllCategorySelected ? 'is-all-categories' : 'is-category-scoped'}`}>
-                  <thead>
-                    <tr>
-                      <th>用例名称</th>
-                      {isAllCategorySelected ? <th>分类</th> : null}
-                      <th>风险</th>
-                      <th>期望行为</th>
-                      <th>状态</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleCases.map((testCase) => (
-                      <tr key={testCase.id}>
-                        <td>
-                          <strong>{testCase.name}</strong>
-                          <small>{testCase.input}</small>
-                        </td>
-                        {isAllCategorySelected ? <td>{categoryNameById.get(testCase.categoryId) ?? '未归类'}</td> : null}
-                        <td>
-                          <span className={`app-case-risk is-${testCase.risk.toLowerCase()}`}>{testCase.risk}</span>
-                        </td>
-                        <td>{testCase.expected}</td>
-                        <td>
-                          <span className={`console-status-pill console-status-${testCase.status}`}>{testCase.status}</span>
-                        </td>
-                        <td>
-                          <button className="console-button" type="button" onClick={() => void togglePresetCase(testCase)}>
-                            {testCase.status === '启用' ? '停用' : '启用'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="preset-case-rich-list" role="list" aria-label="预置用例列表">
+                {visibleCases.map((testCase) => (
+                  <article className={`preset-case-rich-row is-${testCase.status === '启用' ? 'success' : 'muted'}`} key={testCase.id} role="listitem">
+                    <div className="model-rich-identity">
+                      <div className="app-project-title-row">
+                        <FileText size={17} strokeWidth={1.9} aria-hidden="true" />
+                        <strong>{testCase.name}</strong>
+                      </div>
+                      <span>{testCase.input}</span>
+                      <div className="app-project-subline">
+                        <span className={`app-case-risk is-${testCase.risk.toLowerCase()}`}>{testCase.risk}</span>
+                        <span>{categoryNameById.get(testCase.categoryId) ?? '未归类'}</span>
+                      </div>
+                    </div>
+                    <div className="model-rich-meta">
+                      <span className="app-project-meta-label">期望行为</span>
+                      <strong>{testCase.expected}</strong>
+                      <span>平台级复用</span>
+                    </div>
+                    <div className="model-rich-status">
+                      <span className={`console-status-pill console-status-${testCase.status}`}>{testCase.status}</span>
+                    </div>
+                    <div className="app-project-actions">
+                      <button className="app-project-icon-action" type="button" aria-label={`${testCase.status === '启用' ? '停用' : '启用'} ${testCase.name}`} title={testCase.status === '启用' ? '停用' : '启用'} onClick={() => void togglePresetCase(testCase)}>
+                        <ShieldCheck size={16} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                ))}
                 {visibleCases.length === 0 ? (
                   <div className="preset-case-empty">
                     <strong>{query.trim() ? '没有匹配的预置用例' : '当前分类暂无预置用例'}</strong>
@@ -324,34 +385,28 @@ export function SystemPresetCasesPage({ initialCategories, initialCases, live }:
               <strong>分类定义</strong>
               <span>预置用例会按分类归档，应用引用时保留分类信息。</span>
             </div>
-            <button className="console-button console-button-primary" type="button" onClick={() => setCategoryModalOpen(true)}>
-              新增分类
-            </button>
           </div>
 
-          <div className="console-table-wrap preset-admin-table-wrap">
-            <table className="console-table preset-admin-table">
-              <thead>
-                <tr>
-                  <th>分类名称</th>
-                  <th>分类说明</th>
-                  <th>排序</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categories.map((category) => (
-                  <tr key={category.id}>
-                    <td>{category.name}</td>
-                    <td>{category.description}</td>
-                    <td>{category.sortOrder}</td>
-                    <td>
-                      <span className={`console-status-pill console-status-${category.status}`}>{category.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="preset-category-rich-list" role="list" aria-label="预置用例分类列表">
+            {categories.map((category) => (
+              <article className={`preset-category-rich-row is-${category.status === '启用' ? 'success' : 'muted'}`} key={category.id} role="listitem">
+                <div className="model-rich-identity">
+                  <div className="app-project-title-row">
+                    <FolderTree size={17} strokeWidth={1.9} aria-hidden="true" />
+                    <strong>{category.name}</strong>
+                  </div>
+                  <span>{category.description}</span>
+                </div>
+                <div className="model-rich-meta">
+                  <span className="app-project-meta-label">用例数量</span>
+                  <strong>{categoryCounts.get(category.id) ?? 0}</strong>
+                  <span>排序 {category.sortOrder}</span>
+                </div>
+                <div className="model-rich-status">
+                  <span className={`console-status-pill console-status-${category.status}`}>{category.status}</span>
+                </div>
+              </article>
+            ))}
             {categories.length === 0 ? (
               <div className="preset-case-empty">
                 <strong>当前暂无分类</strong>

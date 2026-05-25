@@ -1,192 +1,316 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+/**
+ * 应用主框架 - 侧边导航 + 内容区域
+ * 支持二级导航：进入应用后菜单切换为应用子菜单，平台菜单下沉到底部
+ * @author Antigravity/Gemini-2.5-Pro
+ */
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
-  Activity,
   ArrowLeft,
   Bot,
   Boxes,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Command,
   Gauge,
   HeartPulse,
   KeyRound,
   Layers3,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  Sparkles,
-  UserRound,
+  Activity,
   type LucideIcon,
 } from 'lucide-react';
+import { cn } from '@/lib/cn';
+import { ThemeToggle } from '@/components/sidebar/theme-toggle';
+import { UserMenu } from '@/components/sidebar/user-menu';
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
+/* ── 平台主导航菜单 ── */
 const NAV_ITEMS = [
-  { label: '工作台', href: '/ai-quality-platform', icon: Gauge },
+  { label: '工作台', href: '/ai-quality-platform', icon: Gauge, exact: true },
+  { label: 'AI 应用', href: '/ai-quality-platform/apps', icon: Bot, matchPrefix: '/ai-quality-platform/apps' },
+  { label: '预置用例', href: '/ai-quality-platform/cases', icon: ClipboardList },
+  { label: '模型中心', href: '/ai-quality-platform/providers', icon: Boxes },
+  { label: '服务健康', href: '/ai-quality-platform/health', icon: HeartPulse },
+] satisfies Array<{ label: string; href: string; icon: LucideIcon; exact?: boolean; matchPrefix?: string }>;
+
+/* ── 应用工作区子导航 ── */
+const APP_NAV_ITEMS = [
+  { key: 'overview', label: '概览', icon: Gauge },
+  { key: 'protocol', label: '接口配置', icon: KeyRound },
+  { key: 'cases', label: '用例管理', icon: ClipboardList },
+  { key: 'plans', label: '执行计划', icon: Layers3 },
+  { key: 'history', label: '执行历史', icon: Activity },
+] satisfies Array<{ key: string; label: string; icon: LucideIcon }>;
+
+/* ── 平台层下沉菜单（进入应用后显示在底部）── */
+const NAV_ITEMS_SECONDARY = [
   { label: 'AI 应用', href: '/ai-quality-platform/apps', icon: Bot },
   { label: '预置用例', href: '/ai-quality-platform/cases', icon: ClipboardList },
   { label: '模型中心', href: '/ai-quality-platform/providers', icon: Boxes },
   { label: '服务健康', href: '/ai-quality-platform/health', icon: HeartPulse },
 ] satisfies Array<{ label: string; href: string; icon: LucideIcon }>;
 
-const APP_WORKSPACE_ITEMS = [
-  { key: 'overview', label: '概览', icon: Gauge },
-  { key: 'protocol', label: '接入配置', icon: KeyRound },
-  { key: 'cases', label: '测试用例', icon: ClipboardList },
-  { key: 'plans', label: '测试计划', icon: Layers3 },
-  { key: 'executions', label: '执行历史', icon: Activity },
-  { key: 'reports', label: '评估报告', icon: Sparkles },
-] satisfies Array<{ key: string; label: string; icon: LucideIcon }>;
+/* ── 工具函数：从路径提取 appCode ── */
+function getAppCode(path: string) {
+  const match = path.match(/^\/ai-quality-platform\/apps\/([^/?#]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
-const APP_WORKSPACE_SECONDARY_ITEMS = [
-  { label: '工作台', href: '/ai-quality-platform', icon: Gauge },
-  { label: '预置用例', href: '/ai-quality-platform/cases', icon: ClipboardList },
-  { label: '模型中心', href: '/ai-quality-platform/providers', icon: Boxes },
-  { label: '服务健康', href: '/ai-quality-platform/health', icon: HeartPulse },
-] satisfies Array<{ label: string; href: string; icon: LucideIcon }>;
+/* ── 工具函数：应用内当前激活的 tab ── */
+function getAppTab(path: string) {
+  const match = path.match(/^\/ai-quality-platform\/apps\/[^/?#]+\/([^/?#]+)/);
+  return match ? match[1] : 'overview';
+}
 
+/* ── Nav item 样式 ── */
+function navItemCls(active: boolean, collapsed: boolean, secondary = false) {
+  return cn(
+    'flex items-center gap-3 rounded-lg text-sm font-medium transition-all duration-150 px-3 py-2',
+    active
+      ? 'bg-primary text-primary-foreground shadow-sm'
+      : secondary
+        ? 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-accent/50'
+        : 'text-muted-foreground hover:text-foreground hover:bg-accent',
+    collapsed && 'justify-center px-2',
+    secondary && 'text-[13px]',
+  );
+}
+
+/* ══ 带 Tooltip 的导航链接 ══ */
+function NavLink({
+  href,
+  icon: Icon,
+  label,
+  active,
+  collapsed,
+  secondary = false,
+}: {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  active: boolean;
+  collapsed: boolean;
+  secondary?: boolean;
+}) {
+  const link = (
+    <Link href={href} className={navItemCls(active, collapsed, secondary)}>
+      <Icon className={cn('shrink-0', secondary ? 'h-4 w-4' : 'h-5 w-5')} />
+      {!collapsed && <span>{label}</span>}
+    </Link>
+  );
+
+  if (!collapsed) return link;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/* ══ 折叠/展开按钮 ══ */
+function CollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={collapsed ? '展开菜单' : '收起菜单'}
+          className={cn(
+            'flex w-full items-center justify-center rounded-lg py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors',
+            !collapsed && 'gap-2',
+          )}
+        >
+          {collapsed ? (
+            <ChevronRight className="h-4 w-4" />
+          ) : (
+            <>
+              <ChevronLeft className="h-4 w-4" />
+              <span>收起菜单</span>
+            </>
+          )}
+        </button>
+      </TooltipTrigger>
+      {collapsed && <TooltipContent side="right">展开菜单</TooltipContent>}
+    </Tooltip>
+  );
+}
+
+/* ══════════════════════════════════════════
+   主组件
+══════════════════════════════════════════ */
 export interface AppShellProps {
   children: ReactNode;
-  currentPath?: string;
 }
 
-function getAppWorkspaceCode(currentPath: string) {
-  const match = currentPath.match(/^\/ai-quality-platform\/apps\/([^/?#]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
+export function AppShell({ children }: AppShellProps) {
+  const pathname = usePathname();
+  const appCode = getAppCode(pathname);
+  const currentTab = getAppTab(pathname);
 
-export function AppShell({ children, currentPath = '/ai-quality-platform' }: AppShellProps) {
-  const appCode = getAppWorkspaceCode(currentPath);
-  const [currentHash, setCurrentHash] = useState('');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const activeWorkspaceKey = currentHash || 'overview';
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    const syncHash = () => setCurrentHash(window.location.hash.replace('#', ''));
-    syncHash();
-    window.addEventListener('hashchange', syncHash);
-    return () => window.removeEventListener('hashchange', syncHash);
-  }, [currentPath]);
-
-  useEffect(() => {
-    setSidebarCollapsed(window.localStorage.getItem('qtp-sidebar-collapsed') === 'true');
+    setCollapsed(localStorage.getItem('qtp-sidebar-collapsed') === 'true');
   }, []);
 
-  const workspaceHrefBase = useMemo(() => (appCode ? `/ai-quality-platform/apps/${encodeURIComponent(appCode)}` : ''), [appCode]);
-  const toggleSidebar = () => {
-    setSidebarCollapsed((current) => {
-      const next = !current;
-      window.localStorage.setItem('qtp-sidebar-collapsed', String(next));
+  const toggle = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('qtp-sidebar-collapsed', String(next));
       return next;
     });
   };
 
+  const appBase = appCode
+    ? `/ai-quality-platform/apps/${encodeURIComponent(appCode)}`
+    : '';
+
   return (
-    <div className="console-app-shell" data-sidebar-collapsed={sidebarCollapsed ? 'true' : 'false'}>
-      <aside className={`console-sidebar${appCode ? ' is-app-workspace' : ''}`} data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
-        <div className="console-brand">
-          {/* @author codex: Brand block keeps the first viewport anchored on the platform identity. */}
-          <div className="console-brand-mark" aria-hidden="true">
-            <Command size={16} strokeWidth={2} />
-          </div>
-          <div className="console-brand-copy">
-            <div className="console-brand-title">AI 质量平台</div>
-            <div className="console-brand-subtitle">Quality Console</div>
-          </div>
-          <button className="console-sidebar-toggle" type="button" aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'} onClick={toggleSidebar}>
-            {sidebarCollapsed ? <PanelLeftOpen size={15} strokeWidth={1.9} aria-hidden="true" /> : <PanelLeftClose size={15} strokeWidth={1.9} aria-hidden="true" />}
-          </button>
-        </div>
-        {appCode ? (
-          <>
-            <div className="console-workspace-context">
-              <a className="console-workspace-return" href="/ai-quality-platform/apps" aria-label="返回 AI 应用列表" title="返回 AI 应用列表">
-                <span className="console-workspace-return-icon" aria-hidden="true">
-                  <ArrowLeft size={16} strokeWidth={1.9} />
+    <TooltipProvider delayDuration={200}>
+      <div className="flex h-screen overflow-hidden bg-background">
+        {/* ══ 侧边栏 ══ */}
+        <aside
+          className={cn(
+            'flex flex-col h-screen shrink-0 border-r border-border bg-card transition-all duration-300',
+            collapsed ? 'w-16' : 'w-[220px]',
+          )}
+        >
+          {/* ── Logo ── */}
+          <div className="flex items-center h-14 border-b border-border shrink-0 px-3">
+            <div className={cn('flex items-center gap-3 overflow-hidden', collapsed && 'w-full justify-center')}>
+              <div className="h-9 w-9 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
+                <Command className="h-5 w-5 text-white" />
+              </div>
+              {!collapsed && (
+                <span className="text-base font-semibold text-foreground whitespace-nowrap">
+                  AI 质量平台
                 </span>
-                <span className="console-workspace-return-copy">
-                  <strong title={appCode}>{appCode}</strong>
-                  <small>返回 AI 应用</small>
-                </span>
-              </a>
+              )}
             </div>
-            <nav className="console-nav console-nav-workspace" aria-label="应用工作区导航">
-              {APP_WORKSPACE_ITEMS.map((item) => {
-                const href = `${workspaceHrefBase}#${item.key}`;
-                const active = activeWorkspaceKey === item.key;
-                const Icon = item.icon;
+          </div>
 
-                return (
-                  <a className={active ? 'is-active' : ''} href={href} key={item.key} title={item.label}>
-                    <span className="console-nav-icon" aria-hidden="true">
-                      <Icon size={14} strokeWidth={1.9} />
-                    </span>
-                    <span>{item.label}</span>
-                  </a>
-                );
-              })}
-            </nav>
-            <div className="console-sidebar-bottom">
-              <nav className="console-nav console-nav-secondary" aria-label="平台快捷入口">
-                {APP_WORKSPACE_SECONDARY_ITEMS.map((item) => {
-                  const Icon = item.icon;
+          {/* ══ 工作区模式（进入某个应用后）══ */}
+          {appCode ? (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              {/* ── 返回 + 应用名 ── */}
+              <div className="shrink-0 px-3 pt-3 pb-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Link
+                      href="/ai-quality-platform/apps"
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent transition-colors mb-1',
+                        collapsed && 'justify-center px-2',
+                      )}
+                    >
+                      <ArrowLeft className="h-4 w-4 shrink-0" />
+                      {!collapsed && <span className="font-medium">返回应用列表</span>}
+                    </Link>
+                  </TooltipTrigger>
+                  {collapsed && <TooltipContent side="right">返回应用列表</TooltipContent>}
+                </Tooltip>
 
+                {/* 应用名标识 */}
+                {!collapsed && (
+                  <div className="px-3 py-1.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-0.5">
+                      当前应用
+                    </p>
+                    <p className="text-sm font-semibold text-foreground truncate">{appCode}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* 分隔线 */}
+              <div className="shrink-0 mx-3 h-px bg-border mb-1" />
+
+              {/* ── 应用子菜单（主要，占满空间）── */}
+              <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto" aria-label="应用子菜单">
+                {APP_NAV_ITEMS.map((item) => (
+                  <NavLink
+                    key={item.key}
+                    href={`${appBase}/${item.key}`}
+                    icon={item.icon}
+                    label={item.label}
+                    active={currentTab === item.key}
+                    collapsed={collapsed}
+                  />
+                ))}
+              </nav>
+
+              {/* ── 分隔线 ── */}
+              <div className="shrink-0 mx-3 h-px bg-border mt-1" />
+
+              {/* ── 平台菜单下沉区（次要，视觉弱化）── */}
+              <div className="shrink-0 px-3 py-2 space-y-0.5">
+                {!collapsed && (
+                  <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/40">
+                    平台
+                  </p>
+                )}
+                {NAV_ITEMS_SECONDARY.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    href={item.href}
+                    icon={item.icon}
+                    label={item.label}
+                    active={false}
+                    collapsed={collapsed}
+                    secondary
+                  />
+                ))}
+              </div>
+
+              {/* ── 底部工具栏 ── */}
+              <div className="shrink-0 p-3 space-y-1 border-t border-border">
+                <ThemeToggle collapsed={collapsed} />
+                <UserMenu collapsed={collapsed} name="管理员" role="系统管理员" />
+                <CollapseButton collapsed={collapsed} onToggle={toggle} />
+              </div>
+            </div>
+          ) : (
+            /* ══ 标准平台导航模式 ══ */
+            <>
+              <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto" aria-label="平台导航">
+                {NAV_ITEMS.map((item) => {
+                  const active = item.exact
+                    ? pathname === item.href
+                    : pathname === item.href || pathname.startsWith(item.href + '/');
                   return (
-                    <a href={item.href} key={item.label} title={item.label}>
-                      <span className="console-nav-icon" aria-hidden="true">
-                        <Icon size={14} strokeWidth={1.9} />
-                      </span>
-                      <span>{item.label}</span>
-                    </a>
+                    <NavLink
+                      key={item.label}
+                      href={item.href}
+                      icon={item.icon}
+                      label={item.label}
+                      active={active}
+                      collapsed={collapsed}
+                    />
                   );
                 })}
               </nav>
-              <div className="console-sidebar-footer">
-                <span>Local</span>
-                <strong>Gateway 8080</strong>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <nav className="console-nav" aria-label="平台导航">
-              {NAV_ITEMS.map((item) => {
-                const active = currentPath === item.href || (item.href !== '/ai-quality-platform' && currentPath.startsWith(item.href));
-                const Icon = item.icon;
 
-                return (
-                  <a className={active ? 'is-active' : ''} href={item.href} key={item.label} title={item.label}>
-                    <span className="console-nav-icon" aria-hidden="true">
-                      <Icon size={14} strokeWidth={1.9} />
-                    </span>
-                    <span>{item.label}</span>
-                  </a>
-                );
-              })}
-            </nav>
-            <div className="console-sidebar-footer">
-              <span>Local</span>
-              <strong>Gateway 8080</strong>
-            </div>
-          </>
-        )}
-      </aside>
-      <div className="console-main-shell">
-        <header className="console-topbar">
-          <div className="console-command" role="search" aria-label="全局搜索">
-            {/* @author codex: Visual-only search command keeps the topbar aligned with console workflows. */}
-            <Search size={14} strokeWidth={1.9} aria-hidden="true" /> 搜索应用、模型、执行批次或报告
-          </div>
-          <div className="console-topbar-actions">
-            <a href="/ai-quality-platform/health">
-              <HeartPulse size={14} strokeWidth={1.9} aria-hidden="true" /> 健康检查
-            </a>
-            <a href="/ai-quality-platform/login">
-              <UserRound size={14} strokeWidth={1.9} aria-hidden="true" /> 管理员
-            </a>
-          </div>
-        </header>
-        <div className="console-content">{children}</div>
+              <div className="shrink-0 p-3 space-y-1 border-t border-border">
+                <ThemeToggle collapsed={collapsed} />
+                <UserMenu collapsed={collapsed} name="管理员" role="系统管理员" />
+                <CollapseButton collapsed={collapsed} onToggle={toggle} />
+              </div>
+            </>
+          )}
+        </aside>
+
+        {/* ══ 内容区 ══ */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-6 min-h-full">{children}</div>
+        </main>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

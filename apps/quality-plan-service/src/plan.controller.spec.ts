@@ -10,7 +10,8 @@ describe('PlanController', () => {
       data: {},
     });
 
-    expect(response.page.totalNum).toBe(0);
+    expect(response.success).toBe(true);
+    expect(response.data.page.totalNum).toBe(0);
   });
 
   it('exposes preview-cases and start endpoints with app selected cases', async () => {

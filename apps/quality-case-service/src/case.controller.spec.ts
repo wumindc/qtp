@@ -11,7 +11,8 @@ describe('CaseController', () => {
       data: {},
     });
 
-    expect(response.list).toHaveLength(0);
+    expect(response.success).toBe(true);
+    expect(response.data.list).toHaveLength(0);
   });
 
   it('returns full-field template headers', () => {
@@ -48,7 +49,7 @@ describe('CaseController', () => {
     expect((await controller.suiteList({
       page: { currentPage: 1, linesPerPage: 10 },
       data: { appCode: 'credit_assistant' },
-    })).list[0]?.suiteCode).toBe('SUITE_API');
+    })).data.list[0]?.suiteCode).toBe('SUITE_API');
   });
 
   it('exposes category and system preset case endpoints', async () => {
@@ -70,11 +71,11 @@ describe('CaseController', () => {
     expect((await controller.categoryList({
       page: { currentPage: 1, linesPerPage: 20 },
       data: {},
-    })).list).toHaveLength(1);
+    })).data.list).toHaveLength(1);
     expect((await controller.presetList({
       page: { currentPage: 1, linesPerPage: 20 },
       data: { categoryId: category.data.id },
-    })).list).toHaveLength(1);
+    })).data.list).toHaveLength(1);
 
     const imported = await controller.importPresetToApp({
       appCode: 'credit_assistant',

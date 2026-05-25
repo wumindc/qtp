@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { FormEvent, useMemo, useState } from 'react';
 import { getGatewayApiUrl, type BackendServiceKey } from '@ai-quality-platform/shared-config';
 import { ConsoleSelect, DialogContent, DialogRoot, TextArea, TextInput } from '@/components/ui';
@@ -397,9 +398,9 @@ export function ManagementConsolePage({
                 </dl>
                 <div className="console-record-actions" onClick={(event) => event.stopPropagation()}>
                   {getDetailHref || detailHrefBase ? (
-                    <a className="console-record-primary-link" href={resolveDetailHref(row)}>
+                    <Link className="console-record-primary-link" href={resolveDetailHref(row)}>
                       {cardLayout?.primaryActionLabel ?? '进入'}
-                    </a>
+                    </Link>
                   ) : (
                     <button type="button" onClick={() => setActiveId(row.id)}>
                       详情
@@ -467,9 +468,9 @@ export function ManagementConsolePage({
                     ))}
                     <td className="console-row-actions">
                       {getDetailHref || detailHrefBase ? (
-                        <a className="console-row-link" href={resolveDetailHref(row)}>
+                        <Link className="console-row-link" href={resolveDetailHref(row)}>
                           进入
-                        </a>
+                        </Link>
                       ) : (
                         <button type="button" onClick={() => setActiveId(row.id)}>
                           详情

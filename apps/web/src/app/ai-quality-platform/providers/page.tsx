@@ -1,10 +1,10 @@
-import { loadModelCenterData } from '@/features/models/api/model-center-api';
-import { ModelCenterPage } from '@/features/models/model-center-page';
+'use client';
+/**
+ * 模型中心 — 路由页面
+ * @author Antigravity/Gemini
+ */
+import { ModelCenterPage } from '@/features/models/index';
 
-export const dynamic = 'force-dynamic';
-
-export default async function ProvidersPage() {
-  const { models, providers } = await loadModelCenterData();
-
-  return <ModelCenterPage initialModels={models} initialProviders={providers} />;
+export default function Page() {
+  return <ModelCenterPage />;
 }

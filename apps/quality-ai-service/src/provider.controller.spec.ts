@@ -15,8 +15,9 @@ describe('ProviderController', () => {
       data: {},
     });
 
-    expect(response.list).toHaveLength(0);
-    expect(response.page.totalNum).toBe(0);
+    expect(response.success).toBe(true);
+    expect(response.data.list).toHaveLength(0);
+    expect(response.data.page.totalNum).toBe(0);
   });
 
   it('lists and tests concrete model configurations after creation', async () => {
@@ -41,8 +42,8 @@ describe('ProviderController', () => {
       data: { modelType: 'LLM' },
     });
 
-    expect(response.list[0]?.id).toBe(model.id);
-    expect((await controller.testModelConnection({ id: model.id })).status).toBe('SUCCESS');
+    expect(response.data.list[0]?.id).toBe(model.id);
+    expect((await controller.testModelConnection({ id: model.id })).data.status).toBe('SUCCESS');
     expect(
       (
         await controller.testModelConfig({
@@ -51,7 +52,7 @@ describe('ProviderController', () => {
           modelId: 'quality-judge',
           modelType: 'LLM',
         })
-      ).status,
+      ).data.status,
     ).toBe('SUCCESS');
   });
 
@@ -65,8 +66,11 @@ describe('ProviderController', () => {
     });
 
     expect(response).toMatchObject({
-      endpoint: 'https://api.example.com/v1/models',
-      status: 'SUCCESS',
+      success: true,
+      data: {
+        endpoint: 'https://api.example.com/v1/models',
+        status: 'SUCCESS',
+      },
     });
   });
 });

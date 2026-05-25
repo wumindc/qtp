@@ -9,6 +9,7 @@ describe('ExecutionController', () => {
 
     expect(response.data.status).toBe('COMPLETED');
     expect(response.data.totalCount).toBe(0);
-    expect((await controller.runList({ page: { currentPage: 1, linesPerPage: 10 }, data: {} })).list.length).toBeGreaterThan(0);
+    expect((await controller.runList({ page: { currentPage: 1, linesPerPage: 10 }, data: {} })).data.list.length).toBeGreaterThan(0);
+    expect((await controller.resultList({ runCode: response.data.runCode, page: { currentPage: 1, linesPerPage: 10 } })).data.list).toHaveLength(0);
   });
 });
