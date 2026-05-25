@@ -6,8 +6,9 @@
  * @author Antigravity/Gemini-2.5-Pro
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import {
   Bot,
   Plus,
@@ -35,7 +36,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
-import { useApps } from './mock-hooks';
+import { loadApps, saveApp, deleteApp, changeAppStatus } from './api/app-api';
 import { AppFormDialog } from './app-form-dialog';
 import type { App } from './types';
 
@@ -57,7 +58,7 @@ function AppCard({
   app: App;
   onEdit: (app: App) => void;
   onDelete: (appCode: string) => void;
-  onToggleStatus: (appCode: string) => void;
+  onToggleStatus: (appCode: string, status: App['status']) => void;
 }) {
   const router = useRouter();
 
@@ -90,7 +91,7 @@ function AppCard({
               <Pencil className="h-4 w-4 mr-2" />
               编辑应用
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onToggleStatus(app.appCode)}>
+            <DropdownMenuItem onClick={() => onToggleStatus(app.appCode, app.status === 'ENABLED' ? 'DISABLED' : 'ENABLED')}>
               {app.status === 'ENABLED' ? (
                 <><XCircle className="h-4 w-4 mr-2" />停用应用</>
               ) : (
@@ -137,7 +138,7 @@ function AppCard({
       {/* ── 接口地址 ── */}
       <div className="mb-4">
         <p className="text-xs text-muted-foreground truncate font-mono bg-muted/50 px-2 py-1 rounded">
-          {app.protocol.method} {app.protocol.url || '未配置接口'}
+          {app.protocol?.method ?? 'POST'} {app.protocol?.url || '未配置接口'}
         </p>
       </div>
 
@@ -186,10 +187,23 @@ function AppCard({
 
 /* ══ 主页面 ══ */
 export function AppListPage() {
-  const { apps, createApp, updateApp, deleteApp, toggleStatus } = useApps();
+  const [apps, setApps] = useState<App[]>([]);
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<App | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await loadApps();
+      setApps(data);
+    } catch {
+      toast.error('应用列表加载失败');
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const filtered = apps.filter(
     (a) =>
@@ -208,14 +222,36 @@ export function AppListPage() {
     setDialogOpen(true);
   };
 
-  const handleSubmit = (data: Omit<App, 'appCode' | 'createdAt' | 'stats'>) => {
-    if (editingApp) {
-      updateApp(editingApp.appCode, data);
-    } else {
-      createApp(data);
+  const handleSubmit = async (data: Omit<App, 'appCode' | 'createdAt' | 'stats'>) => {
+    try {
+      await saveApp(data, editingApp?.appCode);
+      toast.success(editingApp ? '应用更新成功' : '应用创建成功');
+      setDialogOpen(false);
+      setEditingApp(null);
+      void refresh();
+    } catch {
+      toast.error('操作失败');
     }
-    setDialogOpen(false);
-    setEditingApp(null);
+  };
+
+  const handleDelete = async (appCode: string) => {
+    try {
+      await deleteApp(appCode);
+      toast.success('删除成功');
+      void refresh();
+    } catch {
+      toast.error('删除失败');
+    }
+  };
+
+  const handleToggleStatus = async (appCode: string, status: App['status']) => {
+    try {
+      await changeAppStatus(appCode, status);
+      toast.success(status === 'ENABLED' ? '启用成功' : '停用成功');
+      void refresh();
+    } catch {
+      toast.error('操作失败');
+    }
   };
 
   return (
@@ -272,8 +308,8 @@ export function AppListPage() {
               key={app.appCode}
               app={app}
               onEdit={handleEdit}
-              onDelete={deleteApp}
-              onToggleStatus={toggleStatus}
+              onDelete={handleDelete}
+              onToggleStatus={handleToggleStatus}
             />
           ))}
         </div>

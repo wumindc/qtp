@@ -4,10 +4,11 @@
  */
 'use client';
 
-import { useExecutionRuns, useApp } from './mock-hooks';
-
+import { useState, useEffect } from 'react';
 import { Bot, TrendingUp, Layers, Play, Clock, CheckCircle2, XCircle, Activity } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { loadApp } from './api/app-api';
+import type { App, ExecutionRun } from './types';
 
 function StatCard({ label, value, icon: Icon, color }: { label: string; value: string | number; icon: React.ElementType; color?: string }) {
   return (
@@ -24,10 +25,14 @@ function StatCard({ label, value, icon: Icon, color }: { label: string; value: s
 }
 
 export function AppOverviewPage({ appCode }: { appCode: string }) {
-  const { app } = useApp(appCode);
-  const { runs } = useExecutionRuns(appCode);
+  const [app, setApp] = useState<App | null>(null);
+  const [runs, setRuns] = useState<ExecutionRun[]>([]);
 
-  if (!app) return <div className="text-muted-foreground">应用不存在</div>;
+  useEffect(() => {
+    void loadApp(appCode).then(setApp);
+  }, [appCode]);
+
+  if (!app) return <div className="text-muted-foreground">加载中...</div>;
 
   const completedRuns = runs.filter((r) => r.status === 'COMPLETED');
   const lastRun = completedRuns[0];

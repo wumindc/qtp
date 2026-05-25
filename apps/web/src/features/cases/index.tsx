@@ -3,7 +3,7 @@
  * 预置用例 — 主页面（用例列表 + 分类列表两个标签页）
  * @author Antigravity/Gemini
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Plus, RefreshCw, Search, FileText, FolderTree, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -13,10 +13,18 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { cn } from '@/lib/cn';
-import { getGatewayApiUrl } from '@ai-quality-platform/shared-config';
 import { CaseDialog } from './case-dialog';
 import { CategoryDialog } from './category-dialog';
-import { MOCK_CATEGORIES, MOCK_CASES } from './mock-hooks';
+import {
+  loadCategories,
+  loadPresetCases,
+  saveCategory,
+  saveCase,
+  deleteCategory,
+  deleteCase,
+  changeCategoryStatus,
+  changeCaseStatus
+} from './api/case-api';
 import type { PresetCase, PresetCategory, RiskLevel } from './types';
 
 /* ── 风险颜色 ── */
@@ -26,26 +34,14 @@ const RISK_VARIANT: Record<RiskLevel, string> = {
   LOW: 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-400/10 dark:border-emerald-400/20',
 };
 
-/* ── API 调用工具 ── */
-async function postCase<T = unknown>(path: string, payload: Record<string, unknown>): Promise<T> {
-  const res = await fetch(getGatewayApiUrl('case', path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page: { currentPage: 1, linesPerPage: 50 }, data: payload }),
-  });
-  const result = await res.json().catch(() => ({}));
-  if (!res.ok || result.success === false) throw new Error(result.message ?? '请求失败');
-  return result.data ?? result;
-}
-
 /* ══ 主组件 ══ */
 export function CasesPage() {
-  const [categories, setCategories] = useState<PresetCategory[]>(MOCK_CATEGORIES);
-  const [cases, setCases] = useState<PresetCase[]>(MOCK_CASES);
+  const [categories, setCategories] = useState<PresetCategory[]>([]);
+  const [cases, setCases] = useState<PresetCase[]>([]);
   const [activeTab, setActiveTab] = useState<'cases' | 'categories'>('cases');
   const [query, setQuery] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('ALL');
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(true); // default true for initial load
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [editingCase, setEditingCase] = useState<PresetCase | null>(null);
@@ -77,92 +73,59 @@ export function CasesPage() {
   }, [categoryCases, query]);
 
   /* ── 刷新 ── */
-  const refresh = async () => {
-    setRefreshing(true);
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setRefreshing(true);
     try {
       const [catData, caseData] = await Promise.all([
-        postCase<unknown>('/case/category/list.do', {}),
-        postCase<unknown>('/case/preset/list.do', {}),
+        loadCategories(),
+        loadPresetCases(),
       ]);
-      // 简单解析 gateway 响应
-      const parseRows = (d: unknown) => {
-        const s = d as { list?: unknown[]; records?: unknown[] };
-        return (s?.list ?? s?.records ?? []) as Record<string, unknown>[];
-      };
-      setCategories(parseRows(catData).map((r) => ({
-        id: String(r.id),
-        name: String(r.name ?? '未命名'),
-        description: String(r.description ?? ''),
-        sortOrder: String(r.sortOrder ?? '0'),
-        status: r.enabled === false ? '停用' : '启用',
-      })));
-      setCases(parseRows(caseData).map((r) => ({
-        id: String(r.id),
-        name: String(r.caseName ?? r.name ?? '未命名'),
-        categoryId: String(r.categoryId ?? 'GENERAL'),
-        risk: (r.riskLevel ?? r.risk ?? 'MEDIUM') as RiskLevel,
-        input: String(r.query ?? r.input ?? ''),
-        expected: String(r.expectedBehavior ?? r.expected ?? ''),
-        status: r.enabled === false ? '停用' : '启用',
-      })));
-      toast.success('预置用例库已刷新');
+      setCategories(catData);
+      setCases(caseData);
+      if (!silent) toast.success('预置用例库已刷新');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '刷新失败');
+      if (!silent) toast.error(err instanceof Error ? err.message : '刷新失败');
     } finally {
-      setRefreshing(false);
+      if (!silent) setRefreshing(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void refresh(true).finally(() => setRefreshing(false));
+  }, [refresh]);
 
   /* ── 新增用例 ── */
   const handleSaveCase = async (data: Omit<PresetCase, 'id' | 'status'>) => {
-    const newCase: PresetCase = { ...data, id: `local_${Date.now()}`, status: '启用' };
     try {
-      const saved = await postCase<Record<string, unknown>>('/case/preset/create.do', {
-        caseName: data.name,
-        appCode: 'SYSTEM_PRESET',
-        categoryId: data.categoryId,
-        riskLevel: data.risk,
-        query: data.input,
-        expectedBehavior: data.expected,
-      });
-      newCase.id = String(saved.id ?? newCase.id);
-    } catch {
-      // 接口失败也保留本地状态
+      await saveCase(data);
+      toast.success('预置用例已保存');
+      void refresh(true);
+    } catch (e) {
+      toast.error('保存失败');
     }
-    setCases((prev) => [newCase, ...prev]);
-    setSelectedCategoryId(newCase.categoryId);
-    toast.success('预置用例已保存');
   };
 
   /* ── 新增分类 ── */
   const handleSaveCategory = async (data: { name: string; description: string }) => {
-    const newCat: PresetCategory = {
-      id: `local_cat_${Date.now()}`,
-      name: data.name,
-      description: data.description,
-      sortOrder: String((categories.length + 1) * 10),
-      status: '启用',
-    };
     try {
-      const saved = await postCase<Record<string, unknown>>('/case/category/create.do', data);
-      newCat.id = String(saved.id ?? newCat.id);
-    } catch {
-      // 静默保留本地
+      await saveCategory(data);
+      toast.success('分类已保存');
+      void refresh(true);
+    } catch (e) {
+      toast.error('保存失败');
     }
-    setCategories((prev) => [newCat, ...prev]);
-    toast.success('分类已保存');
   };
 
   /* ── 切换用例状态 ── */
   const handleToggleCase = async (c: PresetCase) => {
     const enabled = c.status !== '启用';
     try {
-      await postCase('/case/preset/change-enabled.do', { id: c.id, enabled });
+      await changeCaseStatus(c.id, enabled);
+      setCases((prev) => prev.map((x) => x.id === c.id ? { ...x, status: enabled ? '启用' : '停用' } : x));
+      toast.success(enabled ? '用例已启用' : '用例已停用');
     } catch {
-      // 静默
+      toast.error('状态更新失败');
     }
-    setCases((prev) => prev.map((x) => x.id === c.id ? { ...x, status: enabled ? '启用' : '停用' } : x));
-    toast.success(enabled ? '用例已启用' : '用例已停用');
   };
 
   /* ── 编辑用例（打开弹窗并预填数据） ── */
@@ -174,33 +137,25 @@ export function CasesPage() {
   /* ── 更新用例（编辑模式保存） ── */
   const handleUpdateCase = async (data: Omit<PresetCase, 'id' | 'status'>) => {
     if (!editingCase) return;
-    const updated: PresetCase = { ...editingCase, ...data };
     try {
-      await postCase('/case/preset/update.do', {
-        id: editingCase.id,
-        caseName: data.name,
-        categoryId: data.categoryId,
-        riskLevel: data.risk,
-        query: data.input,
-        expectedBehavior: data.expected,
-      });
+      await saveCase(data, editingCase.id);
+      toast.success('用例已更新');
+      setEditingCase(null);
+      void refresh(true);
     } catch {
-      // 静默降级
+      toast.error('更新失败');
     }
-    setCases((prev) => prev.map((x) => x.id === editingCase.id ? updated : x));
-    setEditingCase(null);
-    toast.success('用例已更新');
   };
 
   /* ── 删除用例 ── */
   const handleDeleteCase = async (c: PresetCase) => {
     try {
-      await postCase('/case/preset/delete.do', { id: c.id });
+      await deleteCase(c.id);
+      setCases((prev) => prev.filter((x) => x.id !== c.id));
+      toast.success(`用例「${c.name}」已删除`);
     } catch {
-      // 静默降级
+      toast.error('删除失败');
     }
-    setCases((prev) => prev.filter((x) => x.id !== c.id));
-    toast.success(`用例「${c.name}」已删除`);
   };
 
   /* ── 编辑分类 ── */
@@ -213,27 +168,25 @@ export function CasesPage() {
   const handleUpdateCategory = async (data: { name: string; description: string }) => {
     if (!editingCategory) return;
     try {
-      await postCase('/case/category/update.do', { id: editingCategory.id, ...data });
+      await saveCategory(data, editingCategory.id);
+      toast.success(`分类「${data.name}」已更新`);
+      setEditingCategory(null);
+      void refresh(true);
     } catch {
-      // 静默降级
+      toast.error('更新失败');
     }
-    setCategories((prev) =>
-      prev.map((x) => x.id === editingCategory.id ? { ...x, ...data } : x),
-    );
-    setEditingCategory(null);
-    toast.success(`分类「${data.name}」已更新`);
   };
 
   /* ── 切换分类状态 ── */
   const handleToggleCategory = async (cat: PresetCategory) => {
     const enabled = cat.status !== '启用';
     try {
-      await postCase('/case/category/change-enabled.do', { id: cat.id, enabled });
+      await changeCategoryStatus(cat.id, enabled);
+      setCategories((prev) => prev.map((x) => x.id === cat.id ? { ...x, status: enabled ? '启用' : '停用' } : x));
+      toast.success(enabled ? `分类「${cat.name}」已启用` : `分类「${cat.name}」已停用`);
     } catch {
-      // 静默降级
+      toast.error('状态更新失败');
     }
-    setCategories((prev) => prev.map((x) => x.id === cat.id ? { ...x, status: enabled ? '启用' : '停用' } : x));
-    toast.success(enabled ? `分类「${cat.name}」已启用` : `分类「${cat.name}」已停用`);
   };
 
   /* ── 删除分类 ── */
@@ -244,13 +197,13 @@ export function CasesPage() {
       return;
     }
     try {
-      await postCase('/case/category/delete.do', { id: cat.id });
+      await deleteCategory(cat.id);
+      setCategories((prev) => prev.filter((x) => x.id !== cat.id));
+      if (selectedCategoryId === cat.id) setSelectedCategoryId('ALL');
+      toast.success(`分类「${cat.name}」已删除`);
     } catch {
-      // 静默降级
+      toast.error('删除失败');
     }
-    setCategories((prev) => prev.filter((x) => x.id !== cat.id));
-    if (selectedCategoryId === cat.id) setSelectedCategoryId('ALL');
-    toast.success(`分类「${cat.name}」已删除`);
   };
 
   const selectedCategory = categories.find((c) => c.id === selectedCategoryId);

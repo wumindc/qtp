@@ -1,5 +1,6 @@
 import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
+import { BadRequestException } from '@nestjs/common';
 
 export type ProviderType = 'OPENAI_COMPATIBLE' | 'QWEN' | 'DEEPSEEK';
 export type ModelType = 'LLM' | 'EMBEDDING';
@@ -612,13 +613,13 @@ export class ProviderService {
 
   private async getProvider(providerCode: string) {
     const provider = await this.findProvider(providerCode);
-    if (!provider) throw new Error('供应商不存在');
+    if (!provider) throw new BadRequestException('供应商不存在');
     return provider;
   }
 
   private async getModel(id: string) {
     const model = await this.findModel(id);
-    if (!model) throw new Error('模型不存在');
+    if (!model) throw new BadRequestException('模型不存在');
     return model;
   }
 

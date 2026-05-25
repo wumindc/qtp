@@ -48,7 +48,7 @@ export function AlertDialogContent({
             <Button variant="secondary">{cancelLabel}</Button>
           </AlertDialogPrimitive.Cancel>
           <AlertDialogPrimitive.Action asChild onClick={onAction}>
-            <Button variant={variant === 'danger' ? 'danger' : 'primary'}>{actionLabel}</Button>
+            <Button variant={variant === 'danger' ? 'destructive' : 'default'}>{actionLabel}</Button>
           </AlertDialogPrimitive.Action>
         </footer>
       </AlertDialogPrimitive.Content>

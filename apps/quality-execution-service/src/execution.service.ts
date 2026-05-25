@@ -198,6 +198,7 @@ export class ExecutionService {
   async start(request: { planCode: string; appCode: string; caseCodes?: string[] }): Promise<RunRecord> {
     const selectedCaseCodes = new Set(request.caseCodes ?? []);
     const cases = (await this.getCaseSource()).filter((testCase) => {
+      // 只执行属于该应用的用例（通过"从预置引用"导入后 appCode = request.appCode）
       if (testCase.appCode !== request.appCode) return false;
       return selectedCaseCodes.size === 0 || selectedCaseCodes.has(testCase.id);
     });

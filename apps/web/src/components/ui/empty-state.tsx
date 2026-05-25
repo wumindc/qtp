@@ -19,7 +19,7 @@ export function EmptyState({ action, className, description, icon, title }: Empt
         <h3>{title}</h3>
         {description ? <p>{description}</p> : null}
       </div>
-      {typeof action === 'string' ? <Button variant="primary">{action}</Button> : action}
+      {typeof action === 'string' ? <Button variant="default">{action}</Button> : action}
     </section>
   );
 }

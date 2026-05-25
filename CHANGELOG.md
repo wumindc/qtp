@@ -2,7 +2,23 @@
 
 ## [未发布]
 
-### 2026-05-25
+### 2026-05-25 — 端到端流程打通 & 前端接口接入
+
+#### 修复 — execution-service 用例过滤逻辑
+- **变更需求**：执行计划触发后 totalCount=0，系统预置用例无法被任何应用计划匹配
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：修正 `start()` 中的 appCode 过滤逻辑，`SYSTEM_PRESET` 用例对所有应用可见
+
+#### 修复 — 应用接口协议 bodyTemplate 字段名错误
+- **变更需求**：北京信用小京灵接口实际需要 `query` 字段，原来配置的是 `message`
+- **变更内容**：通过 API 修正 `bodyTemplate` 为 `{"chatId":"","query":"{{case.query}}"}` 并补充 `accept: text/event-stream` Header
+
+#### 新增 — 执行计划页前端接入真实后端数据
+- **变更需求**：`app-plans.tsx` 和 `app-history.tsx` 原为静态空壳，无法展示真实计划和历史
+- **变更内容**：
+  - `features/apps/api/plan-execution-api.ts`：新增 `listPlans`、`createPlan`、`deletePlan`、`startPlan`、`listRuns`、`listResults` API
+  - `features/apps/app-plans.tsx`：重写为真实数据驱动，支持加载计划列表、新建计划弹窗（含类型选择）、立即执行、删除
+  - `features/apps/app-history.tsx`：重写为真实数据驱动，展示执行历史、通过率、平均分、待审比例
 
 #### 删除 — 移除平台层一级菜单中的「执行计划」「执行记录」「评审」「报告」（2026-05-25）
 - **变更需求**：这四个菜单已并入应用内部的子菜单，平台层不再需要

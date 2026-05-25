@@ -3,7 +3,7 @@
  * 模型中心 — 主页面（供应商 + 模型两个标签页）
  * @author Antigravity/Gemini
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProvidersPanel } from './providers-panel';
@@ -20,7 +20,6 @@ import {
   testModel,
 } from './api/model-center-api';
 import type { ModelCenterRecord, ModelFormState, ModelProviderRecord, ProviderFormState } from './types';
-import { MOCK_MODEL_CENTER_DATA } from './mock-hooks';
 
 interface ModelCenterPageProps {
   initialModels?: ModelCenterRecord[];
@@ -28,8 +27,9 @@ interface ModelCenterPageProps {
 }
 
 export function ModelCenterPage({ initialModels, initialProviders }: ModelCenterPageProps) {
-  const [models, setModels] = useState<ModelCenterRecord[]>(initialModels ?? MOCK_MODEL_CENTER_DATA.models);
-  const [providers, setProviders] = useState<ModelProviderRecord[]>(initialProviders ?? MOCK_MODEL_CENTER_DATA.providers);
+  const [models, setModels] = useState<ModelCenterRecord[]>(initialModels ?? []);
+  const [providers, setProviders] = useState<ModelProviderRecord[]>(initialProviders ?? []);
+  const [loading, setLoading] = useState(!initialModels || !initialProviders);
 
   const refresh = useCallback(async () => {
     try {
@@ -38,8 +38,16 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       setProviders(data.providers);
     } catch {
       // 静默失败，保持本地状态
+    } finally {
+      setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!initialModels || !initialProviders) {
+      void refresh();
+    }
+  }, [initialModels, initialProviders, refresh]);
 
   /* ── 供应商操作 ── */
   const handleSaveProvider = async (form: ProviderFormState, editingCode?: string) => {

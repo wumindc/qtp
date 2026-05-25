@@ -46,7 +46,7 @@ export function LoginForm() {
         placeholder="admin123456"
         type="password"
       />
-      <Button className="mt-6 w-full" type="submit" variant="primary">
+      <Button className="mt-6 w-full" type="submit" variant="default">
         登录
       </Button>
       <p className="mt-4 text-xs text-neutral-500">{message}</p>

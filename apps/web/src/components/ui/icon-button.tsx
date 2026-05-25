@@ -2,7 +2,7 @@
 
 import { Slot } from '@radix-ui/react-slot';
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Tooltip } from './tooltip';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from './tooltip';
 import { cn } from '@/lib/cn';
 
 type IconButtonVariant = 'secondary' | 'ghost' | 'danger' | 'outline';
@@ -32,7 +32,16 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
       </Component>
     );
 
-    return tooltip ? <Tooltip content={tooltip}>{button}</Tooltip> : button;
+    if (!tooltip) return button;
+
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>{button}</TooltipTrigger>
+          <TooltipContent>{tooltip}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
   },
 );
 
