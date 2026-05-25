@@ -1,14 +1,17 @@
 /**
  * AppShell 组件测试
  * @author Antigravity/Gemini-2.5-Pro
+ * @author codex
  */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AppShell } from './app-shell';
 
-// Mock next/navigation
 vi.mock('next/navigation', () => ({
   usePathname: vi.fn(() => '/ai-quality-platform'),
+  useRouter: vi.fn(() => ({
+    push: vi.fn(),
+  })),
 }));
 
 describe('AppShell', () => {

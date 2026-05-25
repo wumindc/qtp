@@ -126,8 +126,8 @@ export function DashboardPage() {
               <strong>{healthText}</strong>
               <p>{metrics.pendingReviewCount > 0 ? `${metrics.pendingReviewCount} 条结果等待复核。` : '暂无待复核结果。'}</p>
             </div>
-            <a className="console-button" href="/ai-quality-platform/reviews">
-              查看复核
+            <a className="console-button" href="/ai-quality-platform/health">
+              查看服务健康
             </a>
           </div>
         </section>

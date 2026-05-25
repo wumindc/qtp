@@ -31,9 +31,6 @@ export interface App {
   owner: string;
   status: AppStatus;
   protocol: AppProtocol;
-  /** 默认评估模型 ID（来自模型中心），用于 LLM_JUDGE / SEMANTIC 策略 */
-  defaultEvalModelId?: string;
-  defaultEvalModelName?: string;
   /** 统计信息（列表页展示用） */
   stats?: {
     caseCount: number;
@@ -62,12 +59,6 @@ export interface Assertion {
   threshold?: number;
   /** 不满足时是 FAIL 还是仅 WARNING */
   required: boolean;
-  /**
-   * SEMANTIC/LLM_JUDGE 专用：指定评估模型 ID
-   * 继承链：Assertion.evalModelId → RunPlan.evalModelId → App.defaultEvalModelId
-   */
-  evalModelId?: string;
-  evalModelName?: string;
 }
 
 /* ── 应用用例 ── */
@@ -104,9 +95,6 @@ export interface RunPlan {
   };
   concurrency: number;
   cronExpr?: string;
-  /** 计划级评估模型（覆盖 App.defaultEvalModelId） */
-  evalModelId?: string;
-  evalModelName?: string;
   status: 'ENABLED' | 'DISABLED';
   createdAt?: string;
 }
@@ -159,9 +147,6 @@ export interface ExecutionRun {
   startAt: string;
   endAt?: string;
   status: RunStatus;
-  /** 本次执行实际使用的评估模型（快照） */
-  evalModelId?: string;
-  evalModelName?: string;
   stats: RunStats;
   results?: CaseResult[];
 }

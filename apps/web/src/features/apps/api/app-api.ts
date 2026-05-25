@@ -26,7 +26,6 @@ function mapApp(item: GatewayRow): App {
       successExpr: toStringField(protocol.successExpr),
       streamEnabled: Boolean(protocol.streamEnabled),
     },
-    defaultEvalModelId: toStringField(item.defaultEvalModelId),
     createdAt: toStringField(item.createdAt),
     updatedAt: toStringField(item.updatedAt),
   };

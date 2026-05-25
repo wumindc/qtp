@@ -28,14 +28,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { App, AppProtocol } from './types';
 
-/* ── 来自模型中心的可用模型（mock）── */
-const AVAILABLE_MODELS = [
-  { id: 'qwen-max-model', name: 'Qwen-Max', provider: '阿里云' },
-  { id: 'qwen-turbo-model', name: 'Qwen-Turbo', provider: '阿里云' },
-  { id: 'gpt4o-model', name: 'GPT-4o', provider: 'OpenAI' },
-  { id: 'gpt35-model', name: 'GPT-3.5-Turbo', provider: 'OpenAI' },
-];
-
 const DEFAULT_PROTOCOL: AppProtocol = {
   method: 'POST',
   url: '',
@@ -62,7 +54,6 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
   const [appType, setAppType] = useState<'CHAT' | 'WORKFLOW'>('CHAT');
   const [description, setDescription] = useState('');
   const [owner, setOwner] = useState('');
-  const [defaultEvalModelId, setDefaultEvalModelId] = useState('');
 
   const [method, setMethod] = useState<'GET' | 'POST'>('POST');
   const [url, setUrl] = useState('');
@@ -80,7 +71,6 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
         setAppType(editingApp.appType);
         setDescription(editingApp.description ?? '');
         setOwner(editingApp.owner);
-        setDefaultEvalModelId(editingApp.defaultEvalModelId ?? '');
         setMethod(editingApp.protocol.method);
         setUrl(editingApp.protocol.url);
         setHeaders(editingApp.protocol.headers);
@@ -92,7 +82,6 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
         setAppType('CHAT');
         setDescription('');
         setOwner('');
-        setDefaultEvalModelId('');
         setMethod('POST');
         setUrl('');
         setHeaders(DEFAULT_PROTOCOL.headers);
@@ -103,8 +92,6 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
     }
   }, [open, editingApp]);
 
-  const selectedModel = AVAILABLE_MODELS.find((m) => m.id === defaultEvalModelId);
-
   const handleSubmit = () => {
     if (!appName.trim() || !url.trim()) return;
     onSubmit({
@@ -114,8 +101,6 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
       owner: owner.trim(),
       status: editingApp?.status ?? 'ENABLED',
       protocol: { method, url, headers, body, answerPath, successExpr, streamEnabled: false },
-      defaultEvalModelId: defaultEvalModelId || undefined,
-      defaultEvalModelName: selectedModel?.name,
     });
   };
 
@@ -184,28 +169,6 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="evalModel">默认评估模型</Label>
-              <Select
-                value={defaultEvalModelId}
-                onValueChange={setDefaultEvalModelId}
-              >
-                <SelectTrigger id="evalModel">
-                  <SelectValue placeholder="选择用于 AI 裁判的模型..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {AVAILABLE_MODELS.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                      <span className="text-muted-foreground ml-2 text-xs">({m.provider})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                用于 AI 裁判评估（LLM-as-Judge）。执行计划或单条策略可覆盖此设置。
-              </p>
-            </div>
           </TabsContent>
 
           {/* ── 接口配置 Tab ── */}

@@ -103,18 +103,6 @@ export function AppOverviewPage({ appCode }: { appCode: string }) {
         )}
       </div>
 
-      {/* 评估模型信息 */}
-      {app.defaultEvalModelName && (
-        <div className="bg-card border border-border rounded-xl p-5">
-          <h2 className="text-base font-semibold text-foreground mb-2">评估配置</h2>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">默认评估模型：</span>
-            <span className="text-sm font-medium text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded">
-              {app.defaultEvalModelName}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -21,11 +21,9 @@
 
 | 包 | 用途 |
 |---|---|
-| `@radix-ui/react-avatar` | Avatar |
 | `@radix-ui/react-dialog` | 弹窗 |
 | `@radix-ui/react-dropdown-menu` | 下拉菜单 |
 | `@radix-ui/react-label` | 表单标签 |
-| `@radix-ui/react-scroll-area` | 自定义滚动区 |
 | `@radix-ui/react-select` | 选择框 |
 | `@radix-ui/react-separator` | 分割线 |
 | `@radix-ui/react-slot` | asChild 模式 |
@@ -95,10 +93,6 @@ apps/web/src/
 │       ├── page.tsx         # 工作台
 │       ├── apps/            # AI 应用
 │       ├── cases/           # 预置用例
-│       ├── plans/           # 测试计划
-│       ├── executions/      # 执行历史
-│       ├── reviews/         # 人工复核
-│       ├── reports/         # 评估报告
 │       ├── providers/       # 模型中心
 │       └── health/          # 服务健康
 ├── components/
@@ -126,8 +120,7 @@ apps/web/src/
 ├── features/                # 功能模块（按页面拆分）
 │   └── {module}/
 │       ├── index.tsx        # 主视图
-│       ├── hooks.ts         # 服务端数据（真实 API）
-│       └── mock-hooks.ts    # 静态模拟数据
+│       └── api/             # 真实后端 API 封装
 └── lib/
     ├── cn.ts                # cn() = twMerge + clsx
     └── api/                 # HTTP 客户端 + query-client
@@ -140,7 +133,8 @@ apps/web/src/
 ### 组件
 
 - 每个功能页面拆分多个独立 `.tsx` 文件，通过 import 引入
-- 视图和数据分离：视图在 `index.tsx`，数据在 `hooks.ts` / `mock-hooks.ts`
+- 视图和数据分离：视图在 `index.tsx` / 功能组件文件，数据请求放在 `api/`
+- 禁止新增 mock-only 数据源或一次性造数脚本；需要本地初始化时使用根目录 `pnpm db:seed`
 - 每个文件顶部注释包含 `@author` 字段
 
 ### 样式

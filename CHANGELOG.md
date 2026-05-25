@@ -4,6 +4,22 @@
 
 ### 2026-05-25 — 端到端流程打通 & 前端接口接入
 
+#### 修复 — 接口配置页主内容宽度未铺满（2026-05-25）
+- **变更需求**：用户反馈应用内「接口配置」页主内容过窄，宽屏下右侧留白过大。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-protocol.tsx`：移除根容器 `max-w-3xl` 限宽，改为占满应用内容区。
+  - `apps/web/src/features/apps/app-protocol.tsx`：请求配置与接口测试区域改为宽屏双栏、窄屏堆叠的响应式布局。
+
+#### 删除/清理 — 移除 mock、造数脚本和过期占位代码（2026-05-25）
+- **变更需求**：用户要求全面检查代码，删除无用代码、过期代码、mock 代码和造数据脚本。
+- **变更内容**：
+  - 删除 `apps/web/seed-real-data.mjs`、`apps/web/seed-more-cases.mjs`、`apps/web/test-fetch.mjs`、`apps/web/test-jsonpath.mjs` 等前端一次性造数/调试脚本。
+  - 删除 `features/simple-list-page.*`、`features/gateway-list-page.*`、`features/gateway-server.ts` 这组早期通用列表旧实现。
+  - 删除未被运行时代码引用的 UI 组件与相关依赖：`alert-dialog`、`avatar`、`card`、`data-table`、`empty-state`、`icon-button`、`skeleton`、`text-area`、`toast`。
+  - 移除应用表单和接口配置页中的硬编码 mock 评估模型选择，以及对应未落库的类型字段。
+  - 将工作台占位页替换为真实 `DashboardPage`，应用详情默认入口改为重定向到 `overview`。
+  - 更新 `apps/web/AGENTS.md`，明确前端数据请求走真实 `api/`，禁止新增 mock-only 数据源和一次性造数脚本。
+
 #### 修复 — next-themes 在服务端组件直接渲染导致的 React 报错（2026-05-25）
 - **变更需求**：页面访问抛出错误 `Encountered a script tag while rendering React component`。
 - **变更内容**：
