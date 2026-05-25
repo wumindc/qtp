@@ -1,6 +1,10 @@
 'use client';
+/**
+ * 应用用例新建弹窗
+ * @author codex
+ */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,13 +30,25 @@ export function CaseFormDialog({
   onSuccess: () => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const defaultCategoryId = categoryId || categories[0]?.id || '';
   const [formData, setFormData] = useState({
     caseName: '',
-    categoryId: categoryId || (categories.length > 0 ? categories[0].id : ''),
+    categoryId: defaultCategoryId,
     riskLevel: 'MEDIUM',
     query: '',
     expectedBehavior: '',
   });
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData({
+      caseName: '',
+      categoryId: defaultCategoryId,
+      riskLevel: 'MEDIUM',
+      query: '',
+      expectedBehavior: '',
+    });
+  }, [defaultCategoryId, open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,20 +82,21 @@ export function CaseFormDialog({
         <form onSubmit={handleSubmit} className="space-y-4 py-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>用例名称 <span className="text-red-500">*</span></Label>
+              <Label htmlFor="app-case-name">用例名称 <span className="text-red-500">*</span></Label>
               <Input
+                id="app-case-name"
                 value={formData.caseName}
                 onChange={(e) => setFormData({ ...formData, caseName: e.target.value })}
                 placeholder="例如：查询不存在的订单"
               />
             </div>
             <div className="space-y-2">
-              <Label>所属分类 <span className="text-red-500">*</span></Label>
+              <Label htmlFor="app-case-category">所属分类 <span className="text-red-500">*</span></Label>
               <Select
                 value={formData.categoryId}
                 onValueChange={(v) => setFormData({ ...formData, categoryId: v })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="app-case-category">
                   <SelectValue placeholder="选择分类" />
                 </SelectTrigger>
                 <SelectContent>
@@ -91,12 +108,12 @@ export function CaseFormDialog({
             </div>
           </div>
           <div className="space-y-2">
-            <Label>风险等级</Label>
+            <Label htmlFor="app-case-risk-level">风险等级</Label>
             <Select
               value={formData.riskLevel}
               onValueChange={(v) => setFormData({ ...formData, riskLevel: v })}
             >
-              <SelectTrigger>
+              <SelectTrigger id="app-case-risk-level">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -107,8 +124,9 @@ export function CaseFormDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>测试输入 (Query) <span className="text-red-500">*</span></Label>
+            <Label htmlFor="app-case-query">测试输入 (Query) <span className="text-red-500">*</span></Label>
             <Textarea
+              id="app-case-query"
               value={formData.query}
               onChange={(e) => setFormData({ ...formData, query: e.target.value })}
               placeholder="请输入测试给 AI 的问题..."
@@ -116,8 +134,9 @@ export function CaseFormDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>期望行为 <span className="text-red-500">*</span></Label>
+            <Label htmlFor="app-case-expected-behavior">期望行为 <span className="text-red-500">*</span></Label>
             <Textarea
+              id="app-case-expected-behavior"
               value={formData.expectedBehavior}
               onChange={(e) => setFormData({ ...formData, expectedBehavior: e.target.value })}
               placeholder="描述大模型应该怎么回答，比如：拒绝回答，提示权限不足..."

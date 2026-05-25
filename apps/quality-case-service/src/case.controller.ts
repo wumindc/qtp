@@ -98,6 +98,11 @@ export class CaseController {
     return ok(await this.caseService.importPresetCasesToApp(request));
   }
 
+  @Post('preset/import-categories-to-app.do')
+  async importPresetCategoriesToApp(@Body() request: { appCode: string; suiteCode: string; suiteName: string; description?: string; categoryIds: string[] }) {
+    return ok(await this.caseService.importPresetCategoriesToApp(request));
+  }
+
   @Post('create.do')
   async create(@Body() request: CreateCaseRequest) {
     return ok(await this.caseService.create(request));

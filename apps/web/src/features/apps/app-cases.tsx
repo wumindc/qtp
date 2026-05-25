@@ -2,12 +2,15 @@
 /**
  * 应用用例管理页 — 左右分栏布局，带分类过滤
  * @author Antigravity/Gemini-2.5-Pro
+ * @author codex
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, X, Folder, LayoutGrid } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
 import { postGateway } from '@/lib/api/gateway-client';
@@ -23,6 +26,8 @@ import { CaseFormDialog } from './case-form-dialog';
 interface Category {
   id: string;
   name: string;
+  description?: string;
+  appCode?: string;
 }
 
 interface CaseRecord {
@@ -45,15 +50,16 @@ const riskLabel: Record<string, { label: string; color: string }> = {
 };
 
 /** 加载分类（按应用范围或预置全局范围） */
-async function fetchCategories(appCode?: string): Promise<Category[]> {
+async function fetchCategories(appCode?: string, isPreset = false): Promise<Category[]> {
+  const data = isPreset ? {} : { appCode, includeGlobal: Boolean(appCode) };
   const res = await postGateway<unknown>(
     'case',
     '/case/category/list.do',
-    { page: { currentPage: 1, linesPerPage: 200 }, data: { appCode, includeGlobal: !appCode } },
+    { page: { currentPage: 1, linesPerPage: 200 }, data },
     { cache: 'no-store' }
   );
-  const data = res as Record<string, unknown>;
-  return (data?.list ?? []) as Category[];
+  const dataRes = res as Record<string, unknown>;
+  return (dataRes?.list ?? []) as Category[];
 }
 
 /** 加载应用用例 */
@@ -68,28 +74,23 @@ async function fetchAppCases(appCode: string, keyword = '', categoryId = ''): Pr
   return (data?.list ?? []) as CaseRecord[];
 }
 
-/** 加载预置用例 */
-async function fetchPresetCases(keyword = '', categoryId = ''): Promise<CaseRecord[]> {
-  const res = await postGateway<unknown>(
-    'case',
-    '/case/preset/list.do',
-    { page: { currentPage: 1, linesPerPage: 200 }, data: { keyword, categoryId: categoryId === 'ALL' ? undefined : categoryId } },
-    { cache: 'no-store' }
-  );
-  const data = res as Record<string, unknown>;
-  return (data?.list ?? []) as CaseRecord[];
-}
-
-async function importPresetCases(appCode: string, presetCaseIds: string[]): Promise<{ createdCount: number; message: string }> {
+async function importPresetCategories(appCode: string, categoryIds: string[]): Promise<{ createdCount: number; message: string }> {
   const suiteCode = `suite-${appCode}-imported-${Date.now()}`;
-  const res = await postGateway<unknown>('case', '/case/preset/import-to-app.do', {
+  const res = await postGateway<unknown>('case', '/case/preset/import-categories-to-app.do', {
     appCode,
     suiteCode,
     suiteName: '预置引用用例集',
-    presetCaseIds,
-    presetCaseCodes: presetCaseIds,
+    categoryIds,
   });
   return res as { createdCount: number; message: string };
+}
+
+async function createAppCategory(appCode: string, category: { name: string; description: string }): Promise<Category> {
+  return postGateway<Category>('case', '/case/category/create.do', {
+    appCode,
+    name: category.name.trim(),
+    description: category.description.trim(),
+  });
 }
 
 export function AppCasesPage({ appCode }: { appCode: string }) {
@@ -102,15 +103,15 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
 
   // 新建表单
   const [formOpen, setFormOpen] = useState(false);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
+  const [categorySaving, setCategorySaving] = useState(false);
 
   // 预置引用弹窗
   const [presetDialogOpen, setPresetDialogOpen] = useState(false);
   const [presetCategories, setPresetCategories] = useState<Category[]>([]);
-  const [activePresetCategoryId, setActivePresetCategoryId] = useState('ALL');
-  const [presetCases, setPresetCases] = useState<CaseRecord[]>([]);
+  const [selectedPresetCategoryIds, setSelectedPresetCategoryIds] = useState<string[]>([]);
   const [presetLoading, setPresetLoading] = useState(false);
-  const [presetSearch, setPresetSearch] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
 
   const loadData = useCallback(async (kw = keyword, cat = activeCategoryId) => {
@@ -122,8 +123,9 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
       ]);
       setCategories(cats);
       setCases(caseList);
-    } catch {
-      toast.error('加载数据失败');
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? `加载数据失败: ${err.message}` : '加载数据失败');
     } finally {
       setLoading(false);
     }
@@ -141,24 +143,50 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
     void loadData(keyword, id);
   };
 
+  const handleCategoryDialogOpenChange = (open: boolean) => {
+    setCategoryDialogOpen(open);
+    if (!open) {
+      setCategoryForm({ name: '', description: '' });
+    }
+  };
+
+  const handleCreateCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = categoryForm.name.trim();
+    const description = categoryForm.description.trim();
+    if (!name || !description) {
+      toast.error('请填写分类名称和分类描述');
+      return;
+    }
+
+    setCategorySaving(true);
+    try {
+      const created = await createAppCategory(appCode, { name, description });
+      toast.success('新建分类成功');
+      setCategoryDialogOpen(false);
+      setCategoryForm({ name: '', description: '' });
+      const nextCategoryId = created.id || activeCategoryId;
+      setActiveCategoryId(nextCategoryId);
+      await loadData(keyword, nextCategoryId);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '新建分类失败');
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
   // 打开预置引用弹窗
   const openPresetDialog = async () => {
     setPresetDialogOpen(true);
-    setSelectedIds(new Set());
-    setPresetSearch('');
-    setActivePresetCategoryId('ALL');
-    void loadPresetData('', 'ALL');
+    setSelectedPresetCategoryIds([]);
+    void loadPresetData();
   };
 
-  const loadPresetData = async (kw = presetSearch, cat = activePresetCategoryId) => {
+  const loadPresetData = async () => {
     setPresetLoading(true);
     try {
-      const [cats, list] = await Promise.all([
-        fetchCategories('SYSTEM_PRESET'),
-        fetchPresetCases(kw, cat)
-      ]);
+      const cats = await fetchCategories(undefined, true);
       setPresetCategories(cats);
-      setPresetCases(list);
     } catch {
       toast.error('加载预置库失败');
     } finally {
@@ -166,36 +194,21 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
     }
   };
 
-  const handlePresetSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    void loadPresetData(presetSearch, activePresetCategoryId);
+  const handlePresetCategoryToggle = (id: string) => {
+    setSelectedPresetCategoryIds(prev => 
+      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+    );
   };
-
-  const handlePresetCategorySelect = (id: string) => {
-    setActivePresetCategoryId(id);
-    void loadPresetData(presetSearch, id);
-  };
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  const selectAll = () => setSelectedIds(new Set(presetCases.map(c => c.id)));
-  const clearAll = () => setSelectedIds(new Set());
 
   const handleImport = async () => {
-    if (selectedIds.size === 0) {
-      toast.error('请至少选择一条预置用例');
+    if (selectedPresetCategoryIds.length === 0) {
+      toast.error('请选择要引用的分类');
       return;
     }
     setImporting(true);
     try {
-      const result = await importPresetCases(appCode, Array.from(selectedIds));
-      toast.success(result.message ?? `已引用 ${result.createdCount} 条用例`);
+      const result = await importPresetCategories(appCode, selectedPresetCategoryIds);
+      toast.success(result.message ?? `引用成功`);
       setPresetDialogOpen(false);
       await loadData();
     } catch (err: unknown) {
@@ -219,6 +232,9 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCategoryDialogOpen(true)}>
+            <FolderPlus className="h-4 w-4" />新建分类
+          </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={openPresetDialog}>
             <BookCopy className="h-4 w-4" />从预置引用
           </Button>
@@ -291,27 +307,24 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                         <Badge variant="outline" className="text-xs font-normal">来自预置</Badge>
                       )}
                     </div>
-                    <div className="space-y-2">
-                      <div className="bg-muted/50 rounded-md p-2">
-                        <span className="text-xs text-muted-foreground font-medium mb-1 block">输入 (Query)</span>
-                        <p className="text-sm font-mono text-foreground break-all">{c.query}</p>
-                      </div>
-                      {c.expectedBehavior && (
-                        <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-md p-2">
-                          <span className="text-xs text-emerald-600 font-medium mb-1 block">期望行为</span>
-                          <p className="text-xs text-foreground break-all">{c.expectedBehavior}</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
                   <div className="flex flex-col items-end gap-2 shrink-0">
                     <span className={cn('text-xs px-2 py-0.5 rounded-full border font-medium', riskLabel[c.riskLevel]?.color ?? riskLabel.MEDIUM.color)}>
                       风险 {riskLabel[c.riskLevel]?.label ?? '中'}
                     </span>
-                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                      {categories.find(cat => cat.id === c.categoryId)?.name || '未分类'}
-                    </span>
                   </div>
+                </div>
+                <div className="mt-3 flex gap-4">
+                  <div className="flex-1 bg-muted/50 rounded-md p-2">
+                    <span className="text-xs text-muted-foreground font-medium mb-1 block">输入 (Query)</span>
+                    <p className="text-sm font-mono text-foreground break-all">{c.query}</p>
+                  </div>
+                  {c.expectedBehavior && (
+                    <div className="flex-1 bg-emerald-500/5 border border-emerald-500/10 rounded-md p-2">
+                      <span className="text-xs text-emerald-600 font-medium mb-1 block">期望行为</span>
+                      <p className="text-sm text-foreground break-all">{c.expectedBehavior}</p>
+                    </div>
+                  )}
+                </div>
                 </div>
               </div>
             ))}
@@ -337,98 +350,83 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
         onSuccess={() => void loadData(keyword, activeCategoryId)}
       />
 
+      <Dialog open={categoryDialogOpen} onOpenChange={handleCategoryDialogOpenChange}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>新建用例分类</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateCategory} className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="app-case-category-name">分类名称</Label>
+              <Input
+                id="app-case-category-name"
+                value={categoryForm.name}
+                onChange={(e) => setCategoryForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="例如：应用边界"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="app-case-category-description">分类描述</Label>
+              <Textarea
+                id="app-case-category-description"
+                value={categoryForm.description}
+                onChange={(e) => setCategoryForm((prev) => ({ ...prev, description: e.target.value }))}
+                placeholder="描述这个分类覆盖的测试场景"
+                rows={3}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => handleCategoryDialogOpenChange(false)}>
+                取消
+              </Button>
+              <Button type="submit" disabled={categorySaving}>
+                {categorySaving ? '创建中...' : '确认新建分类'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* 从预置引用弹窗 */}
       <Dialog open={presetDialogOpen} onOpenChange={setPresetDialogOpen}>
-        <DialogContent className="max-w-[900px] h-[80vh] flex flex-col p-0 gap-0 overflow-hidden">
-          <DialogHeader className="p-5 border-b shrink-0">
-            <DialogTitle>从预置库引用系统用例</DialogTitle>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>引用预置用例分类</DialogTitle>
           </DialogHeader>
 
-          <div className="flex flex-1 min-h-0 bg-muted/10">
-            {/* 左侧分类 */}
-            <div className="w-52 border-r bg-card flex flex-col shrink-0">
-              <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                <button
-                  onClick={() => handlePresetCategorySelect('ALL')}
-                  className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left',
-                    activePresetCategoryId === 'ALL' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground'
-                  )}
-                >
-                  <LayoutGrid className="h-4 w-4" />全部预置
-                </button>
+          <div className="py-4 space-y-4">
+            <p className="text-sm text-muted-foreground">请选择您需要引入到当前应用的系统预置用例分类：</p>
+            {presetLoading ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">加载中...</div>
+            ) : presetCategories.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">暂无预置分类</div>
+            ) : (
+              <div className="space-y-2 max-h-[50vh] overflow-y-auto">
                 {presetCategories.map(c => (
-                  <button
+                  <label
                     key={c.id}
-                    onClick={() => handlePresetCategorySelect(c.id)}
-                    className={cn(
-                      'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left',
-                      activePresetCategoryId === c.id ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground'
-                    )}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handlePresetCategoryToggle(c.id);
+                    }}
+                    className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 cursor-pointer transition-colors"
                   >
-                    <Folder className="h-4 w-4" />{c.name}
-                  </button>
+                    {selectedPresetCategoryIds.includes(c.id) ? (
+                      <CheckSquare className="h-5 w-5 text-primary shrink-0" />
+                    ) : (
+                      <Square className="h-5 w-5 text-muted-foreground shrink-0" />
+                    )}
+                    <span className="text-sm font-medium">{c.name}</span>
+                  </label>
                 ))}
               </div>
-            </div>
-
-            {/* 右侧列表 */}
-            <div className="flex-1 flex flex-col min-w-0 bg-background">
-              <div className="p-3 border-b flex items-center gap-2 shrink-0 bg-card">
-                <form onSubmit={handlePresetSearch} className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    className="pl-9 h-9 text-sm"
-                    placeholder="搜索..."
-                    value={presetSearch}
-                    onChange={(e) => setPresetSearch(e.target.value)}
-                  />
-                </form>
-                <Button type="submit" onClick={handlePresetSearch} variant="secondary" size="sm" className="h-9">搜索</Button>
-                <div className="h-4 w-[1px] bg-border mx-1"></div>
-                <Button variant="ghost" size="sm" onClick={selectAll} className="h-9">全选</Button>
-                <Button variant="ghost" size="sm" onClick={clearAll} className="h-9">清空</Button>
-                <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-                  已选 {selectedIds.size}
-                </span>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                {presetLoading && <div className="text-center py-8 text-muted-foreground text-sm">加载中...</div>}
-                {!presetLoading && presetCases.map((c) => {
-                  const selected = selectedIds.has(c.id);
-                  return (
-                    <div
-                      key={c.id}
-                      className={cn(
-                        'flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors hover:shadow-sm',
-                        selected ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/40'
-                      )}
-                      onClick={() => toggleSelect(c.id)}
-                    >
-                      <div className="mt-0.5 shrink-0 text-primary">
-                        {selected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4 text-muted-foreground" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-medium">{c.caseName}</span>
-                          <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full border font-medium', riskLabel[c.riskLevel]?.color ?? riskLabel.MEDIUM.color)}>
-                            {riskLabel[c.riskLevel]?.label ?? '中'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground font-mono bg-muted/50 p-1.5 rounded truncate">{c.query}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            )}
           </div>
 
-          <DialogFooter className="p-4 border-t bg-card shrink-0">
+          <DialogFooter>
             <Button variant="ghost" onClick={() => setPresetDialogOpen(false)}>取消</Button>
-            <Button onClick={handleImport} disabled={importing || selectedIds.size === 0}>
-              {importing ? '引用中...' : `确认引用 (${selectedIds.size})`}
+            <Button onClick={handleImport} disabled={importing || selectedPresetCategoryIds.length === 0}>
+              {importing ? '引用中...' : `确认引用 (${selectedPresetCategoryIds.length})`}
             </Button>
           </DialogFooter>
         </DialogContent>

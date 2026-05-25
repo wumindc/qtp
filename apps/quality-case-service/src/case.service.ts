@@ -638,6 +638,25 @@ export class CaseService {
     return testCase;
   }
 
+  async importPresetCategoriesToApp(request: { appCode: string; suiteCode: string; suiteName: string; description?: string; categoryIds: string[] }) {
+    if (!request.appCode) throw new Error('缺少应用编码');
+    if (!request.suiteCode) throw new Error('缺少用例集编码');
+    const categoryIds = Array.from(new Set(request.categoryIds ?? []));
+    if (categoryIds.length === 0) throw new Error('请选择系统预置分类');
+
+    const presetCaseIds = Array.from(this.presetCases.values())
+      .filter((preset) => categoryIds.includes(preset.categoryId))
+      .map((preset) => preset.id);
+
+    if (presetCaseIds.length === 0) throw new Error('所选分类下没有系统预置用例');
+
+    return this.importPresetCasesToApp({
+      ...request,
+      presetCaseIds,
+      presetCaseCodes: presetCaseIds,
+    });
+  }
+
   async importPresetCasesToApp(request: PresetImportRequest) {
     if (!request.appCode) throw new Error('缺少应用编码');
     if (!request.suiteCode) throw new Error('缺少用例集编码');

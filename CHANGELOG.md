@@ -4,6 +4,40 @@
 
 ### 2026-05-25 — 端到端流程打通 & 前端接口接入
 
+#### 优化 — 应用用例列表界面布局优化（2026-05-25）
+- **变更需求**：用户反馈左侧已有分类导航，用例卡片右上角的分类标签多余；另外“输入”和“期望行为”上下排布太占垂直空间。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-cases.tsx`：移除用例卡片右上角的分类名称标签。
+  - `apps/web/src/features/apps/app-cases.tsx`：将“输入 (Query)”和“期望行为”两个内容块由上下堆叠（`space-y-2`）改为左右并排等宽显示（`flex gap-4 flex-1`），显著提升单页内可用例展示密度。
+
+#### 新增/修复 — 应用用例分类创建与分类展示（2026-05-25）
+- **变更需求**：用户反馈应用内用例管理左侧分类为空，并希望在应用内直接创建分类、向分类里新增用例。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-cases.tsx`：应用用例分类查询改为同时包含全局分类，修复预置/全局分类不显示导致用例显示“未分类”的问题。
+  - `apps/web/src/features/apps/app-cases.tsx`：新增“新建分类”入口与弹窗，调用 `/case/category/create.do` 创建当前应用范围分类，创建后自动选中新分类并刷新列表。
+  - `apps/web/src/features/apps/case-form-dialog.tsx`：新建用例弹窗打开时按当前选中分类重置表单，确保新增用例落到当前分类。
+  - `apps/web/src/features/apps/app-cases.spec.tsx`：补充应用分类展示、新建分类、新建用例归类的定向测试。
+
+#### 优化 — 引用预置分类交互与接口重构（2026-05-25）
+- **变更需求**：用户反馈按用例挑选太繁琐且弹窗太宽，希望直接按分类整体引入。
+- **变更内容**：
+  - `apps/quality-case-service/src/case.service.ts`：后端新增 `importPresetCategoriesToApp` 业务逻辑，支持通过 `categoryIds` 查找对应分类下所有系统预置用例并导入。
+  - `apps/quality-case-service/src/case.controller.ts`：后端新增 `/case/preset/import-categories-to-app.do` 接口。
+  - `apps/web/src/features/apps/app-cases.tsx`：彻底重构「从预置引用」弹窗，移除原有的左右分栏和用例列表，改为标准的居中小弹窗（`sm:max-w-md`）。
+  - `apps/web/src/features/apps/app-cases.tsx`：弹窗内仅显示分类的多选列表，用户可勾选多个分类一键批量导入。
+
+
+#### 优化 — 引用预置用例弹窗交互体验（2026-05-25）
+- **变更需求**：引用预置用例的弹窗太窄内容显示不全，且用户希望按分类直接引用即可，不需要复杂的逐条选择和搜索操作。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-cases.tsx`：增大弹窗最大宽度为 1100px。
+  - 移除用例截断样式 (`truncate`) 改为换行完整显示 (`break-all whitespace-pre-wrap`)。
+  - 移除右侧单个用例的复选框及相关状态 (`selectedIds`)。
+  - 移除右侧搜索框、全选、清空功能，改为仅显示当前分类下包含的用例预览列表。
+  - 底部确认按钮变更为「确认引用此分类 (X 条)」，一次性引入当前选中的整个分类的所有预览用例。
+
+
+
 #### 修复 — execution-service 用例过滤逻辑
 - **变更需求**：执行计划触发后 totalCount=0，系统预置用例无法被任何应用计划匹配
 - **变更内容**：
