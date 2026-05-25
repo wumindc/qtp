@@ -4,11 +4,19 @@
 
 ### 2026-05-25 — 端到端流程打通 & 前端接口接入
 
-#### 优化 — 应用用例列表界面布局优化（2026-05-25）
-- **变更需求**：用户反馈左侧已有分类导航，用例卡片右上角的分类标签多余；另外“输入”和“期望行为”上下排布太占垂直空间。
+#### 修复 — next-themes 在服务端组件直接渲染导致的 React 报错（2026-05-25）
+- **变更需求**：页面访问抛出错误 `Encountered a script tag while rendering React component`。
 - **变更内容**：
-  - `apps/web/src/features/apps/app-cases.tsx`：移除用例卡片右上角的分类名称标签。
-  - `apps/web/src/features/apps/app-cases.tsx`：将“输入 (Query)”和“期望行为”两个内容块由上下堆叠（`space-y-2`）改为左右并排等宽显示（`flex gap-4 flex-1`），显著提升单页内可用例展示密度。
+  - `apps/web/src/components/theme-provider.tsx`：新建客户端组件，显式声明 `"use client"` 并封装 `next-themes` 的 `ThemeProvider`。
+  - `apps/web/src/app/layout.tsx`：将直接引入 `next-themes` 改为引入封装好的客户端组件，修复由于服务端组件渲染包含 `<script>` 标签引起的报错。
+
+#### 优化 — 应用用例列表界面布局与交互重设计（2026-05-25）
+- **变更需求**：用户反馈上一次的布局调整不够精细，要求重新审视设计并合理排布；预置用例不应允许操作，自定义用例需支持编辑和删除；需要在左侧明确显示当前分类下的用例数量。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-cases.tsx`：全面重构用例卡片布局，头部横向排布「用例名称、来源标签、风险等级」；内容区域采用带图标的区块化设计（`bg-muted/30` 和 `bg-emerald-500/5`），使用 Grid 布局规范「输入」与「期望行为」展示，并添加相关图标提升设计质感。
+  - `apps/web/src/features/apps/app-cases.tsx`：左侧分类导航在当前选中的分类项右侧，增加显式的用例数量角标展示。
+  - `apps/web/src/features/apps/app-cases.tsx`：为非系统预置的自建用例增加悬浮操作区（编辑、删除），删除操作接入了 `PopoverConfirm` 二次确认并调用 `/case/delete.do` 接口。
+  - `apps/web/src/features/apps/case-form-dialog.tsx`：复用新建表单支持编辑模式。传入 `editingCase` 时回填数据，标题切换为“编辑应用测试用例”，并在提交时调用 `/case/update.do` 接口更新数据。
 
 #### 新增/修复 — 应用用例分类创建与分类展示（2026-05-25）
 - **变更需求**：用户反馈应用内用例管理左侧分类为空，并希望在应用内直接创建分类、向分类里新增用例。

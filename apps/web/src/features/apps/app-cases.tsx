@@ -5,7 +5,8 @@
  * @author codex
  */
 import { useState, useEffect, useCallback } from 'react';
-import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid } from 'lucide-react';
+import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid, Edit, Trash2, MessageSquare, Target } from 'lucide-react';
+import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -30,7 +31,7 @@ interface Category {
   appCode?: string;
 }
 
-interface CaseRecord {
+export interface CaseRecord {
   id: string;
   caseName: string;
   appCode: string;
@@ -101,8 +102,9 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
 
-  // 新建表单
+  // 新建/编辑表单
   const [formOpen, setFormOpen] = useState(false);
+  const [editingCase, setEditingCase] = useState<CaseRecord | undefined>(undefined);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
   const [categorySaving, setCategorySaving] = useState(false);
@@ -219,6 +221,16 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
     }
   };
 
+  const handleDeleteCase = async (id: string) => {
+    try {
+      await postGateway('case', '/case/delete.do', { id });
+      toast.success('删除成功');
+      void loadData();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '删除失败');
+    }
+  };
+
   return (
     <div className="space-y-6 h-[calc(100vh-6rem)] flex flex-col">
       <div className="flex items-center justify-between shrink-0">
@@ -238,7 +250,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
           <Button variant="outline" size="sm" className="gap-1.5" onClick={openPresetDialog}>
             <BookCopy className="h-4 w-4" />从预置引用
           </Button>
-          <Button size="sm" className="gap-1.5" onClick={() => setFormOpen(true)}>
+          <Button size="sm" className="gap-1.5" onClick={() => { setEditingCase(undefined); setFormOpen(true); }}>
             <Plus className="h-4 w-4" />新建用例
           </Button>
         </div>
@@ -254,24 +266,38 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
             <button
               onClick={() => handleCategorySelect('ALL')}
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left',
+                'w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left',
                 activeCategoryId === 'ALL' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground'
               )}
             >
-              <LayoutGrid className="h-4 w-4" />
-              全部用例
+              <div className="flex items-center gap-2 min-w-0">
+                <LayoutGrid className="h-4 w-4 shrink-0" />
+                <span className="truncate">全部用例</span>
+              </div>
+              {activeCategoryId === 'ALL' && (
+                <span className="text-[10px] bg-background/50 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
+                  {cases.length}
+                </span>
+              )}
             </button>
             {categories.map(c => (
               <button
                 key={c.id}
                 onClick={() => handleCategorySelect(c.id)}
                 className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left',
+                  'w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left',
                   activeCategoryId === c.id ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground'
                 )}
               >
-                <Folder className="h-4 w-4" />
-                {c.name}
+                <div className="flex items-center gap-2 min-w-0">
+                  <Folder className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{c.name}</span>
+                </div>
+                {activeCategoryId === c.id && (
+                  <span className="text-[10px] bg-background/50 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
+                    {cases.length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -298,33 +324,67 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
             {loading && <div className="text-center py-12 text-muted-foreground text-sm">加载中...</div>}
 
             {!loading && cases.map((c) => (
-              <div key={c.id} className="bg-background border border-border rounded-xl p-4 shadow-sm hover:shadow transition-shadow">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <h3 className="text-sm font-semibold text-foreground">{c.caseName}</h3>
-                      {c.sourcePresetId && (
-                        <Badge variant="outline" className="text-xs font-normal">来自预置</Badge>
-                      )}
-                    </div>
-                  <div className="flex flex-col items-end gap-2 shrink-0">
+              <div key={c.id} className="group relative bg-card border border-border rounded-xl p-4 shadow-sm hover:shadow-md hover:border-border/80 transition-all">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-base font-semibold text-foreground">{c.caseName}</h3>
+                    {c.sourcePresetId && (
+                      <Badge variant="outline" className="text-xs font-normal">来自预置</Badge>
+                    )}
                     <span className={cn('text-xs px-2 py-0.5 rounded-full border font-medium', riskLabel[c.riskLevel]?.color ?? riskLabel.MEDIUM.color)}>
                       风险 {riskLabel[c.riskLevel]?.label ?? '中'}
                     </span>
                   </div>
-                </div>
-                <div className="mt-3 flex gap-4">
-                  <div className="flex-1 bg-muted/50 rounded-md p-2">
-                    <span className="text-xs text-muted-foreground font-medium mb-1 block">输入 (Query)</span>
-                    <p className="text-sm font-mono text-foreground break-all">{c.query}</p>
-                  </div>
-                  {c.expectedBehavior && (
-                    <div className="flex-1 bg-emerald-500/5 border border-emerald-500/10 rounded-md p-2">
-                      <span className="text-xs text-emerald-600 font-medium mb-1 block">期望行为</span>
-                      <p className="text-sm text-foreground break-all">{c.expectedBehavior}</p>
+                  
+                  {!c.sourcePresetId && (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        onClick={() => {
+                          setEditingCase(c);
+                          setFormOpen(true);
+                        }}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <PopoverConfirm
+                        title="确认删除用例"
+                        description={`您确定要删除测试用例 "${c.caseName}" 吗？此操作不可恢复。`}
+                        onConfirm={() => void handleDeleteCase(c.id)}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </PopoverConfirm>
                     </div>
                   )}
                 </div>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                      <MessageSquare className="h-3.5 w-3.5" /> 测试输入 (Query)
+                    </div>
+                    <div className="text-sm bg-muted/30 p-3 rounded-lg border border-border/50 text-foreground break-all">
+                      {c.query}
+                    </div>
+                  </div>
+                  {c.expectedBehavior && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-emerald-600 flex items-center gap-1.5">
+                        <Target className="h-3.5 w-3.5" /> 期望行为
+                      </div>
+                      <div className="text-sm bg-emerald-500/5 p-3 rounded-lg border border-emerald-500/10 text-foreground break-all">
+                        {c.expectedBehavior}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -347,6 +407,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
         appCode={appCode}
         categoryId={activeCategoryId !== 'ALL' ? activeCategoryId : undefined}
         categories={categories}
+        editingCase={editingCase}
         onSuccess={() => void loadData(keyword, activeCategoryId)}
       />
 

@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { postGateway } from '@/lib/api/gateway-client';
+import type { CaseRecord } from './app-cases';
 
 export function CaseFormDialog({
   open,
@@ -20,6 +21,7 @@ export function CaseFormDialog({
   appCode,
   categoryId,
   categories,
+  editingCase,
   onSuccess,
 }: {
   open: boolean;
@@ -27,6 +29,7 @@ export function CaseFormDialog({
   appCode: string;
   categoryId?: string;
   categories: { id: string; name: string }[];
+  editingCase?: CaseRecord;
   onSuccess: () => void;
 }) {
   const [loading, setLoading] = useState(false);
@@ -41,14 +44,24 @@ export function CaseFormDialog({
 
   useEffect(() => {
     if (!open) return;
-    setFormData({
-      caseName: '',
-      categoryId: defaultCategoryId,
-      riskLevel: 'MEDIUM',
-      query: '',
-      expectedBehavior: '',
-    });
-  }, [defaultCategoryId, open]);
+    if (editingCase) {
+      setFormData({
+        caseName: editingCase.caseName,
+        categoryId: editingCase.categoryId,
+        riskLevel: editingCase.riskLevel,
+        query: editingCase.query,
+        expectedBehavior: editingCase.expectedBehavior || '',
+      });
+    } else {
+      setFormData({
+        caseName: '',
+        categoryId: defaultCategoryId,
+        riskLevel: 'MEDIUM',
+        query: '',
+        expectedBehavior: '',
+      });
+    }
+  }, [defaultCategoryId, open, editingCase]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,15 +72,24 @@ export function CaseFormDialog({
 
     setLoading(true);
     try {
-      await postGateway('case', '/case/create.do', {
-        ...formData,
-        appCode,
-      });
-      toast.success('新建用例成功');
+      if (editingCase) {
+        await postGateway('case', '/case/update.do', {
+          id: editingCase.id,
+          appCode,
+          data: formData,
+        });
+        toast.success('更新用例成功');
+      } else {
+        await postGateway('case', '/case/create.do', {
+          ...formData,
+          appCode,
+        });
+        toast.success('新建用例成功');
+      }
       onSuccess();
       onOpenChange(false);
     } catch (err: any) {
-      toast.error(err.message || '新建用例失败');
+      toast.error(err.message || (editingCase ? '更新用例失败' : '新建用例失败'));
     } finally {
       setLoading(false);
     }
@@ -77,7 +99,7 @@ export function CaseFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>新建应用测试用例</DialogTitle>
+          <DialogTitle>{editingCase ? '编辑应用测试用例' : '新建应用测试用例'}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 py-4">
           <div className="grid grid-cols-2 gap-4">
@@ -146,7 +168,7 @@ export function CaseFormDialog({
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button>
             <Button type="submit" disabled={loading}>
-              {loading ? '保存中...' : '确认新建'}
+              {loading ? '保存中...' : (editingCase ? '确认更新' : '确认新建')}
             </Button>
           </DialogFooter>
         </form>
