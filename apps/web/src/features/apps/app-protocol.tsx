@@ -23,6 +23,7 @@ import { loadApp, loadAppProtocol, saveAppProtocol } from './api/app-api';
 import type { App, AppProtocol } from './types';
 import { JSONPath } from 'jsonpath-plus';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { buildProtocolTestContext, renderProtocolTemplate } from './protocol-template';
 
 export function AppProtocolPage({ appCode }: { appCode: string }) {
   const [app, setApp] = useState<App | null>(null);
@@ -83,9 +84,10 @@ export function AppProtocolPage({ appCode }: { appCode: string }) {
     abortControllerRef.current = new AbortController();
 
     try {
+      const testContext = buildProtocolTestContext(testQuery);
       let parsedHeaders: Record<string, string> = {};
       try {
-        parsedHeaders = JSON.parse(protocol.headers || '{}');
+        parsedHeaders = JSON.parse(renderProtocolTemplate(protocol.headers || '{}', testContext));
       } catch (e) {
         toast.error('请求头 JSON 格式错误');
         setTesting(false);
@@ -94,7 +96,7 @@ export function AppProtocolPage({ appCode }: { appCode: string }) {
 
       let parsedBody: any = {};
       try {
-        const bodyStr = protocol.body.replace(/\{\{\s*case\.query\s*\}\}/g, testQuery);
+        const bodyStr = renderProtocolTemplate(protocol.body || '{}', testContext);
         parsedBody = JSON.parse(bodyStr || '{}');
       } catch (e) {
         toast.error('请求体 JSON 格式错误');
@@ -281,14 +283,14 @@ export function AppProtocolPage({ appCode }: { appCode: string }) {
           <div className="space-y-2">
             <Label>
               请求体模板 (JSON 格式)
-              <Badge variant="outline" className="ml-2 text-[10px]">{'{{case.query}}'} 用例输入占位符</Badge>
+              <Badge variant="outline" className="ml-2 text-[10px]">{'{{case.input.query}}'} 用例输入占位符</Badge>
             </Label>
             <Textarea
               value={protocol.body || ''}
               onChange={(e) => setProtocol({ ...protocol, body: e.target.value })}
               className="font-mono text-sm"
               rows={5}
-              placeholder={`{\n  "query": "{{case.query}}"\n}`}
+              placeholder={`{\n  "query": "{{case.input.query}}"\n}`}
             />
           </div>
 

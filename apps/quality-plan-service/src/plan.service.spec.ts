@@ -16,12 +16,25 @@ describe('PlanService', () => {
       planCode: 'CUSTOM_PLAN',
       planName: '自定义计划',
       appCode: 'credit_assistant',
-      planType: 'CUSTOM',
       caseFilter: { categoryCodes: ['1'] },
     });
 
     expect(created.planCode).toBe('CUSTOM_PLAN');
     expect(created.status).toBe('ENABLED');
+    expect(created).not.toHaveProperty('planType');
+  });
+
+  it('generates an opaque plan code when the caller does not provide one', async () => {
+    const service = new PlanService();
+    const created = await service.create({
+      planName: '自动编码计划',
+      appCode: 'credit_assistant',
+      caseFilter: {},
+    });
+
+    expect(created.planCode).toMatch(/^plan-[a-z0-9]{10}$/u);
+    expect(created.planCode).not.toContain('credit_assistant');
+    expect(created.planCode).not.toMatch(/\d{10,}/u);
   });
 
   it('updates status, previews empty case filters, and deletes a plan', async () => {
@@ -30,7 +43,6 @@ describe('PlanService', () => {
       planCode: 'FILTER_PLAN',
       planName: '过滤计划',
       appCode: 'credit_assistant',
-      planType: 'CUSTOM',
       caseFilter: { riskLevels: ['HIGH'], categoryCodes: ['1'] },
     });
 
@@ -46,7 +58,6 @@ describe('PlanService', () => {
       planCode: 'SELECTED_PLAN',
       planName: '选中用例计划',
       appCode: 'credit_assistant',
-      planType: 'CUSTOM',
       caseFilter: { selectedCaseCodes: ['1', '2'] },
     });
 

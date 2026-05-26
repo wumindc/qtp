@@ -4,11 +4,13 @@
  * 应用主框架 - 侧边导航 + 内容区域
  * 支持二级导航：进入应用后菜单切换为应用子菜单，平台菜单下沉到底部
  * @author Antigravity/Gemini-2.5-Pro
+ * @author codex
  */
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
+import { loadApp } from '@/features/apps/api/app-api';
 import {
   ArrowLeft,
   Bot,
@@ -21,7 +23,7 @@ import {
   HeartPulse,
   KeyRound,
   Layers3,
-  Activity,
+  BrainCircuit,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -42,9 +44,9 @@ const NAV_ITEMS = [
 const APP_NAV_ITEMS = [
   { key: 'overview', label: '概览', icon: Gauge },
   { key: 'protocol', label: '接口配置', icon: KeyRound },
+  { key: 'evaluation', label: '评估配置', icon: BrainCircuit },
   { key: 'cases', label: '用例管理', icon: ClipboardList },
   { key: 'plans', label: '执行计划', icon: Layers3 },
-  { key: 'history', label: '执行历史', icon: Activity },
 ] satisfies Array<{ key: string; label: string; icon: LucideIcon }>;
 
 /* ── 平台层下沉菜单（进入应用后显示在底部）── */
@@ -156,15 +158,38 @@ export function AppShell({ children }: AppShellProps) {
   const currentTab = getAppTab(pathname);
 
   const [collapsed, setCollapsed] = useState(false);
+  const [appName, setAppName] = useState<string | null>(null);
+
+  // 当进入应用时加载应用名称
+  useEffect(() => {
+    if (appCode) {
+      setAppName(null);
+      void loadApp(appCode).then((app) => {
+        setAppName(app?.appName ?? appCode);
+      }).catch(() => {
+        setAppName(appCode);
+      });
+    } else {
+      setAppName(null);
+    }
+  }, [appCode]);
 
   useEffect(() => {
-    setCollapsed(localStorage.getItem('qtp-sidebar-collapsed') === 'true');
+    try {
+      setCollapsed(window.localStorage?.getItem('qtp-sidebar-collapsed') === 'true');
+    } catch {
+      setCollapsed(false);
+    }
   }, []);
 
   const toggle = () => {
     setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem('qtp-sidebar-collapsed', String(next));
+      try {
+        window.localStorage?.setItem('qtp-sidebar-collapsed', String(next));
+      } catch {
+        // localStorage can be unavailable in tests or privacy-restricted browsers.
+      }
       return next;
     });
   };
@@ -224,7 +249,9 @@ export function AppShell({ children }: AppShellProps) {
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-0.5">
                       当前应用
                     </p>
-                    <p className="text-sm font-semibold text-foreground truncate">{appCode}</p>
+                    <p className="text-sm font-semibold text-foreground truncate">
+                      {appName ?? appCode}
+                    </p>
                   </div>
                 )}
               </div>

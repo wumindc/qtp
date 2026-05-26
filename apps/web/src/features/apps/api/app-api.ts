@@ -1,5 +1,10 @@
+/**
+ * AI application API client.
+ * @author codex
+ */
 import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
 import type { App, AppProtocol, AppStatus, AppType } from '../types';
+import { normalizeAppIconConfig } from '../app-icon-config';
 
 type GatewayRow = Record<string, unknown>;
 
@@ -10,22 +15,37 @@ function toStringField(value: unknown, fallback = '') {
 
 function mapApp(item: GatewayRow): App {
   const protocol = (item.protocol ?? {}) as Record<string, unknown>;
+  const adapterConfig = (item.adapterConfig ?? {}) as Record<string, unknown>;
+  const uiConfig = (adapterConfig.ui ?? {}) as Record<string, unknown>;
+  const responseConfig = (adapterConfig.response ?? {}) as Record<string, unknown>;
+  // 统计字段：支持后端在列表接口直接返回 stats 对象，或平铺字段
+  const statsRaw = (item.stats ?? {}) as Record<string, unknown>;
+  const caseCount = Number(statsRaw.caseCount ?? item.caseCount ?? 0);
+  const planCount = Number(statsRaw.planCount ?? item.planCount ?? 0);
+  const lastRunAt = toStringField(statsRaw.lastRunAt ?? item.lastRunAt ?? '') || undefined;
+  const lastPassRateRaw = statsRaw.lastPassRate ?? item.lastPassRate;
+  const lastPassRate = lastPassRateRaw !== undefined && lastPassRateRaw !== null
+    ? Number(lastPassRateRaw)
+    : undefined;
+
   return {
     appCode: toStringField(item.appCode),
     appName: toStringField(item.appName),
     appType: (item.appType as AppType) ?? 'CHAT',
-    description: toStringField(item.description),
+    description: toStringField(item.description ?? uiConfig.description),
     owner: toStringField(item.owner, 'system'),
     status: (item.status as AppStatus) ?? 'ENABLED',
     protocol: {
-      method: (protocol.method as 'GET' | 'POST') ?? 'POST',
-      url: toStringField(protocol.url),
-      headers: toStringField(protocol.headers),
-      body: toStringField(protocol.body),
-      answerPath: toStringField(protocol.answerPath),
-      successExpr: toStringField(protocol.successExpr),
-      streamEnabled: Boolean(protocol.streamEnabled),
+      method: (protocol.method as 'GET' | 'POST') ?? (item.requestMethod as 'GET' | 'POST') ?? 'POST',
+      url: toStringField(protocol.url ?? item.invokeUrl),
+      headers: toStringField(protocol.headers ?? item.headerTemplate),
+      body: toStringField(protocol.body ?? item.bodyTemplate),
+      answerPath: toStringField(protocol.answerPath ?? responseConfig.answerPath),
+      successExpr: toStringField(protocol.successExpr ?? responseConfig.successExpression),
+      streamEnabled: Boolean(protocol.streamEnabled ?? item.streamEnabled),
     },
+    stats: { caseCount, planCount, lastRunAt, lastPassRate },
+    icon: normalizeAppIconConfig(item.icon ?? uiConfig.icon),
     createdAt: toStringField(item.createdAt),
     updatedAt: toStringField(item.updatedAt),
   };

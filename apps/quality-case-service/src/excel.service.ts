@@ -7,7 +7,7 @@ const SHEET_NAME = 'eval_cases';
 export class CaseExcelService {
   /**
    * @author codex
-   * Exports full-field test case rows into an XLSX workbook buffer.
+   * Exports minimal question case rows into an XLSX workbook buffer.
    */
   exportWorkbook(rows: CaseExcelRow[]): Buffer {
     const worksheet = XLSX.utils.json_to_sheet(rows);

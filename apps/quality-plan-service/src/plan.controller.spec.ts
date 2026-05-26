@@ -21,7 +21,6 @@ describe('PlanController', () => {
       planCode: 'API_PLAN',
       planName: '接口计划',
       appCode: 'credit_assistant',
-      planType: 'CUSTOM',
       caseFilter: { selectedCaseCodes: ['1'] },
     });
 

@@ -25,6 +25,16 @@ export class ExecutionController {
     return ok(await this.executionService.resultList(request.runCode, request.page));
   }
 
+  @Post('run-detail.do')
+  async runDetail(@Body() request: { runCode: string }) {
+    return ok(await this.executionService.runDetail(request.runCode));
+  }
+
+  @Post('run-versions.do')
+  async runVersions(@Body() request: { runCode: string }) {
+    return ok(await this.executionService.runVersions(request.runCode));
+  }
+
   @Post('rerun.do')
   async rerun(@Body() request: { runCode: string }) {
     return ok(await this.executionService.rerun(request.runCode));

@@ -2,6 +2,7 @@
 /**
  * 预置用例 — 主页面（用例列表 + 分类列表两个标签页）
  * @author Antigravity/Gemini
+ * @author codex
  */
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Plus, RefreshCw, Search, FileText, FolderTree, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Trash2, Pencil } from 'lucide-react';
@@ -25,14 +26,7 @@ import {
   changeCategoryStatus,
   changeCaseStatus
 } from './api/case-api';
-import type { PresetCase, PresetCategory, RiskLevel } from './types';
-
-/* ── 风险颜色 ── */
-const RISK_VARIANT: Record<RiskLevel, string> = {
-  HIGH: 'text-destructive bg-destructive/10 border-destructive/20',
-  MEDIUM: 'text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20',
-  LOW: 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:text-emerald-400 dark:bg-emerald-400/10 dark:border-emerald-400/20',
-};
+import type { PresetCase, PresetCategory } from './types';
 
 /* ══ 主组件 ══ */
 export function CasesPage() {
@@ -68,9 +62,9 @@ export function CasesPage() {
     const kw = query.trim().toLowerCase();
     if (!kw) return categoryCases;
     return categoryCases.filter((c) =>
-      [c.name, c.input, c.expected, c.categoryId].join(' ').toLowerCase().includes(kw),
+      [c.input, c.expected, categoryNameById.get(c.categoryId) ?? c.categoryId].join(' ').toLowerCase().includes(kw),
     );
-  }, [categoryCases, query]);
+  }, [categoryCases, categoryNameById, query]);
 
   /* ── 刷新 ── */
   const refresh = useCallback(async (silent = false) => {
@@ -152,7 +146,7 @@ export function CasesPage() {
     try {
       await deleteCase(c.id);
       setCases((prev) => prev.filter((x) => x.id !== c.id));
-      toast.success(`用例「${c.name}」已删除`);
+      toast.success('用例已删除');
     } catch {
       toast.error('删除失败');
     }
@@ -205,8 +199,6 @@ export function CasesPage() {
       toast.error('删除失败');
     }
   };
-
-  const selectedCategory = categories.find((c) => c.id === selectedCategoryId);
 
   return (
     <div className="space-y-6">
@@ -303,15 +295,12 @@ export function CasesPage() {
                 <div className="relative flex-1 max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="搜索用例名称或期望行为"
+                    placeholder="搜索问题内容或期望回答"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     className="pl-9"
                   />
                 </div>
-                {selectedCategory && (
-                  <p className="text-xs text-muted-foreground">{selectedCategory.description}</p>
-                )}
               </div>
 
               {/* 用例卡片 */}
@@ -335,17 +324,15 @@ export function CasesPage() {
                     >
                       <FileText className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
                       <div className="flex-1 min-w-0 space-y-1.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-semibold text-foreground">{c.name}</p>
-                          <span className={cn('inline-flex rounded border px-1.5 py-0.5 text-[10px] font-medium', RISK_VARIANT[c.risk])}>
-                            {c.risk}
-                          </span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {categoryNameById.get(c.categoryId) ?? '未归类'}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground line-clamp-1">{c.input || '（无输入）'}</p>
-                        <p className="text-xs text-foreground/80 line-clamp-2">期望：{c.expected}</p>
+                        {selectedCategoryId === 'ALL' && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-[10px]">
+                              {categoryNameById.get(c.categoryId) ?? '未归类'}
+                            </Badge>
+                          </div>
+                        )}
+                        <p className="text-sm text-foreground break-all">{c.input || '（无问题内容）'}</p>
+                        <p className="text-xs text-foreground/80 line-clamp-2">期望回答：{c.expected}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <Badge
@@ -379,7 +366,7 @@ export function CasesPage() {
                         {/* 删除 */}
                         <PopoverConfirm
                           title="删除用例"
-                          description={`确认删除「${c.name}」？此操作不可恢复。`}
+                          description={`确认删除这个问题「${c.input}」？此操作不可恢复。`}
                           onConfirm={() => void handleDeleteCase(c)}
                         >
                           <Button

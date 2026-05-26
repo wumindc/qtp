@@ -25,12 +25,12 @@ export interface SeedApp {
 
 export interface SeedCase {
   id: string;
-  caseName: string;
+  caseName?: string;
   appCode: string;
   caseScope?: 'APP' | 'SYSTEM_PRESET';
   categoryId: string;
   sourcePresetId?: string;
-  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
   query: string;
   expectedBehavior: string;
   caseCode?: string;
@@ -41,7 +41,6 @@ export interface SeedPlan {
   planCode: string;
   planName: string;
   appCode: string;
-  planType: 'SMOKE' | 'FULL_REGRESSION' | 'HIGH_RISK';
 }
 
 export interface SeedRun {

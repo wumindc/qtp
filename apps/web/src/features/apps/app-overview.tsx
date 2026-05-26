@@ -1,14 +1,19 @@
-/**
- * 应用详情 - 概览页组件
- * @author Antigravity/Gemini-2.5-Pro
- */
 'use client';
 
+/**
+ * 应用详情 - 概览页组件
+ * @author Antigravity/Claude-Sonnet-4.6
+ * @author codex
+ */
+
 import { useState, useEffect } from 'react';
-import { Bot, TrendingUp, Layers, Play, Clock, CheckCircle2, XCircle, Activity } from 'lucide-react';
+import { TrendingUp, Layers, Play, Clock, CheckCircle2, XCircle, Activity } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { loadApp } from './api/app-api';
-import type { App, ExecutionRun } from './types';
+import { AppIcon } from './app-icon';
+import { listRuns } from './api/plan-execution-api';
+import type { App } from './types';
+import type { RunRecord } from './api/plan-execution-api';
 
 function StatCard({ label, value, icon: Icon, color }: { label: string; value: string | number; icon: React.ElementType; color?: string }) {
   return (
@@ -26,24 +31,32 @@ function StatCard({ label, value, icon: Icon, color }: { label: string; value: s
 
 export function AppOverviewPage({ appCode }: { appCode: string }) {
   const [app, setApp] = useState<App | null>(null);
-  const [runs, setRuns] = useState<ExecutionRun[]>([]);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void loadApp(appCode).then(setApp);
+    setLoading(true);
+    Promise.all([
+      loadApp(appCode),
+      listRuns(appCode).catch(() => [] as RunRecord[]),
+    ]).then(([appData, runsData]) => {
+      setApp(appData);
+      setRuns(runsData);
+    }).finally(() => {
+      setLoading(false);
+    });
   }, [appCode]);
 
-  if (!app) return <div className="text-muted-foreground">加载中...</div>;
+  if (loading) return <div className="text-muted-foreground">加载中...</div>;
+  if (!app) return <div className="text-muted-foreground">应用不存在</div>;
 
   const completedRuns = runs.filter((r) => r.status === 'COMPLETED');
-  const lastRun = completedRuns[0];
 
   return (
     <div className="space-y-6">
       {/* 页头 */}
       <div className="flex items-center gap-4">
-        <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-violet-500/20 flex items-center justify-center">
-          <Bot className="h-6 w-6 text-violet-500" />
-        </div>
+        <AppIcon app={app} />
         <div>
           <h1 className="text-xl font-bold text-foreground">{app.appName}</h1>
           <p className="text-sm text-muted-foreground">{app.description || '暂无描述'}</p>
@@ -76,29 +89,34 @@ export function AppOverviewPage({ appCode }: { appCode: string }) {
           <div className="text-sm text-muted-foreground text-center py-8">暂无执行记录</div>
         ) : (
           <div className="space-y-3">
-            {completedRuns.slice(0, 5).map((run) => (
-              <div key={run.runCode} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{run.planName}</p>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Clock className="h-3 w-3" />
-                    {new Date(run.startAt).toLocaleString('zh-CN')}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-foreground">{run.stats.passRate}%</p>
-                    <p className="text-xs text-muted-foreground">{run.stats.pass}/{run.stats.total} 通过</p>
+            {completedRuns.slice(0, 5).map((run) => {
+              const passRate = run.totalCount > 0
+                ? Math.round((run.passCount / run.totalCount) * 100)
+                : 0;
+              return (
+                <div key={run.runCode} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{run.planCode}</p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Clock className="h-3 w-3" />
+                      {run.runCode}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    <span className="text-sm text-emerald-500">{run.stats.pass}</span>
-                    <XCircle className="h-4 w-4 text-red-500 ml-1" />
-                    <span className="text-sm text-red-500">{run.stats.fail}</span>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-foreground">{passRate}%</p>
+                      <p className="text-xs text-muted-foreground">{run.passCount}/{run.totalCount} 通过</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      <span className="text-sm text-emerald-500">{run.passCount}</span>
+                      <XCircle className="h-4 w-4 text-red-500 ml-1" />
+                      <span className="text-sm text-red-500">{run.failCount}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

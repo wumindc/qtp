@@ -15,10 +15,10 @@ describe('CaseController', () => {
     expect(response.data.list).toHaveLength(0);
   });
 
-  it('returns full-field template headers', () => {
+  it('returns minimal question template headers', () => {
     const controller = new CaseController(new CaseService());
 
-    expect(controller.template().data).toContain('manualReviewRequired');
+    expect(controller.template().data).toEqual(['appCode', 'categoryId', 'query', 'expectedBehavior']);
   });
 
   it('exposes suite list, create, and bind-cases endpoints', async () => {
@@ -29,10 +29,8 @@ describe('CaseController', () => {
       description: '当前应用分类',
     });
     const testCase = await service.create({
-      caseName: '接口用例',
       appCode: 'credit_assistant',
       categoryId: category.id,
-      riskLevel: 'LOW',
       query: '问题',
       expectedBehavior: '回答',
     });
@@ -60,10 +58,8 @@ describe('CaseController', () => {
       description: '系统预置用例分类',
     });
     const preset = await controller.createPreset({
-      caseName: '系统预置用例',
       appCode: 'SYSTEM_PRESET',
       categoryId: category.data.id,
-      riskLevel: 'LOW',
       query: '如何查询信用报告？',
       expectedBehavior: '正常回答',
     });

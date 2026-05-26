@@ -1,8 +1,8 @@
 /**
  * 预置用例 — 类型定义
  * @author Antigravity/Gemini
+ * @author codex
  */
-export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 export type StatusLabel = '启用' | '停用';
 
 export interface PresetCategory {
@@ -15,9 +15,7 @@ export interface PresetCategory {
 
 export interface PresetCase {
   id: string;
-  name: string;
   categoryId: string;
-  risk: RiskLevel;
   input: string;
   expected: string;
   status: StatusLabel;

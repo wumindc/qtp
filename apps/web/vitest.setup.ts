@@ -11,3 +11,9 @@ class ResizeObserverMock {
 }
 
 globalThis.ResizeObserver ??= ResizeObserverMock;
+
+/**
+ * @author codex
+ * Radix Select scrolls the active option into view; jsdom has no layout engine.
+ */
+Element.prototype.scrollIntoView ??= function scrollIntoView() {};

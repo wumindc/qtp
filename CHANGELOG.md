@@ -2,6 +2,272 @@
 
 ## [未发布]
 
+### 2026-05-26 — 执行详情版本切换器
+
+#### 新增 — 详情页可切换同计划执行版本
+- **变更需求**：用户反馈执行详情标题中不应直接把“第 N 次”放在标题里；当前 URL 对应的第几次执行应作为标题描述样式展示，并支持下拉切换该任务下所有执行版本，选择后 URL 和页面数据同步切换。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`、`apps/quality-execution-service/src/execution.controller.ts`：新增 `/execution/run-versions.do` 轻量接口，根据当前 `runCode` 返回同一应用同一计划下所有执行版本的 `runCode`、`sequenceNo`、用例数量、均分、状态与时间字段。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：详情页标题只展示任务名称；标题下方增加可点击的执行版本下拉按钮，展示“第 N 次”，下拉项展示“第 N 次 + 用例数量 + 均分”，选择其他版本后跳转到对应执行记录 URL。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`：新增 `RunVersionRecord` 类型和 `listRunVersions` API 封装。
+  - `apps/quality-execution-service/src/execution.controller.spec.ts`、`apps/web/src/features/apps/app-history-detail.spec.tsx`：补充执行版本轻量接口、标题展示和版本切换 URL 的回归测试。
+
+### 2026-05-26 — 执行计划展示序号与结果语义优化
+
+#### 优化 — 计划卡片隐藏技术 ID，执行记录展示第 N 次
+- **变更需求**：用户反馈计划卡片标题下方不需要展示计划 ID 和重复的执行次数；结果未达预期不应使用“任务出错”意味很强的打叉图标；每次执行应有序列号，详情页标题也应展示第几次执行。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：为执行记录动态计算同一应用同一计划下的 `sequenceNo`，`start.do`、`run-list.do`、`run-detail.do` 都返回可读执行序号。
+  - `apps/web/src/features/apps/app-plans.tsx`：计划卡片移除标题下方的 `planCode` 和重复“共执行 N 次”；最近执行、运行中状态和展开历史改为展示“第 N 次”；未达预期数量改用告警图标与“未达标”文案。
+  - `apps/web/src/features/apps/plan-history-sheet.tsx`、`apps/web/src/features/apps/app-history-detail.tsx`：侧边历史和详情标题同步展示执行序号，详情结果的失败态文案调整为“未达标”。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`、`apps/web/src/features/apps/types.ts`：补充 `sequenceNo` 类型字段。
+  - `apps/quality-execution-service/src/execution.service.spec.ts`、`apps/web/src/features/apps/app-plans.spec.tsx`、`apps/web/src/features/apps/app-history-detail.spec.tsx`：补充执行序号、隐藏技术 ID、未达标文案和详情标题序号的回归测试。
+
+### 2026-05-26 — 计划与执行批次 ID 随机化
+
+#### 修复 — 新建计划和执行批次不再使用可猜测时间戳编码
+- **变更需求**：用户反馈任务 ID 和任务执行 ID 是前端/后端拼接出来的可猜测字符串，尤其执行 ID 直接暴露时间戳，应该类似应用 ID 一样不可预测。
+- **变更内容**：
+  - `apps/quality-plan-service/src/plan.service.ts`：新建计划在未显式传入 `planCode` 时由后端生成 `plan-xxxxxxxxxx` 形式随机编码，并做碰撞检查；保留旧显式编码兼容测试和历史数据。
+  - `apps/quality-execution-service/src/execution.service.ts`：启动执行时由后端生成 `run-xxxxxxxxxx` 形式随机执行批次编码，不再拼接 `planCode` 和 `Date.now()`。
+  - `apps/web/src/features/apps/app-plans.tsx`、`apps/web/src/features/apps/api/plan-execution-api.ts`：前端创建计划不再自行生成或提交 `planCode`，改由后端返回。
+  - `apps/web/src/features/apps/use-plan-runs.ts`、`apps/web/src/features/apps/app-history.tsx`、`apps/web/src/features/apps/app-history-detail.tsx`：执行记录排序与时间展示改用后端真实 `startAt/endAt`，仅对旧 `_RUN_` 数据做兼容降级；详情页兜底标题不再暴露原始执行 ID。
+  - `apps/quality-plan-service/src/plan.service.spec.ts`、`apps/quality-execution-service/src/execution.service.spec.ts`、`apps/web/src/features/apps/app-plans.spec.tsx`：新增不可猜测 plan/run 编码与前端不提交计划编码的回归测试。
+
+### 2026-05-26 — 执行记录详情路由修复
+
+#### 修复 — 执行记录详情使用真实 URL 并展示可读任务名称
+- **变更需求**：用户反馈从执行计划点击执行记录进入详情时 URL 不变化，刷新后会回到执行计划页；详情页头部显示任务 ID 不可读，应展示任务名称。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-plans.tsx`、`apps/web/src/features/apps/app-history.tsx`：点击执行记录改为跳转到带 `runCode` 的详情路由，不再依赖组件内 `selectedRunCode` 状态。
+  - `apps/web/src/app/ai-quality-platform/apps/[appCode]/plans/runs/[runCode]/page.tsx`、`apps/web/src/app/ai-quality-platform/apps/[appCode]/history/[runCode]/page.tsx`：新增可刷新、可直达的执行记录详情页路由。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：详情页加载执行批次信息，标题展示计划/任务名称，头部不再显示原始执行 ID。
+  - `apps/quality-execution-service/src/execution.controller.ts`、`apps/quality-execution-service/src/execution.service.ts`：新增 `/execution/run-detail.do`，返回执行批次及可读 `planName`。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`、`apps/web/src/features/apps/app-history-detail.spec.tsx`、`apps/quality-execution-service/src/execution.controller.spec.ts`：补充 URL 跳转、详情标题和后端 run detail 回归测试。
+
+### 2026-05-26 — 执行计划卡片交互修复
+
+#### 修复 — 去掉计划启停状态、补编辑入口并增强刷新反馈
+- **变更需求**：用户反馈执行计划页不需要展示计划启停状态，缺少编辑按钮；右上角刷新按钮点击后没有反馈；运行中时顶部状态与右侧操作和下方进度状态重复。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-plans.tsx`：计划卡片移除“启用/禁用”状态 Badge，非运行态新增编辑按钮；运行中隐藏右侧执行/编辑/删除操作，只保留下方进度区状态；刷新按钮增加 loading 与成功/失败 toast 反馈。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`：补充 `updatePlan` 前端 API 封装，对接后端 `/plan/update.do`。
+  - `apps/web/src/features/apps/use-plan-runs.ts`：刷新执行记录时保留本地仍在运行且服务端列表暂未返回的批次，避免触发执行后的 RUNNING 状态被旧列表覆盖。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`：补充不展示启停状态、编辑计划、刷新反馈、运行态隐藏重复操作的回归测试。
+
+### 2026-05-26 — 全局提醒位置修复
+
+#### 修复 — Toast 默认顶部居中且不遮挡右上角业务按钮
+- **变更需求**：用户反馈右上角全局消息弹窗自动关闭前会盖住页面右上角业务按钮；调整为顶部居中后，不再需要显示关闭按钮，且提示尺寸应按内容真实自适应，不应被固定最小宽度撑大。
+- **变更内容**：
+  - `apps/web/src/components/ui/sonner.tsx`：全局 Toaster 默认展示位置调整为顶部居中，保持无关闭按钮；宽度改为 `max-content` 内容自适应，仅设置最大宽度兜底，提示内边距压缩为 `10px 12px`，并统一默认展示时长为 3.5 秒。
+  - `apps/web/src/app/layout.tsx`：根布局不再强制把 Toaster 放在右上角，改为使用全局 Toaster 的非遮挡默认配置。
+  - `apps/web/src/components/ui/sonner.spec.tsx`：新增回归测试，保证全局提醒默认顶部居中、不占用右上角操作区且尺寸更轻量。
+
+### 2026-05-26 — 执行计划分类范围修复
+
+#### 修复 — 按分类执行只展示当前应用可用分类
+- **变更需求**：用户反馈应用只引入了“敏感问题”分类，但创建执行计划手动选择分类时仍显示未引入的全局分类“22”。
+- **变更内容**：
+  - `apps/web/src/features/apps/use-plan-runs.ts`：计划页分类加载改为应用自建分类（`includeGlobal: false`）与已订阅预置分类（`subscribedByApp`）合并，不再使用默认包含全部全局分类的查询。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`、`apps/web/vitest.setup.ts`：补充按分类执行的分类范围回归测试，并补齐 Radix Select 在 jsdom 下所需的滚动方法模拟。
+
+### 2026-05-26 — 执行计划类型概念移除
+
+#### 删除 — 全局移除计划类型字段与页面入口
+- **变更需求**：用户反馈新建执行计划弹窗不需要“计划类型”，要求整个系统全局删除该概念，包括数据库字段。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-plans.tsx`、`apps/web/src/features/apps/api/plan-execution-api.ts`：移除计划类型 Badge、弹窗下拉框和创建计划 payload 中的 `planType`。
+  - `apps/quality-plan-service/src/plan.service.ts`：删除 `PlanRecord`、`CreatePlanRequest`、数据库 payload 和 row mapper 中的 `planType`。
+  - `packages/shared-database/prisma/schema.prisma`、`packages/shared-database/src/seed.ts`：删除 `eval_plan.planType` 字段和种子类型中的计划类型属性。
+  - `docs/ai-quality-platform-design.md`：同步删除计划类型设计说明和表字段说明。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`、`apps/quality-plan-service/src/plan.service.spec.ts`、`apps/quality-plan-service/src/plan.controller.spec.ts`：补充/更新无计划类型创建和页面不展示计划类型的回归测试。
+  - 已执行 `prisma db push --accept-data-loss` 并重新生成 Prisma Client，本地 `eval_plan` 表已删除 `planType` 列。
+
+### 2026-05-26 — AI 应用新建失败修复
+
+#### 修复 — 新建应用支持简化表单并显示具体失败原因
+- **变更需求**：用户反馈 AI 应用列表中新建应用失败，toast 只显示“操作失败”，没有具体失败原因。
+- **变更内容**：
+  - `apps/quality-business-service/src/app.service.ts`：创建应用支持当前表单的最小 payload，仅要求应用名称；未填写应用编码时自动生成隐藏 `appCode`，未配置业务域和接口地址时使用默认值，避免旧字段必填导致 500。
+  - `apps/quality-business-service/src/app.service.ts`：创建参数校验改为抛出 `BadRequestException`，例如应用名称为空时返回“请填写应用名称”，不再被包装成无意义的 Internal server error。
+  - `apps/web/src/features/apps/app-list.tsx`：应用创建、删除、状态切换失败时优先展示后端返回的错误信息，而不是统一吞成“操作失败”。
+  - `apps/quality-business-service/src/app.service.spec.ts`、`apps/web/src/features/apps/app-list.spec.tsx`：补充简化表单创建和具体错误 toast 的回归测试。
+
+### 2026-05-26 — AI 应用内置随机图标
+
+#### 新增 — 应用创建生成内置图标配置，列表与概览统一渲染
+- **变更需求**：用户希望 AI 应用卡片不再固定显示同一个机器人图标，新建应用时从内置图标库中生成类似风格但有区分度的图标。
+- **变更内容**：
+  - `apps/quality-business-service/src/app-icon.ts`：新增后端图标预设工具，内置 16 个图标、12 个主题、4 个变体，共 768 种组合；新建应用时随机生成配置，老数据按应用编码和名称稳定兜底。
+  - `apps/quality-business-service/src/app.service.ts`：应用图标配置写入既有 `adapterConfig.ui.icon`，避免新增数据库字段；编辑应用、保存接口协议时保留原图标配置。
+  - `apps/web/src/features/apps/app-icon-config.ts`、`apps/web/src/features/apps/app-icon.tsx`：新增前端图标解析和渲染组件，应用列表与应用概览页共用同一套视觉表现。
+  - `apps/web/src/features/apps/api/app-api.ts`：映射后端 `adapterConfig.ui.icon` 到前端 `App.icon`。
+  - `apps/quality-business-service/src/app.service.spec.ts`、`apps/web/src/features/apps/api/app-api.spec.ts`、`apps/web/src/features/apps/app-list.spec.tsx`：补充图标生成、持久化保留、接口映射和列表渲染回归测试。
+
+### 2026-05-26 — 执行计划真实运行态与进度修复
+
+#### 修复 — 执行批次先落库、逐条更新进度与时间
+- **变更需求**：用户反馈执行计划页在执行中时进度一开始就是满的，执行记录次数不会立即增加，执行时间也不准确。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：`start.do` 改为先创建 `RUNNING` 执行批次并立即返回，后台逐条执行用例、落 `eval_result`，每完成一条就更新 `eval_run` 的通过/失败/待审计数和均分，最终切换为 `COMPLETED`。
+  - `apps/quality-execution-service/src/execution.service.ts`：后台执行改为持久化 job worker 模式，`eval_run.status=RUNNING` 作为可恢复队列；服务启动时扫描并续跑未完成批次，已落库的 `eval_result` 会被跳过，避免重启后重复执行。
+  - `apps/quality-execution-service/src/execution.service.ts`：修正 `eval_run.startedAt/finishedAt` 写入逻辑，运行中不再提前写结束时间，列表返回 `startAt/endAt/durationMs` 供前端展示真实执行时间。
+  - `apps/web/src/features/apps/use-plan-runs.ts`、`apps/web/src/features/apps/app-plans.tsx`：计划页将 `start.do` 返回的服务端运行批次立即合并进列表，让执行次数即时增加；执行中只使用服务端 `RUNNING` 批次计算进度，避免把上一条完成记录误当作当前进度。
+  - `apps/quality-execution-service/src/execution.service.spec.ts`、`apps/web/src/features/apps/app-plans.spec.tsx`：补充执行批次立即创建、逐条更新进度、worker 重启恢复、前端执行次数即时增加和进度从已完成用例数计算的回归测试。
+
+### 2026-05-26 — 执行计划页面全面升级
+
+#### 新增 — 计划状态三态显示、执行历史内嵌展开、侧边栏查看更多
+- **变更需求**：执行计划页功能升级：增加计划状态感知（从未执行/执行中/已完成）、执行中轮询、最近一次结果可点击、计划卡片展开历史、侧边栏查看完整历史、内嵌详情页；移除独立「执行历史」Tab。
+- **变更内容**：
+  - `apps/web/src/components/ui/sheet.tsx`：新增 Sheet 侧边抽屉 UI 组件（基于 @radix-ui/react-dialog）。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`：扩展 `RunRecord` 类型（新增 `startAt`/`endAt`/`durationMs`/`planName` 字段）；新增 `listRunsByPlan`、`getRunStatus`、`parseRunStartTime`、`formatDuration` 工具函数。
+  - `apps/web/src/features/apps/use-plan-runs.ts`：新建数据 Hook，统一管理计划列表和执行记录；自动检测 RUNNING 状态开启 5s 轮询；按 planCode 归组 runs 数据。
+  - `apps/web/src/features/apps/plan-history-sheet.tsx`：新建侧边栏历史组件，展示某计划完整执行记录，支持状态颜色区分、通过率显示、点击进入详情。
+  - `apps/web/src/features/apps/app-plans.tsx`：全面重构，计划卡片支持三态（从未执行灰色占位 / 执行中蓝色进度条+轮询 / 已完成绿色摘要）；最近一次结果区改为可点击 button，hover 显示「点击查看详情」提示；卡片底部可展开显示最近 3 次历史记录行，超过 3 次显示「查看更多」入口打开侧边栏；所有历史记录均可点击跳转内嵌详情页（复用 `AppHistoryDetail`）；新增刷新按钮。
+  - `apps/web/src/components/app-shell.tsx`：移除侧边导航中「执行历史」Tab 条目（`history` key 和 `Activity` 图标）。
+
+### 2026-05-26 — 预置用例关联模式改造
+
+#### 优化 — 预置分类由"物理复制"改为"动态关联"
+- **变更需求**：用户反馈当前预置分类导入应用是复制用例记录，导致系统预置库更新后，应用内已导入的用例无法同步更新；建议改为关联分类的方式动态查询。
+- **变更内容**：
+  - `packages/shared-database/prisma/schema.prisma`：新增 `AppPresetCategory` 表记录应用订阅的系统预置分类。
+  - `apps/quality-case-service/src/case.service.ts`：后端重构，用内存 `Map` 缓存订阅关系；分类和用例列表查询（`listCategories`、`list`）动态合并订阅的预置分类和用例；废弃 `importPresetCasesToApp` 复制逻辑。
+  - `apps/quality-case-service/src/case.controller.ts`：提供 `/case/preset/subscribe.do` 等接口管理订阅关系。
+  - `apps/web/src/features/apps/app-cases.tsx`：前端「从预置引用」弹窗改为「管理预置分类」模式，展示已关联状态并支持勾选/取消关联；列表查询时单独拉取订阅的预置分类并合并展示；预置用例卡片增加“预置”标识且禁用编辑/删除操作。
+
+### 2026-05-26 — AI 应用列表/编辑弹窗/概览页多项 Bug 修复
+
+#### 修复 — 应用列表卡片统计数据始终为 0/-
+- **变更需求**：用户反馈应用列表卡片上用例数、计划数、通过率没有正确显示。
+- **变更内容**：
+  - `apps/web/src/features/apps/api/app-api.ts`：`mapApp` 函数之前未映射 `stats` 字段，导致所有 App 对象的 `stats` 始终为 `undefined`。现在从后端返回数据中读取 `stats` 对象（或平铺字段 `caseCount`/`planCount`/`lastRunAt`/`lastPassRate`），正确构建统计信息。
+  - `apps/web/src/features/apps/api/app-api.ts`：应用列表兼容后端顶层协议字段 `requestMethod/invokeUrl/adapterConfig`，避免真实接口地址被误显示为“未配置接口”。
+  - `apps/quality-business-service/src/app.service.ts`：`/app/list.do` 返回每个应用的真实用例数、计划数、最近执行时间和最近通过率；用例数同步计入应用自建用例和已关联的系统预置用例。
+  - `apps/quality-business-service/src/app.service.spec.ts`、`apps/web/src/features/apps/api/app-api.spec.ts`：补充应用列表协议字段和统计字段映射的回归测试。
+
+#### 优化 — 应用列表卡片展示负责人
+- **变更需求**：用户要求 AI 应用列表卡片展示负责人信息，并放在合适位置。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-list.tsx`：在应用状态和类型标签后方以同样的 Badge 样式展示负责人姓名，避免单独占用一行。
+  - `apps/web/src/features/apps/app-list.spec.tsx`：补充应用卡片负责人展示的回归测试。
+
+#### 修复 — 编辑应用弹窗应用类型不回显、含无效接口配置 Tab、保存按钮不可点击
+- **变更需求**：编辑应用时应用类型下拉显示为空；弹窗内含无用的接口配置 Tab（接口配置应在应用详情页单独管理）；保存按钮因 URL 必填校验始终处于禁用状态。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-form-dialog.tsx`：全量重写，去掉接口配置 Tab 及相关字段；应用类型回填时兼容后端可能返回的历史值（如 `CHATBOT`），统一归为 `CHAT`；保存按钮 disabled 条件仅保留 `!appName.trim()`，不再要求 url 非空。
+
+#### 修复 — 应用内侧边栏"当前应用"显示 appCode 而非应用名
+- **变更需求**：进入应用后，侧边栏「当前应用」显示的是 URL 中的 appCode（如"c"），而非应用名称（如"北京信用小京灵"）。
+- **变更内容**：
+  - `apps/web/src/components/app-shell.tsx`：新增 `appName` 状态，进入应用路由时异步调用 `loadApp(appCode)` 获取应用名称并展示；加载完成前降级显示 appCode。
+
+#### 修复 — 应用概览页执行历史数据不加载
+- **变更需求**：应用概览页的「历史执行」统计卡片始终显示 0，「最近执行记录」始终显示"暂无执行记录"。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-overview.tsx`：新增 `listRuns(appCode)` 调用，与 `loadApp` 并行加载数据；使用 `RunRecord` 类型正确计算通过率并展示执行记录列表。
+
+---
+
+### 2026-05-26 — 评估模型调用超时诊断与稳定性修复
+
+#### 修复 — 裁判模型请求不再沿用应用接口 30 秒硬超时
+- **变更需求**：用户反馈执行历史中多条结果反复出现「评估模型调用失败：This operation was aborted」，需要说明原因并修复每次执行评估失败的问题。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：将应用接口调用超时和评估模型调用超时拆分，评估模型默认等待 180 秒，并根据实际回答长度动态放宽到最多 600 秒；支持通过模型参数 `judgeTimeoutMs`/`timeoutMs` 在安全范围内调整。
+  - `apps/quality-execution-service/src/execution.service.ts`：收敛裁判模型默认输出长度，减少评估 JSON 生成耗时；AbortError 不再透出底层英文异常，改为写入明确的「评估模型调用超时」原因。
+  - `apps/quality-execution-service/src/execution.service.spec.ts`：补充评估模型被 abort 时仅标记当前结果失败，并显示清晰超时原因的回归测试。
+
+### 2026-05-26 — 执行计划触发反馈与最近结果展示
+
+#### 优化 — 计划卡片展示执行状态并提供即时反馈
+- **变更需求**：用户反馈执行计划点击「立即执行」并确认后页面没有反馈，不确定是否真的执行；计划卡片应展示执行中、最近一次执行结果、从未执行过等状态。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-plans.tsx`：计划页加载计划时同步读取执行历史，按计划展示最近一次执行状态、通过数、失败数、待审数和平均分。
+  - `apps/web/src/features/apps/app-plans.tsx`：点击确认执行后立即将当前计划标记为执行中，禁用按钮并显示加载态；执行完成后自动刷新最近一次结果。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`：补充回归测试，覆盖从未执行过、最近执行结果和确认执行后的即时执行中反馈。
+
+### 2026-05-26 — 执行历史详情用例展示调整
+
+#### 优化 — 结果列表直接展示问题、期望回答和实际回答
+- **变更需求**：用户反馈执行历史详情的用例结果列表不应再显示用例标题，应直接展示问题内容，并在下方展示期望回答和实际回答。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：结果列表移除 `caseName` 标题展示，主信息改为问题内容；列表下方新增实际回答展示，保留期望回答和评分依据。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：查看明细弹窗标题同步改为问题内容，避免再次显示兼容标题字段。
+  - `apps/web/src/features/apps/app-history-detail.spec.tsx`：补充回归断言，确保列表不显示旧标题，并直接展示实际回答。
+
+### 2026-05-26 — 接口测试变量渲染修复
+
+#### 修复 — 协议页发送测试支持 `{{case.input.query}}`
+- **变更需求**：用户反馈在平台接口配置页触发测试时，真实 AI 平台收到的问题是 `{{case.input.query}}`，说明测试请求未替换变量。
+- **变更内容**：
+  - `apps/web/src/features/apps/protocol-template.ts`：新增协议测试模板渲染工具，统一提供 `query`、`case.query`、`case.input.query` 三种测试上下文。
+  - `apps/web/src/features/apps/app-protocol.tsx`：接口测试发送前对请求头和请求体模板统一渲染，避免 `{{case.input.query}}` 被原样发送到真实 AI 平台。
+  - `apps/web/src/features/apps/app-protocol.spec.tsx`、`apps/web/src/features/apps/protocol-template.spec.ts`：补充回归测试，确认协议测试请求体会把 `{{case.input.query}}` 转换为真实测试输入。
+
+### 2026-05-26 — 应用评估配置与真实裁判模型
+
+#### 新增与修复 — 执行计划接入应用级评估模型和裁判提示词
+- **变更需求**：用户要求应用内新增评估配置菜单，可选择评估模型并配置用于逐条用例结果评估的提示词；默认使用系统预置提示词，允许按应用覆盖。若启动前未配置或模型不可用，执行计划不可触发；若执行过程中评估模型不可用，则仅将当前用例结果标记为失败。
+- **变更内容**：
+  - `packages/shared-database/prisma/schema.prisma`：新增 `app_evaluation_config` 表，保存应用评估模型、覆盖提示词开关和自定义提示词。
+  - `apps/quality-business-service/src/app.service.ts`、`apps/quality-business-service/src/app.controller.ts`：新增 `/app/evaluation-config/detail.do` 与 `/app/evaluation-config/save.do`，返回系统默认提示词、当前生效提示词和应用配置状态。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行计划启动前校验应用评估配置、模型和供应商可用性；真实调用应用接口后，使用配置的 LLM 裁判提示词评估每条用例结果；裁判调用失败时仅标记当前结果失败并写入原因。
+  - `apps/web/src/components/app-shell.tsx`、`apps/web/src/app/ai-quality-platform/apps/[appCode]/evaluation/page.tsx`、`apps/web/src/features/apps/app-evaluation.tsx`：应用内新增「评估配置」菜单和配置页面，支持选择可用 LLM 模型、启用覆盖提示词并保存。
+  - 补充业务服务、执行服务和前端回归测试，覆盖配置保存、启动前阻断、执行中单条失败和页面表单交互。
+
+### 2026-05-26 — 执行计划真实执行闭环
+
+#### 新增与修复 — 执行计划、执行历史、历史详情接入真实协议与数据库结果
+- **变更需求**：用户确认执行计划、执行历史、历史详情需要按真实接口和数据库数据设计开发，不能再使用占位执行结果。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：执行计划启动时按已保存的计划过滤条件筛选应用用例，读取应用接口协议并真实调用 `invokeUrl`，将请求 JSON、响应 JSON、最终回答、评分依据、耗时和异常信息写入 `eval_result`。
+  - `apps/quality-execution-service/src/execution.service.ts`：补充接口调用超时保护与 SSE `data:` 多段响应解析，即使协议未显式开启流式模式，也能拼接真实最终回答。
+  - `apps/quality-execution-service/src/execution.service.spec.ts`：补充计划过滤、真实协议调用、SSE 响应解析和结果字段落库的回归测试。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`：扩展执行结果类型，支持返回问题内容、期望回答、请求/响应 JSON、评分依据、耗时和错误信息。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：历史详情页改为展示真实问题内容、期望回答、模型实际返回、评分依据、请求 JSON 和响应 JSON，移除旧的占位评价文案。
+  - `apps/web/src/features/apps/app-history-detail.spec.tsx`：补充历史详情真实字段展示的回归测试。
+
+### 2026-05-26 — 执行历史详情页内容与样式开发
+
+#### 新增与重构 — 执行历史详情页开发
+- **变更需求**：用户反馈现有的执行历史详情页很简陋，要求增加完整的页面设计，包含统计分析图标和测试用例执行结果，且需要与当前工程风格一致，支持自适应主题切换。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：重新实现了执行详情页，增加了总用例数、通过率等数据统计面板；实现了一个基于 SVG 的环形图来直观展示结果占比；优化了下方用例执行明细列表的排版，使其实际返回与评价理由展示更清晰。
+  - 使用了标准 TailwindCSS 主题变量（如 `bg-card`, `border-border` 等）以支持系统的主题自适应。
+
+
+### 2026-05-26 — 列表加载容错修复
+
+#### 修复 — 执行计划列表不再被分类加载失败拖垮
+- **变更需求**：用户反馈应用内「用例管理」和「执行计划」列表均显示加载失败；排查发现 case 服务未监听 3102，且执行计划页把计划列表和用例分类加载绑定在同一个失败分支。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-plans.tsx`：计划列表与分类列表改为分别处理，分类加载失败时仍保留计划列表数据。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`：补充分类接口失败但计划列表可正常展示的回归测试。
+
+#### 修复 — 侧边栏折叠状态兼容无 localStorage 的测试环境
+- **变更需求**：完整运行前端测试时，测试环境没有可用 `localStorage`，导致 `AppShell` 测试失败。
+- **变更内容**：
+  - `apps/web/src/components/app-shell.tsx`：读取和写入侧边栏折叠状态时增加 `localStorage` 可用性保护。
+
+#### 重构 — 用例字段收敛为问题分类、问题内容、期望回答
+- **变更需求**：用户要求预置用例和应用用例不再维护用例名称、风险等级，仅保留「问题分类、问题内容、期望回答」三个业务属性。
+- **变更内容**：
+  - `apps/quality-case-service/src/case.service.ts`：后端创建、导入和更新用例时不再要求 `caseName`、`riskLevel`，仅用问题内容派生旧表兼容字段。
+  - `packages/shared-database/src/seed.ts`：将种子用例的 `caseName`、`riskLevel` 调整为兼容可选字段。
+  - `apps/web/src/features/cases/*`：预置用例列表、弹窗和 API 请求移除用例名称与风险等级，改用问题分类、问题内容、期望回答。
+  - `apps/web/src/features/apps/app-cases.tsx`、`apps/web/src/features/apps/case-form-dialog.tsx`：应用用例展示与表单同步收敛为三字段。
+  - 补充后端和前端回归测试，覆盖三字段创建、导入、展示与请求 payload。
+
+#### 优化 — 分类筛选视图不再重复展示分类名
+- **变更需求**：用户反馈在左侧已经选中具体分类时，右侧用例卡片和搜索栏旁不应重复显示同一个分类名称。
+- **变更内容**：
+  - `apps/web/src/features/cases/index.tsx`：预置用例仅在「全部用例」视图展示卡片分类 Badge，并移除搜索栏旁的选中分类说明。
+  - `apps/web/src/features/apps/app-cases.tsx`：应用用例仅在「全部用例」视图展示卡片分类 Badge。
+  - `apps/web/src/features/cases/index.spec.tsx`、`apps/web/src/features/apps/app-cases.spec.tsx`：补充分类型视图下分类名称不重复的回归测试。
+
 ### 2026-05-25 — 端到端流程打通 & 前端接口接入
 
 #### 修复 — 接口配置页主内容宽度未铺满（2026-05-25）

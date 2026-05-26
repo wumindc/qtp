@@ -1,3 +1,7 @@
+/**
+ * 预置用例 API 封装
+ * @author codex
+ */
 import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
 import type { PresetCase, PresetCategory } from '../types';
 
@@ -21,9 +25,7 @@ function mapCategory(item: GatewayRow): PresetCategory {
 function mapCase(item: GatewayRow): PresetCase {
   return {
     id: toStringField(item.id ?? item.caseCode),
-    name: toStringField(item.name ?? item.caseName),
     categoryId: toStringField(item.categoryId ?? item.categoryCode),
-    risk: (item.riskLevel as 'LOW' | 'MEDIUM' | 'HIGH') ?? 'MEDIUM',
     input: toStringField(item.input ?? item.query),
     expected: toStringField(item.expectedBehavior),
     status: item.enabled === false ? '停用' : '启用',
@@ -66,9 +68,7 @@ export async function saveCategory(category: Partial<PresetCategory>, editingId?
 
 export async function saveCase(presetCase: Partial<PresetCase>, editingId?: string) {
   const payload = {
-    caseName: presetCase.name?.trim(),
     categoryCode: presetCase.categoryId,
-    riskLevel: presetCase.risk,
     query: presetCase.input?.trim(),
     expectedBehavior: presetCase.expected?.trim(),
     enabled: presetCase.status !== '停用',

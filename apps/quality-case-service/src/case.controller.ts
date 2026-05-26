@@ -99,8 +99,19 @@ export class CaseController {
   }
 
   @Post('preset/import-categories-to-app.do')
-  async importPresetCategoriesToApp(@Body() request: { appCode: string; suiteCode: string; suiteName: string; description?: string; categoryIds: string[] }) {
+  async importPresetCategoriesToApp(@Body() request: { appCode: string; categoryIds: string[] }) {
     return ok(await this.caseService.importPresetCategoriesToApp(request));
+  }
+
+  @Post('preset/unsubscribe-category.do')
+  async unsubscribePresetCategory(@Body() request: { appCode: string; categoryId: string }) {
+    await this.caseService.unsubscribePresetCategory(request.appCode, request.categoryId);
+    return ok();
+  }
+
+  @Post('preset/subscriptions.do')
+  async listPresetSubscriptions(@Body() request: { appCode: string }) {
+    return ok(this.caseService.listCategorySubscriptions(request.appCode));
   }
 
   @Post('create.do')

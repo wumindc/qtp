@@ -543,17 +543,7 @@ http://127.0.0.1:8080/ai-quality-platform/api/business/health.do
 
 ### 6.4 测试计划管理
 
-用于组织测试范围。
-
-计划类型：
-
-- 冒烟测试
-- 全量回归
-- 高风险专项
-- RAG 专项
-- 多轮对话专项
-- 上线前验收
-- 版本对比测试
+用于组织测试范围，仅维护计划名称、所属应用和执行范围。
 
 ### 6.5 执行记录
 
@@ -694,7 +684,6 @@ http://127.0.0.1:8080/ai-quality-platform/api/business/health.do
 - plan_code
 - plan_name
 - app_code
-- plan_type
 - case_filter_json
 - status
 - created_by
@@ -945,7 +934,6 @@ redis
    - 计划列表
    - 新增、编辑、删除、启停
    - 按应用、分类、标签、风险等级筛选用例
-   - 冒烟、回归、高风险专项等计划类型
 
 7. 执行批次与 Redis 队列
    - 创建执行批次

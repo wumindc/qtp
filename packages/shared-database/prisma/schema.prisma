@@ -71,6 +71,19 @@ model AiModel {
   @@map("ai_model")
 }
 
+model AppEvaluationConfig {
+  id                    BigInt   @id @default(autoincrement())
+  appCode               String   @unique @db.VarChar(100)
+  modelId               BigInt
+  promptOverrideEnabled Boolean  @default(false)
+  customPrompt          String?  @db.Text
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([modelId])
+  @@map("app_evaluation_config")
+}
+
 model EvalCaseCategory {
   id          BigInt   @id @default(autoincrement())
   appCode     String?  @db.VarChar(100)
@@ -132,7 +145,6 @@ model EvalPlan {
   planCode       String   @unique @db.VarChar(100)
   planName       String   @db.VarChar(200)
   appCode        String   @db.VarChar(100)
-  planType       String   @db.VarChar(50)
   caseFilterJson Json
   status         String   @default("ENABLED") @db.VarChar(50)
   createdBy      String?  @db.VarChar(100)
@@ -221,4 +233,15 @@ model EvalReport {
 
   @@index([runCode])
   @@map("eval_report")
+}
+
+model AppPresetCategory {
+  id          BigInt   @id @default(autoincrement())
+  appCode     String   @db.VarChar(100)
+  categoryId  BigInt
+  createdAt   DateTime @default(now())
+
+  @@unique([appCode, categoryId])
+  @@index([appCode])
+  @@map("eval_app_preset_category")
 }

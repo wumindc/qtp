@@ -21,19 +21,24 @@ export interface PageQuery {
   linesPerPage: number;
 }
 
-export interface CaseRecord extends SeedCase {
+type CaseRiskLevel = NonNullable<SeedCase['riskLevel']>;
+
+export interface CaseRecord extends Omit<SeedCase, 'caseName' | 'riskLevel'> {
   id: string;
   categoryId: string;
   caseCode: string;
+  caseName: string;
   categoryCode: string;
+  riskLevel: CaseRiskLevel;
   enabled: boolean;
   manualReviewRequired: boolean;
   sourcePresetId?: string;
   sourcePresetCode?: string;
+  isSubscribedPreset?: boolean;
 }
 
-export type CreateCaseRequest = Omit<SeedCase, 'id' | 'categoryId'> &
-  Partial<Pick<SeedCase, 'id' | 'categoryId' | 'caseCode' | 'categoryCode'>>;
+export type CreateCaseRequest = Omit<SeedCase, 'id' | 'categoryId' | 'caseName' | 'riskLevel'> &
+  Partial<Pick<SeedCase, 'id' | 'categoryId' | 'caseCode' | 'categoryCode' | 'caseName' | 'riskLevel'>>;
 export type UpdateCaseRequest = Partial<Omit<CaseRecord, 'id' | 'caseCode' | 'categoryCode'>>;
 
 export interface CaseCategoryRecord extends SeedCaseCategory {
@@ -55,6 +60,7 @@ export interface CaseCategoryQuery {
   includeGlobal?: boolean;
   keyword?: string;
   enabled?: boolean;
+  subscribedByApp?: string;
 }
 
 export interface CaseSuiteRecord {
@@ -105,6 +111,11 @@ type CasePrismaClient = {
     findMany(input?: { orderBy?: object }): Promise<unknown[]>;
     upsert(input: { where: object; create: object; update: object }): Promise<unknown>;
   };
+  appPresetCategory: {
+    findMany(input?: { where?: object; orderBy?: object }): Promise<unknown[]>;
+    create(input: { data: object }): Promise<unknown>;
+    delete(input: { where: object }): Promise<unknown>;
+  };
 };
 
 type EvalCaseCategoryRow = {
@@ -138,6 +149,11 @@ type EvalCaseSuiteRow = {
   caseIdsJson?: unknown;
   caseCodesJson?: unknown;
   enabled?: unknown;
+};
+
+type AppPresetCategoryRow = {
+  appCode?: unknown;
+  categoryId?: unknown;
 };
 
 class CaseDatabaseWriter {
@@ -195,6 +211,23 @@ class CaseDatabaseWriter {
       return rows
         .filter((row) => typeof row.suiteCode === 'string' && typeof row.suiteName === 'string')
         .map((row) => this.toSuiteRecord(row));
+    } catch (error) {
+      if (!process.env.VITEST) throw error;
+      return null;
+    }
+  }
+
+  async listPresetCategorySubscriptions(): Promise<Array<{ appCode: string; categoryId: string }> | null> {
+    const prisma = await this.prismaPromise;
+    if (!prisma) return null;
+    try {
+      const rows = (await prisma.appPresetCategory.findMany({ orderBy: { id: 'asc' } })) as AppPresetCategoryRow[];
+      return rows
+        .filter((row) => typeof row.appCode === 'string' && typeof row.categoryId === 'bigint')
+        .map((row) => ({
+          appCode: String(row.appCode),
+          categoryId: String(row.categoryId),
+        }));
     } catch (error) {
       if (!process.env.VITEST) throw error;
       return null;
@@ -288,6 +321,38 @@ class CaseDatabaseWriter {
     });
   }
 
+  async savePresetCategorySubscription(appCode: string, categoryId: string) {
+    const prisma = await this.prismaPromise;
+    if (!prisma || !this.isDatabaseId(categoryId)) return;
+    try {
+      await prisma.appPresetCategory.create({
+        data: {
+          appCode,
+          categoryId: BigInt(categoryId),
+        },
+      });
+    } catch {
+      // Ignore unique constraint violation
+    }
+  }
+
+  async deletePresetCategorySubscription(appCode: string, categoryId: string) {
+    const prisma = await this.prismaPromise;
+    if (!prisma || !this.isDatabaseId(categoryId)) return;
+    try {
+      await prisma.appPresetCategory.delete({
+        where: {
+          appCode_categoryId: {
+            appCode,
+            categoryId: BigInt(categoryId),
+          },
+        },
+      });
+    } catch {
+      // Ignore not found
+    }
+  }
+
   private async createClient(): Promise<CasePrismaClient | null> {
     if (process.env.VITEST) return null;
     try {
@@ -326,7 +391,7 @@ class CaseDatabaseWriter {
     return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   }
 
-  private normalizeRiskLevel(value: unknown): SeedCase['riskLevel'] {
+  private normalizeRiskLevel(value: unknown): CaseRiskLevel {
     return value === 'LOW' || value === 'HIGH' ? value : 'MEDIUM';
   }
 
@@ -361,6 +426,7 @@ export class CaseService {
   private readonly cases = new Map<string, CaseRecord>();
   private readonly presetCases = new Map<string, CaseRecord>();
   private readonly suites = new Map<string, CaseSuiteRecord>();
+  private readonly subscriptions = new Map<string, Set<string>>();
 
   constructor() {
     void this.hydrateFromDatabase();
@@ -376,16 +442,28 @@ export class CaseService {
     const includeGlobal = query.includeGlobal !== false;
     const normalizedKeyword = query.keyword?.trim().toLowerCase();
     const sourceCategories = await this.getCategorySource();
+
+    let subscribedIds: Set<string> | undefined;
+    if (query.subscribedByApp) {
+      subscribedIds = this.subscriptions.get(query.subscribedByApp) ?? new Set<string>();
+    }
+
     const all = sourceCategories.filter((category) => {
-      const scopeMatched = appCode
-        ? category.appCode === appCode || (includeGlobal && !category.appCode)
-        : !category.appCode;
+      if (subscribedIds) {
+        if (!subscribedIds.has(category.id)) return false;
+      } else {
+        const scopeMatched = appCode
+          ? category.appCode === appCode || (includeGlobal && !category.appCode)
+          : !category.appCode;
+        if (!scopeMatched) return false;
+      }
+
       const keywordMatched =
         !normalizedKeyword ||
         category.name.toLowerCase().includes(normalizedKeyword) ||
         category.description.toLowerCase().includes(normalizedKeyword);
       const enabledMatched = query.enabled === undefined || category.enabled === query.enabled;
-      return scopeMatched && keywordMatched && enabledMatched;
+      return keywordMatched && enabledMatched;
     });
     const start = (normalizedPage.currentPage - 1) * normalizedPage.linesPerPage;
     return pageResult(
@@ -457,16 +535,44 @@ export class CaseService {
   async list(query: CaseQuery, page?: PageQuery): Promise<PageResult<CaseRecord>> {
     const normalizedPage = this.normalizePage(page);
     const categoryId = query.categoryId ?? query.categoryCode ?? query.category;
-    const sourceCases = await this.getCaseSource(query.caseScope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP');
-    const all = sourceCases.filter((testCase) => {
-      const appMatched = !query.appCode || testCase.appCode === query.appCode;
+    const scope = query.caseScope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP';
+    const appCode = query.appCode;
+
+    // 1. Fetch source cases based on scope
+    const sourceCases = await this.getCaseSource(scope);
+    let all = sourceCases.filter((testCase) => {
+      const appMatched = !appCode || testCase.appCode === appCode;
       const categoryMatched = !categoryId || testCase.categoryId === categoryId;
       const keywordMatched =
         !query.keyword ||
         testCase.caseName.includes(query.keyword) ||
-        testCase.query.includes(query.keyword);
+        testCase.query.includes(query.keyword) ||
+        testCase.expectedBehavior.includes(query.keyword);
       return appMatched && categoryMatched && keywordMatched;
     });
+
+    // 2. If APP scope and appCode is provided, merge subscribed preset cases
+    if (scope === 'APP' && appCode) {
+      const subscribedIds = this.subscriptions.get(appCode);
+      if (subscribedIds && subscribedIds.size > 0) {
+        const presetCases = await this.getCaseSource('SYSTEM_PRESET');
+        const matchedPresets = presetCases.filter((testCase) => {
+          const isSubscribed = subscribedIds.has(testCase.categoryId);
+          const categoryMatched = !categoryId || testCase.categoryId === categoryId;
+          const keywordMatched =
+            !query.keyword ||
+            testCase.caseName.includes(query.keyword) ||
+            testCase.query.includes(query.keyword) ||
+            testCase.expectedBehavior.includes(query.keyword);
+          return isSubscribed && categoryMatched && keywordMatched;
+        }).map(testCase => ({ ...testCase, isSubscribedPreset: true }));
+        all = [...all, ...matchedPresets];
+      }
+    }
+
+    // Sort to keep order consistent
+    all.sort((a, b) => a.id.localeCompare(b.id));
+
     const start = (normalizedPage.currentPage - 1) * normalizedPage.linesPerPage;
     return pageResult(
       all.slice(start, start + normalizedPage.linesPerPage),
@@ -553,9 +659,9 @@ export class CaseService {
         categoryId: request.categoryId ?? request.categoryCode ?? '',
       },
       {
-      caseScope: 'APP' as const,
-      enabled: true,
-      manualReviewRequired: request.riskLevel === 'HIGH',
+        caseScope: 'APP' as const,
+        enabled: true,
+        manualReviewRequired: false,
       },
     );
     this.validateCaseCategory(record.categoryId, record.appCode);
@@ -568,15 +674,19 @@ export class CaseService {
     const testCase = this.cases.get(id);
     if (!testCase) throw new Error('用例不存在');
     if (request.categoryId) this.validateCaseCategory(request.categoryId, testCase.appCode);
-    const nextRiskLevel = request.riskLevel ?? testCase.riskLevel;
+    const nextRiskLevel = this.normalizeRiskLevel(request.riskLevel ?? testCase.riskLevel);
+    const nextQuery = request.query ?? testCase.query;
+    const nextCaseName = request.caseName ?? (request.query ? this.buildCaseName(request.query) : testCase.caseName);
     const updated = {
       ...testCase,
       ...request,
       id,
       caseCode: id,
+      caseName: nextCaseName,
+      query: nextQuery,
       categoryCode: request.categoryId ?? testCase.categoryId,
       riskLevel: nextRiskLevel,
-      manualReviewRequired: request.manualReviewRequired ?? nextRiskLevel === 'HIGH',
+      manualReviewRequired: request.manualReviewRequired ?? testCase.manualReviewRequired,
     };
     const saved = await this.database.saveCase(updated);
     this.cases.delete(id);
@@ -592,10 +702,10 @@ export class CaseService {
         categoryId: request.categoryId ?? request.categoryCode ?? '',
       },
       {
-      appCode: SYSTEM_PRESET_APP_CODE,
-      caseScope: 'SYSTEM_PRESET',
-      enabled: true,
-      manualReviewRequired: request.riskLevel === 'HIGH',
+        appCode: SYSTEM_PRESET_APP_CODE,
+        caseScope: 'SYSTEM_PRESET',
+        enabled: true,
+        manualReviewRequired: false,
       },
     );
     this.validateCaseCategory(record.categoryId);
@@ -608,17 +718,21 @@ export class CaseService {
     const testCase = this.presetCases.get(id);
     if (!testCase) throw new Error('预置用例不存在');
     if (request.categoryId) this.validateCaseCategory(request.categoryId);
-    const nextRiskLevel = request.riskLevel ?? testCase.riskLevel;
+    const nextRiskLevel = this.normalizeRiskLevel(request.riskLevel ?? testCase.riskLevel);
+    const nextQuery = request.query ?? testCase.query;
+    const nextCaseName = request.caseName ?? (request.query ? this.buildCaseName(request.query) : testCase.caseName);
     const updated = {
       ...testCase,
       ...request,
       id,
       caseCode: id,
+      caseName: nextCaseName,
+      query: nextQuery,
       appCode: SYSTEM_PRESET_APP_CODE,
       caseScope: 'SYSTEM_PRESET' as const,
       categoryCode: request.categoryId ?? testCase.categoryId,
       riskLevel: nextRiskLevel,
-      manualReviewRequired: request.manualReviewRequired ?? nextRiskLevel === 'HIGH',
+      manualReviewRequired: request.manualReviewRequired ?? testCase.manualReviewRequired,
     };
     const saved = await this.database.saveCase(updated);
     this.presetCases.delete(id);
@@ -638,23 +752,44 @@ export class CaseService {
     return testCase;
   }
 
-  async importPresetCategoriesToApp(request: { appCode: string; suiteCode: string; suiteName: string; description?: string; categoryIds: string[] }) {
+  async importPresetCategoriesToApp(request: { appCode: string; suiteCode?: string; suiteName?: string; description?: string; categoryIds: string[] }) {
     if (!request.appCode) throw new Error('缺少应用编码');
-    if (!request.suiteCode) throw new Error('缺少用例集编码');
     const categoryIds = Array.from(new Set(request.categoryIds ?? []));
     if (categoryIds.length === 0) throw new Error('请选择系统预置分类');
 
-    const presetCaseIds = Array.from(this.presetCases.values())
-      .filter((preset) => categoryIds.includes(preset.categoryId))
-      .map((preset) => preset.id);
+    for (const categoryId of categoryIds) {
+      await this.subscribePresetCategory(request.appCode, categoryId);
+    }
 
-    if (presetCaseIds.length === 0) throw new Error('所选分类下没有系统预置用例');
+    return {
+      message: `已成功关联 ${categoryIds.length} 个系统预置分类`,
+    };
+  }
 
-    return this.importPresetCasesToApp({
-      ...request,
-      presetCaseIds,
-      presetCaseCodes: presetCaseIds,
-    });
+  async subscribePresetCategory(appCode: string, categoryId: string) {
+    if (!this.categoriesMap.has(categoryId)) {
+      throw new Error(`分类不存在: ${categoryId}`);
+    }
+    await this.database.savePresetCategorySubscription(appCode, categoryId);
+    let appSubs = this.subscriptions.get(appCode);
+    if (!appSubs) {
+      appSubs = new Set<string>();
+      this.subscriptions.set(appCode, appSubs);
+    }
+    appSubs.add(categoryId);
+  }
+
+  async unsubscribePresetCategory(appCode: string, categoryId: string) {
+    await this.database.deletePresetCategorySubscription(appCode, categoryId);
+    const appSubs = this.subscriptions.get(appCode);
+    if (appSubs) {
+      appSubs.delete(categoryId);
+    }
+  }
+
+  listCategorySubscriptions(appCode: string): string[] {
+    const appSubs = this.subscriptions.get(appCode);
+    return appSubs ? Array.from(appSubs) : [];
   }
 
   async importPresetCasesToApp(request: PresetImportRequest) {
@@ -689,7 +824,7 @@ export class CaseService {
         sourcePresetId: presetId,
         sourcePresetCode: presetId,
         enabled: true,
-        manualReviewRequired: presetCase.riskLevel === 'HIGH',
+        manualReviewRequired: presetCase.manualReviewRequired,
       };
       importedCase.caseCode = importedCase.id;
       const saved = await this.database.saveCase(importedCase);
@@ -759,31 +894,19 @@ export class CaseService {
 
   excelTemplateHeaders() {
     return [
-      'caseName',
       'appCode',
       'categoryId',
-      'riskLevel',
       'query',
       'expectedBehavior',
-      'referenceAnswer',
-      'mustInclude',
-      'mustNotInclude',
-      'minScore',
-      'manualReviewRequired',
-      'tags',
     ];
   }
 
   exportRows(): CaseExcelRow[] {
     return Array.from(this.cases.values()).map((testCase) => ({
-      caseName: testCase.caseName,
       appCode: testCase.appCode,
       categoryId: testCase.categoryId,
-      riskLevel: testCase.riskLevel,
       query: testCase.query,
       expectedBehavior: testCase.expectedBehavior,
-      enabled: testCase.enabled,
-      manualReviewRequired: testCase.manualReviewRequired,
     }));
   }
 
@@ -795,16 +918,14 @@ export class CaseService {
 
   private validateImportRow(row: CreateCaseRequest) {
     const requiredFields: Array<keyof CreateCaseRequest> = [
-      'caseName',
       'appCode',
-      'riskLevel',
       'query',
       'expectedBehavior',
     ];
     const missingField = requiredFields.find((field) => !row[field]);
     if (missingField) throw new Error(`缺少必填字段 ${missingField}`);
     if (!row.categoryId && !row.categoryCode) throw new Error('缺少必填字段 categoryId');
-    if (!['LOW', 'MEDIUM', 'HIGH'].includes(row.riskLevel)) throw new Error('风险等级不合法');
+    if (row.riskLevel && !['LOW', 'MEDIUM', 'HIGH'].includes(row.riskLevel)) throw new Error('风险等级不合法');
     this.validateCaseCategory(row.categoryId ?? row.categoryCode ?? '', row.appCode);
   }
 
@@ -819,21 +940,39 @@ export class CaseService {
     if (!category.description?.trim()) throw new Error('分类描述不能为空');
   }
 
+  private normalizeRiskLevel(value: unknown): CaseRiskLevel {
+    return value === 'LOW' || value === 'HIGH' ? value : 'MEDIUM';
+  }
+
   private toCaseRecordFromSeed(testCase: CreateCaseRequest, overrides: Partial<CaseRecord> = {}): CaseRecord {
     const id = String(overrides.id ?? testCase.id ?? testCase.caseCode ?? this.generateEntityId('case'));
     const categoryId = String(overrides.categoryId ?? testCase.categoryId ?? testCase.categoryCode ?? '');
-    const riskLevel = overrides.riskLevel ?? testCase.riskLevel;
+    const query = String(overrides.query ?? testCase.query ?? '').trim();
+    const expectedBehavior = String(overrides.expectedBehavior ?? testCase.expectedBehavior ?? '').trim();
+    const riskLevel = this.normalizeRiskLevel(overrides.riskLevel ?? testCase.riskLevel);
     return {
       ...testCase,
       ...overrides,
       id,
       caseCode: id,
+      caseName: this.buildCaseName(overrides.caseName ?? testCase.caseName ?? query),
       categoryId,
       categoryCode: categoryId,
+      query,
+      expectedBehavior,
       riskLevel,
       enabled: overrides.enabled ?? true,
-      manualReviewRequired: overrides.manualReviewRequired ?? riskLevel === 'HIGH',
+      manualReviewRequired: overrides.manualReviewRequired ?? false,
     };
+  }
+
+  /**
+   * @author codex
+   * Derives the legacy storage name from question content while the public case model only exposes category, question, and expected answer.
+   */
+  private buildCaseName(value: unknown) {
+    const text = String(value ?? '').trim();
+    return text.length > 80 ? `${text.slice(0, 80)}...` : text;
   }
 
   private generateEntityId(prefix: string) {
@@ -882,6 +1021,18 @@ export class CaseService {
     if (databaseSuites) {
       this.suites.clear();
       databaseSuites.forEach((suite) => this.suites.set(suite.suiteCode, suite));
+    }
+    const dbSubscriptions = await this.database.listPresetCategorySubscriptions();
+    if (dbSubscriptions) {
+      this.subscriptions.clear();
+      for (const sub of dbSubscriptions) {
+        let appSubs = this.subscriptions.get(sub.appCode);
+        if (!appSubs) {
+          appSubs = new Set<string>();
+          this.subscriptions.set(sub.appCode, appSubs);
+        }
+        appSubs.add(sub.categoryId);
+      }
     }
   }
 

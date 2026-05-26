@@ -7,6 +7,13 @@
 export type AppType = 'CHAT' | 'WORKFLOW';
 export type AppStatus = 'ENABLED' | 'DISABLED';
 
+/* ── 应用图标配置 ── */
+export interface AppIconConfig {
+  iconKey: string;
+  themeKey: string;
+  variantKey: string;
+}
+
 /* ── 接口协议配置 ── */
 export interface AppProtocol {
   method: 'GET' | 'POST';
@@ -38,6 +45,7 @@ export interface App {
     lastRunAt?: string;
     lastPassRate?: number;
   };
+  icon?: AppIconConfig;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -143,6 +151,7 @@ export interface ExecutionRun {
   runCode: string;
   planCode: string;
   planName?: string;
+  sequenceNo?: number;
   appCode: string;
   startAt: string;
   endAt?: string;

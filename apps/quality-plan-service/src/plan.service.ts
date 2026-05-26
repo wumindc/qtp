@@ -1,17 +1,19 @@
-import { createRuntimePrismaClient, type SeedPlan } from '@ai-quality-platform/shared-database';
+import { randomBytes } from 'node:crypto';
+import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
 
-export interface PlanRecord extends Omit<SeedPlan, 'planType'> {
-  planType: SeedPlan['planType'] | 'CUSTOM';
+export interface PlanRecord {
+  planCode: string;
+  planName: string;
+  appCode: string;
   caseFilter: Record<string, unknown>;
   status: 'ENABLED' | 'DISABLED';
 }
 
 export interface CreatePlanRequest {
-  planCode: string;
+  planCode?: string;
   planName: string;
   appCode: string;
-  planType: PlanRecord['planType'];
   caseFilter: Record<string, unknown>;
 }
 
@@ -53,6 +55,19 @@ type PlanPrismaClient = {
     findMany(input?: { orderBy?: object }): Promise<unknown[]>;
   };
 };
+
+const OPAQUE_ID_LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+const OPAQUE_ID_ALPHABET = `${OPAQUE_ID_LETTERS}0123456789`;
+const OPAQUE_ID_LENGTH = 10;
+
+function createOpaqueId(prefix: string): string {
+  const bytes = randomBytes(OPAQUE_ID_LENGTH);
+  const suffix = [
+    OPAQUE_ID_LETTERS[bytes[0] % OPAQUE_ID_LETTERS.length],
+    ...Array.from(bytes.subarray(1), (byte) => OPAQUE_ID_ALPHABET[byte % OPAQUE_ID_ALPHABET.length]),
+  ].join('');
+  return `${prefix}-${suffix}`;
+}
 
 class PlanDatabase {
   private readonly prismaPromise = this.createClient();
@@ -116,7 +131,6 @@ class PlanDatabase {
       planCode: record.planCode,
       planName: record.planName,
       appCode: record.appCode,
-      planType: record.planType,
       caseFilterJson: record.caseFilter,
       status: record.status,
     };
@@ -128,7 +142,6 @@ class PlanDatabase {
       planCode: String(data.planCode),
       planName: String(data.planName),
       appCode: String(data.appCode),
-      planType: this.normalizePlanType(data.planType),
       caseFilter: this.asRecord(data.caseFilterJson),
       status: data.status === 'DISABLED' ? 'DISABLED' : 'ENABLED',
     };
@@ -149,10 +162,6 @@ class PlanDatabase {
   private asRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   }
-
-  private normalizePlanType(value: unknown): PlanRecord['planType'] {
-    return value === 'SMOKE' || value === 'FULL_REGRESSION' || value === 'HIGH_RISK' ? value : 'CUSTOM';
-  }
 }
 
 export class PlanService {
@@ -172,9 +181,12 @@ export class PlanService {
   }
 
   async create(request: CreatePlanRequest): Promise<PlanRecord> {
-    if (await this.findPlan(request.planCode)) throw new Error('计划编码已存在');
+    const requestedPlanCode = request.planCode?.trim();
+    const planCode = requestedPlanCode || (await this.createPlanCode());
+    if (await this.findPlan(planCode)) throw new Error('计划编码已存在');
     return this.persist({
       ...request,
+      planCode,
       status: 'ENABLED',
     });
   }
@@ -267,6 +279,18 @@ export class PlanService {
     const plan = await this.findPlan(planCode);
     if (!plan) throw new Error('计划不存在');
     return plan;
+  }
+
+  /**
+   * @author codex
+   * Generates non-guessable plan identifiers without embedding app codes or timestamps.
+   */
+  private async createPlanCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const planCode = createOpaqueId('plan');
+      if (!(await this.findPlan(planCode))) return planCode;
+    }
+    throw new Error('计划编码生成失败，请重试');
   }
 
   private async persist(record: PlanRecord) {

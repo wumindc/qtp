@@ -1,6 +1,7 @@
 /**
  * 根布局 — 严格参照 design-deploy layout.tsx
  * @author Antigravity/Gemini
+ * @author codex
  */
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
@@ -36,7 +37,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
-          <Toaster position="top-right" richColors />
+          <Toaster richColors />
         </ThemeProvider>
       </body>
     </html>

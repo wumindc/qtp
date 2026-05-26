@@ -2,15 +2,15 @@
 /**
  * 应用执行历史页（接入真实后端数据）
  * @author Antigravity/Claude-Sonnet-4.6
+ * @author codex
  */
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Activity, CheckCircle2, XCircle, Loader2, Clock, BarChart2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
-import { listRuns, type RunRecord } from './api/plan-execution-api';
-
-import { AppHistoryDetail } from './app-history-detail';
+import { listRuns, parseRunStartTime, type RunRecord } from './api/plan-execution-api';
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   COMPLETED: { label: '已完成', color: 'text-emerald-500', icon: CheckCircle2 },
@@ -19,10 +19,16 @@ const statusConfig: Record<string, { label: string; color: string; icon: React.E
   CANCELLED: { label: '已取消', color: 'text-muted-foreground', icon: XCircle },
 };
 
+function formatRunStartedAt(run: RunRecord): string {
+  if (run.startAt) return new Date(run.startAt).toLocaleString('zh-CN');
+  const legacyStartedAt = parseRunStartTime(run.runCode);
+  return legacyStartedAt ? legacyStartedAt.toLocaleString('zh-CN') : '未知时间';
+}
+
 export function AppHistoryPage({ appCode }: { appCode: string }) {
+  const router = useRouter();
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedRunCode, setSelectedRunCode] = useState<string | null>(null);
 
   const loadRuns = useCallback(async () => {
     try {
@@ -38,9 +44,11 @@ export function AppHistoryPage({ appCode }: { appCode: string }) {
 
   useEffect(() => { void loadRuns(); }, [loadRuns]);
 
-  if (selectedRunCode) {
-    return <AppHistoryDetail runCode={selectedRunCode} onBack={() => setSelectedRunCode(null)} />;
-  }
+  const openRunDetail = (runCode: string) => {
+    router.push(
+      `/ai-quality-platform/apps/${encodeURIComponent(appCode)}/history/${encodeURIComponent(runCode)}`,
+    );
+  };
 
   return (
     <div className="space-y-6 flex flex-col h-[calc(100vh-6rem)]">
@@ -72,7 +80,7 @@ export function AppHistoryPage({ appCode }: { appCode: string }) {
             <div
               key={run.runCode}
               className="bg-card border border-border rounded-xl p-5 hover:border-primary/30 hover:shadow-sm transition-all cursor-pointer"
-              onClick={() => setSelectedRunCode(run.runCode)}
+              onClick={() => openRunDetail(run.runCode)}
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
@@ -86,9 +94,7 @@ export function AppHistoryPage({ appCode }: { appCode: string }) {
                   <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Clock className="h-3.5 w-3.5" />
-                      {run.runCode.split('_RUN_')[1]
-                        ? new Date(Number(run.runCode.split('_RUN_')[1])).toLocaleString('zh-CN')
-                        : run.runCode}
+                      {formatRunStartedAt(run)}
                     </span>
                     <span className="flex items-center gap-1">
                       <BarChart2 className="h-3.5 w-3.5" />

@@ -4,6 +4,7 @@
  * AI 应用列表页
  * 卡片网格布局，展示所有 AI 应用及其关键指标
  * @author Antigravity/Gemini-2.5-Pro
+ * @author codex
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -38,6 +39,7 @@ import {
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { loadApps, saveApp, deleteApp, changeAppStatus } from './api/app-api';
 import { AppFormDialog } from './app-form-dialog';
+import { AppIcon } from './app-icon';
 import type { App } from './types';
 
 /* ── 通过率颜色 ── */
@@ -46,6 +48,10 @@ function passRateColor(rate?: number) {
   if (rate >= 90) return 'text-emerald-500';
   if (rate >= 70) return 'text-amber-500';
   return 'text-red-500';
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 /* ── 单张应用卡片 ── */
@@ -119,9 +125,7 @@ function AppCard({
 
       {/* ── 头部：图标 + 名称 + 状态 ── */}
       <div className="flex items-start gap-4 mb-4">
-        <div className="h-12 w-12 shrink-0 rounded-xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-violet-500/20 flex items-center justify-center">
-          <Bot className="h-6 w-6 text-violet-500" />
-        </div>
+        <AppIcon app={app} />
         <div className="flex-1 min-w-0 pr-6">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-base font-semibold text-foreground truncate">{app.appName}</h3>
@@ -131,6 +135,7 @@ function AppCard({
               {app.status === 'ENABLED' ? '运行中' : '已停用'}
             </Badge>
             <Badge variant="outline" className="text-xs">{app.appType}</Badge>
+            <Badge variant="outline" className="text-xs max-w-24 truncate">{app.owner || '未设置'}</Badge>
           </div>
         </div>
       </div>
@@ -229,8 +234,8 @@ export function AppListPage() {
       setDialogOpen(false);
       setEditingApp(null);
       void refresh();
-    } catch {
-      toast.error('操作失败');
+    } catch (error) {
+      toast.error(getErrorMessage(error, '操作失败'));
     }
   };
 
@@ -239,8 +244,8 @@ export function AppListPage() {
       await deleteApp(appCode);
       toast.success('删除成功');
       void refresh();
-    } catch {
-      toast.error('删除失败');
+    } catch (error) {
+      toast.error(getErrorMessage(error, '删除失败'));
     }
   };
 
@@ -249,8 +254,8 @@ export function AppListPage() {
       await changeAppStatus(appCode, status);
       toast.success(status === 'ENABLED' ? '启用成功' : '停用成功');
       void refresh();
-    } catch {
-      toast.error('操作失败');
+    } catch (error) {
+      toast.error(getErrorMessage(error, '操作失败'));
     }
   };
 

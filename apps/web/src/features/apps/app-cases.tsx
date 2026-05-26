@@ -4,7 +4,7 @@
  * @author Antigravity/Gemini-2.5-Pro
  * @author codex
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid, Edit, Trash2, MessageSquare, Target } from 'lucide-react';
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { Button } from '@/components/ui/button';
@@ -29,38 +29,50 @@ interface Category {
   name: string;
   description?: string;
   appCode?: string;
+  isSubscribedPreset?: boolean;
+}
+
+function mergeCategories(appCategories: Category[], subscribedCategories: Category[]) {
+  const merged = new Map<string, Category>();
+  appCategories.forEach((category) => merged.set(category.id, category));
+  subscribedCategories.forEach((category) => {
+    const existing = merged.get(category.id);
+    merged.set(category.id, {
+      ...existing,
+      ...category,
+      isSubscribedPreset: true,
+    });
+  });
+  return Array.from(merged.values());
 }
 
 export interface CaseRecord {
   id: string;
-  caseName: string;
   appCode: string;
   caseScope: string;
   categoryId: string;
-  riskLevel: string;
   query: string;
   expectedBehavior: string;
   sourcePresetId?: string;
+  isSubscribedPreset?: boolean;
   enabled: boolean;
 }
 
-const riskLabel: Record<string, { label: string; color: string }> = {
-  HIGH:   { label: '高', color: 'bg-red-500/10 text-red-500 border-red-500/20' },
-  MEDIUM: { label: '中', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
-  LOW:    { label: '低', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
-};
-
 /** 加载分类（按应用范围或预置全局范围） */
 async function fetchCategories(appCode?: string, isPreset = false): Promise<Category[]> {
-  const data = isPreset ? {} : { appCode, includeGlobal: Boolean(appCode) };
-  const res = await postGateway<unknown>(
-    'case',
-    '/case/category/list.do',
-    { page: { currentPage: 1, linesPerPage: 200 }, data },
-    { cache: 'no-store' }
-  );
-  const dataRes = res as Record<string, unknown>;
-  return (dataRes?.list ?? []) as Category[];
+  if (isPreset) {
+    const res = await postGateway<unknown>('case', '/case/category/list.do', { page: { currentPage: 1, linesPerPage: 200 }, data: {} }, { cache: 'no-store' });
+    return ((res as Record<string, unknown>)?.list ?? []) as Category[];
+  } else if (appCode) {
+    const [appRes, subRes] = await Promise.all([
+      postGateway<unknown>('case', '/case/category/list.do', { page: { currentPage: 1, linesPerPage: 200 }, data: { appCode, includeGlobal: false } }, { cache: 'no-store' }),
+      postGateway<unknown>('case', '/case/category/list.do', { page: { currentPage: 1, linesPerPage: 200 }, data: { subscribedByApp: appCode } }, { cache: 'no-store' }),
+    ]);
+    const appCats = ((appRes as Record<string, unknown>)?.list ?? []) as Category[];
+    const subCats = ((subRes as Record<string, unknown>)?.list ?? []) as Category[];
+    return mergeCategories(appCats, subCats);
+  }
+  return [];
 }
 
 /** 加载应用用例 */
@@ -75,15 +87,21 @@ async function fetchAppCases(appCode: string, keyword = '', categoryId = ''): Pr
   return (data?.list ?? []) as CaseRecord[];
 }
 
-async function importPresetCategories(appCode: string, categoryIds: string[]): Promise<{ createdCount: number; message: string }> {
-  const suiteCode = `suite-${appCode}-imported-${Date.now()}`;
+async function importPresetCategories(appCode: string, categoryIds: string[]): Promise<{ message: string }> {
   const res = await postGateway<unknown>('case', '/case/preset/import-categories-to-app.do', {
     appCode,
-    suiteCode,
-    suiteName: '预置引用用例集',
     categoryIds,
   });
-  return res as { createdCount: number; message: string };
+  return res as { message: string };
+}
+
+async function fetchAppCategorySubscriptions(appCode: string): Promise<string[]> {
+  const res = await postGateway<unknown>('case', '/case/preset/subscriptions.do', { appCode });
+  return res as string[];
+}
+
+async function unsubscribePresetCategory(appCode: string, categoryId: string): Promise<void> {
+  await postGateway('case', '/case/preset/unsubscribe-category.do', { appCode, categoryId });
 }
 
 async function createAppCategory(appCode: string, category: { name: string; description: string }): Promise<Category> {
@@ -115,6 +133,10 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
   const [selectedPresetCategoryIds, setSelectedPresetCategoryIds] = useState<string[]>([]);
   const [presetLoading, setPresetLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const categoryNameById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories],
+  );
 
   const loadData = useCallback(async (kw = keyword, cat = activeCategoryId) => {
     try {
@@ -187,8 +209,12 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
   const loadPresetData = async () => {
     setPresetLoading(true);
     try {
-      const cats = await fetchCategories(undefined, true);
+      const [cats, subs] = await Promise.all([
+        fetchCategories(undefined, true),
+        fetchAppCategorySubscriptions(appCode)
+      ]);
       setPresetCategories(cats);
+      setSelectedPresetCategoryIds(subs);
     } catch {
       toast.error('加载预置库失败');
     } finally {
@@ -202,19 +228,26 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
     );
   };
 
-  const handleImport = async () => {
-    if (selectedPresetCategoryIds.length === 0) {
-      toast.error('请选择要引用的分类');
-      return;
-    }
+  const handleSaveSubscriptions = async () => {
     setImporting(true);
     try {
-      const result = await importPresetCategories(appCode, selectedPresetCategoryIds);
-      toast.success(result.message ?? `引用成功`);
+      // Find what to subscribe and what to unsubscribe
+      const currentSubs = await fetchAppCategorySubscriptions(appCode);
+      const toSubscribe = selectedPresetCategoryIds.filter(id => !currentSubs.includes(id));
+      const toUnsubscribe = currentSubs.filter(id => !selectedPresetCategoryIds.includes(id));
+
+      if (toSubscribe.length > 0) {
+        await importPresetCategories(appCode, toSubscribe);
+      }
+      for (const id of toUnsubscribe) {
+        await unsubscribePresetCategory(appCode, id);
+      }
+
+      toast.success('预置分类关联已更新');
       setPresetDialogOpen(false);
       await loadData();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '引用失败';
+      const msg = err instanceof Error ? err.message : '更新失败';
       toast.error(msg);
     } finally {
       setImporting(false);
@@ -292,6 +325,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                 <div className="flex items-center gap-2 min-w-0">
                   <Folder className="h-4 w-4 shrink-0" />
                   <span className="truncate">{c.name}</span>
+                  {c.isSubscribedPreset && <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 shrink-0">预置</Badge>}
                 </div>
                 {activeCategoryId === c.id && (
                   <span className="text-[10px] bg-background/50 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
@@ -311,7 +345,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   className="pl-9 h-9"
-                  placeholder="搜索用例名称或输入内容..."
+                  placeholder="搜索问题内容或期望回答..."
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                 />
@@ -327,16 +361,17 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
               <div key={c.id} className="group relative bg-card border border-border rounded-xl p-4 shadow-sm hover:shadow-md hover:border-border/80 transition-all">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <h3 className="text-base font-semibold text-foreground">{c.caseName}</h3>
-                    {c.sourcePresetId && (
+                    {activeCategoryId === 'ALL' && (
+                      <Badge variant="outline" className="text-xs font-normal">
+                        {categoryNameById.get(c.categoryId) ?? '未分类'}
+                      </Badge>
+                    )}
+                    {(c.sourcePresetId || c.isSubscribedPreset) && (
                       <Badge variant="outline" className="text-xs font-normal">来自预置</Badge>
                     )}
-                    <span className={cn('text-xs px-2 py-0.5 rounded-full border font-medium', riskLabel[c.riskLevel]?.color ?? riskLabel.MEDIUM.color)}>
-                      风险 {riskLabel[c.riskLevel]?.label ?? '中'}
-                    </span>
                   </div>
                   
-                  {!c.sourcePresetId && (
+                  {!(c.sourcePresetId || c.isSubscribedPreset) && (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button
                         variant="ghost"
@@ -351,7 +386,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                       </Button>
                       <PopoverConfirm
                         title="确认删除用例"
-                        description={`您确定要删除测试用例 "${c.caseName}" 吗？此操作不可恢复。`}
+                        description={`您确定要删除这个问题「${c.query}」吗？此操作不可恢复。`}
                         onConfirm={() => void handleDeleteCase(c.id)}
                       >
                         <Button
@@ -369,7 +404,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                      <MessageSquare className="h-3.5 w-3.5" /> 测试输入 (Query)
+                      <MessageSquare className="h-3.5 w-3.5" /> 问题内容
                     </div>
                     <div className="text-sm bg-muted/30 p-3 rounded-lg border border-border/50 text-foreground break-all">
                       {c.query}
@@ -378,7 +413,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                   {c.expectedBehavior && (
                     <div className="space-y-2">
                       <div className="text-xs font-medium text-emerald-600 flex items-center gap-1.5">
-                        <Target className="h-3.5 w-3.5" /> 期望行为
+                        <Target className="h-3.5 w-3.5" /> 期望回答
                       </div>
                       <div className="text-sm bg-emerald-500/5 p-3 rounded-lg border border-emerald-500/10 text-foreground break-all">
                         {c.expectedBehavior}
@@ -452,42 +487,46 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
       <Dialog open={presetDialogOpen} onOpenChange={setPresetDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>引用预置用例分类</DialogTitle>
+            <DialogTitle>管理预置用例分类</DialogTitle>
           </DialogHeader>
 
           <div className="py-4 space-y-4">
-            <p className="text-sm text-muted-foreground">请选择您需要引入到当前应用的系统预置用例分类：</p>
+            <p className="text-sm text-muted-foreground">请选择您需要关联的系统预置用例分类：</p>
             {presetLoading ? (
               <div className="text-center py-8 text-muted-foreground text-sm">加载中...</div>
             ) : presetCategories.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm">暂无预置分类</div>
             ) : (
               <div className="space-y-2 max-h-[50vh] overflow-y-auto">
-                {presetCategories.map(c => (
-                  <label
-                    key={c.id}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handlePresetCategoryToggle(c.id);
-                    }}
-                    className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 cursor-pointer transition-colors"
-                  >
-                    {selectedPresetCategoryIds.includes(c.id) ? (
-                      <CheckSquare className="h-5 w-5 text-primary shrink-0" />
-                    ) : (
-                      <Square className="h-5 w-5 text-muted-foreground shrink-0" />
-                    )}
-                    <span className="text-sm font-medium">{c.name}</span>
-                  </label>
-                ))}
+                {presetCategories.map(c => {
+                  const isSelected = selectedPresetCategoryIds.includes(c.id);
+                  return (
+                    <label
+                      key={c.id}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handlePresetCategoryToggle(c.id);
+                      }}
+                      className={cn("flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/50 cursor-pointer transition-colors", isSelected ? 'border-primary/50 bg-primary/5' : 'border-border')}
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="h-5 w-5 text-primary shrink-0" />
+                      ) : (
+                        <Square className="h-5 w-5 text-muted-foreground shrink-0" />
+                      )}
+                      <span className="text-sm font-medium flex-1">{c.name}</span>
+                      {isSelected && <Badge variant="secondary" className="text-xs font-normal shrink-0">已关联</Badge>}
+                    </label>
+                  );
+                })}
               </div>
             )}
           </div>
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPresetDialogOpen(false)}>取消</Button>
-            <Button onClick={handleImport} disabled={importing || selectedPresetCategoryIds.length === 0}>
-              {importing ? '引用中...' : `确认引用 (${selectedPresetCategoryIds.length})`}
+            <Button onClick={handleSaveSubscriptions} disabled={importing}>
+              {importing ? '保存中...' : '保存关联'}
             </Button>
           </DialogFooter>
         </DialogContent>

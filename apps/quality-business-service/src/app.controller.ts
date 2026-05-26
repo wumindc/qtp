@@ -2,6 +2,7 @@ import { Body, Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import {
   AppService,
+  type AppEvaluationConfigSaveRequest,
   type AppQuery,
   type AppRecord,
   type AppProtocolSaveRequest,
@@ -74,5 +75,15 @@ export class AppController {
   @Post('protocol/test.do')
   async protocolTest(@Body() request: { appCode: string; sampleInput?: Record<string, unknown> }) {
     return ok(await this.appService.testProtocol(request.appCode, request.sampleInput ?? {}));
+  }
+
+  @Post('evaluation-config/detail.do')
+  async evaluationConfigDetail(@Body() request: { appCode: string }) {
+    return ok(await this.appService.evaluationConfigDetail(request.appCode));
+  }
+
+  @Post('evaluation-config/save.do')
+  async evaluationConfigSave(@Body() request: { appCode: string; data: AppEvaluationConfigSaveRequest }) {
+    return ok(await this.appService.saveEvaluationConfig(request.appCode, request.data));
   }
 }

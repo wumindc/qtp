@@ -64,4 +64,38 @@ describe('AppController', () => {
       data: { success: true, parsedAnswer: '协议调试通过' },
     });
   });
+
+  it('wraps application evaluation config endpoints in the platform response envelope', async () => {
+    const service = new AppService();
+    await service.create({
+      appCode: 'credit_assistant',
+      appName: '信用服务助手',
+      appType: 'CHATBOT',
+      businessDomain: '信用服务',
+      invokeUrl: 'http://127.0.0.1:3104/custom.do',
+    });
+    const controller = new AppController(service);
+
+    const initial = await controller.evaluationConfigDetail({ appCode: 'credit_assistant' });
+
+    expect(initial.success).toBe(true);
+    expect(initial.data.systemPrompt).toContain('AI 应用质量评估裁判');
+    expect(initial.data.configured).toBe(false);
+
+    const saved = await controller.evaluationConfigSave({
+      appCode: 'credit_assistant',
+      data: {
+        modelId: '4',
+        promptOverrideEnabled: true,
+        customPrompt: '应用级裁判提示词',
+      },
+    });
+
+    expect(saved.success).toBe(true);
+    expect(saved.data).toMatchObject({
+      configured: true,
+      modelId: '4',
+      effectivePrompt: '应用级裁判提示词',
+    });
+  });
 });
