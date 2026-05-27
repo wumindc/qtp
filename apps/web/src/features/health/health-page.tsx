@@ -43,14 +43,16 @@ function workerLine(result: HealthResult) {
 }
 
 /* ── 单行卡片 ── */
-function HealthRow({ name, serviceKey, url, result }: { name: string; serviceKey: string; url: string; result: HealthResult }) {
+function HealthRow({ name, serviceKey, result }: { name: string; serviceKey: string; result: HealthResult }) {
   return (
     <div className="flex items-center gap-4 rounded-lg border bg-card px-5 py-4 transition-colors hover:bg-accent/20">
       {/* 图标 + 名称 */}
       <StatusIcon status={result.status} />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-foreground truncate">{name}</p>
-        <p className="text-xs text-muted-foreground truncate mt-0.5">{url}</p>
+        <p className="text-xs text-muted-foreground truncate mt-0.5">
+          {serviceKey === 'gateway' ? '公开入口聚合检查' : serviceKey === 'platform' ? '平台业务模块检查' : '执行与 Worker 检查'}
+        </p>
       </div>
 
       {/* 消息 */}
@@ -163,7 +165,6 @@ export function HealthPage() {
             key={t.key}
             name={t.name}
             serviceKey={t.key}
-            url={t.url}
             result={results[t.key] ?? { status: 'UNKNOWN' }}
           />
         ))}

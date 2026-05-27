@@ -6,10 +6,8 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  getGatewayApiUrl,
   getGatewayPublicUrl,
   getPublicApiRouteMappings,
-  type PublicApiSegment,
 } from '@ai-quality-platform/shared-config';
 
 export type HealthStatus = 'UNKNOWN' | 'CHECKING' | 'UP' | 'DOWN';
@@ -17,7 +15,6 @@ export type HealthStatus = 'UNKNOWN' | 'CHECKING' | 'UP' | 'DOWN';
 export interface HealthTarget {
   key: string;
   name: string;
-  url: string;
 }
 
 export interface HealthResult {
@@ -32,24 +29,14 @@ export interface HealthResult {
   };
 }
 
-const SERVICES: ReadonlyArray<{ key: string; name: string; apiSegment: PublicApiSegment }> = [
-  { key: 'platform', name: 'quality-platform-service', apiSegment: 'system' },
-  { key: 'execution', name: 'quality-execution-service', apiSegment: 'execution' },
+const SERVICES: ReadonlyArray<HealthTarget> = [
+  { key: 'gateway', name: 'quality-gateway' },
+  { key: 'platform', name: 'quality-platform-service' },
+  { key: 'execution', name: 'quality-execution-service' },
 ];
 
 function buildTargets(): HealthTarget[] {
-  return [
-    {
-      key: 'gateway',
-      name: 'quality-gateway',
-      url: getGatewayPublicUrl('/ai-quality-platform/health.do'),
-    },
-    ...SERVICES.map((s) => ({
-      key: s.key,
-      name: s.name,
-      url: getGatewayApiUrl(s.apiSegment, '/health.do'),
-    })),
-  ];
+  return [...SERVICES];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -77,6 +64,20 @@ function readDiagnostics(data: Record<string, unknown>): Pick<HealthResult, 'dep
       }
       : undefined,
   };
+}
+
+function readAggregatedServices(data: Record<string, unknown>, durationMs: number): Record<string, HealthResult> {
+  const services = asRecord(data.services);
+  return Object.fromEntries(SERVICES.map((service) => {
+    const serviceData = asRecord(services[service.key]);
+    const status = serviceData.status === 'UP' ? 'UP' : serviceData.status === 'DOWN' ? 'DOWN' : 'UNKNOWN';
+    return [service.key, {
+      durationMs: service.key === 'gateway' ? durationMs : undefined,
+      ...readDiagnostics(serviceData),
+      message: status === 'UP' ? '健康检查通过' : (typeof serviceData.message === 'string' ? serviceData.message : '等待聚合检查'),
+      status,
+    } satisfies HealthResult];
+  }));
 }
 
 export function useHealthCheck() {
@@ -109,37 +110,19 @@ export function useHealthCheck() {
       Object.fromEntries(targets.map((t) => [t.key, { status: 'CHECKING' as const }])),
     );
     const checkedAt = new Date();
-    const entries = await Promise.all(
-      targets.map(async (t) => {
-        const start = performance.now();
-        try {
-          const res = await fetch(t.url, { cache: 'no-store' });
-          const payload = await res.json().catch(() => ({}));
-          const data = payload.data ?? payload;
-          const diagnostics = readDiagnostics(asRecord(data));
-          const ok = res.ok && data.status === 'UP';
-          return [
-            t.key,
-            {
-              durationMs: Math.round(performance.now() - start),
-              ...diagnostics,
-              message: ok ? '健康检查通过' : (data.message ?? `HTTP ${res.status}`),
-              status: ok ? 'UP' : 'DOWN',
-            } satisfies HealthResult,
-          ] as const;
-        } catch (err) {
-          return [
-            t.key,
-            {
-              durationMs: Math.round(performance.now() - start),
-              message: err instanceof Error ? err.message : '请求失败',
-              status: 'DOWN',
-            } satisfies HealthResult,
-          ] as const;
-        }
-      }),
-    );
-    setResults(Object.fromEntries(entries));
+    const start = performance.now();
+    try {
+      const res = await fetch(getGatewayPublicUrl('/ai-quality-platform/health.do'), { cache: 'no-store' });
+      const payload = await res.json().catch(() => ({}));
+      const data = asRecord(payload.data ?? payload);
+      setResults(readAggregatedServices(data, Math.round(performance.now() - start)));
+    } catch (err) {
+      setResults(Object.fromEntries(targets.map((t) => [t.key, {
+        durationMs: t.key === 'gateway' ? Math.round(performance.now() - start) : undefined,
+        message: err instanceof Error ? err.message : '请求失败',
+        status: 'DOWN' as const,
+      }])));
+    }
     setLastCheckedAt(checkedAt.toLocaleString('zh-CN', { hour12: false }));
     setChecking(false);
   };

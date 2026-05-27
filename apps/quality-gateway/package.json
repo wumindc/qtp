@@ -6,6 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "start": "tsx src/main.ts",
     "start:dev": "tsx watch src/main.ts"
   },
   "dependencies": {

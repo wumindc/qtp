@@ -147,6 +147,8 @@ Monorepo 工具选择：
 | MySQL | 3306 | 本地数据库 |
 | Redis | 6379 | 本地队列与缓存 |
 
+生产端口规划：Docker Compose 只暴露 nginx 最终入口，默认 `${PUBLIC_WEB_PORT:-5670}:80`。`web`、`quality-gateway`、`quality-platform-service`、`quality-execution-service`、MySQL 和 Redis 均只在 Docker 网络内通信，不映射宿主机端口。
+
 前端本地访问地址：
 
 ```text
@@ -157,14 +159,20 @@ http://127.0.0.1:3000/ai-quality-platform
 
 ### 5.1 前端访问方式
 
-前端不直连各后端服务端口，只访问统一 Gateway 入口。
+开发环境中，前端不直连 platform/execution 服务端口，只访问统一 Gateway 入口；生产环境中，浏览器只访问 nginx 最终入口。
 
-后端只保留 gateway、platform、execution 这几个真实运行单元。前端统一访问 quality-gateway，由反代层根据公开 API 段转发到 platform 或 execution。这样既保留外部接口稳定性，也避免把普通业务模块拆成过多独立进程。
+后端只保留 gateway、platform、execution 这几个真实运行单元。生产环境由 nginx 对外暴露系统入口，再把 API 转发给 quality-gateway；quality-gateway 根据公开 API 段转发到 platform 或 execution。这样既保留外部接口稳定性，也避免把普通业务模块拆成过多独立进程。
 
-所有前端可见接口仍统一挂载在：
+开发环境前端可见接口统一挂载在：
 
 ```text
 http://127.0.0.1:8080/ai-quality-platform/api/**
+```
+
+生产环境前端可见接口通过 nginx 同源访问：
+
+```text
+/ai-quality-platform/api/**
 ```
 
 所有业务接口以 `.do` 结尾。
@@ -409,10 +417,10 @@ GET /ai-quality-platform/health.do
 
 前端增加“服务健康检查”页面，用于展示 gateway、platform、execution 等关键运行单元状态、数据库状态、Redis 状态和最后检测时间，方便正式部署和联调排查。
 
-前端健康检查页访问代理后的地址，例如：
+前端健康检查页只访问 gateway 聚合健康接口，不展示内部服务 URL：
 
 ```text
-http://127.0.0.1:8080/ai-quality-platform/api/system/health.do
+/ai-quality-platform/health.do
 ```
 
 ## 6. 前端页面规划
@@ -788,6 +796,7 @@ POST /ai-quality-platform/report/export.do
 第一阶段 Docker 服务：
 
 ```text
+nginx
 ai-quality-web
 ai-quality-gateway
 quality-platform-service
@@ -796,7 +805,7 @@ mysql
 redis
 ```
 
-本地开发允许按需启动服务，但真实运行单元需具备独立构建和独立部署能力；普通业务模块作为 platform 内部模块维护。
+开发环境标准为 Node 本机进程，Docker 只用于 MySQL/Redis 依赖；生产环境标准为 Docker Compose 全栈部署，仅 nginx 映射宿主机端口。真实运行单元需具备独立构建和独立部署能力；普通业务模块作为 platform 内部模块维护。
 
 ## 12. 第一阶段建设范围
 
@@ -943,7 +952,7 @@ redis
 7. 已确认模型供应商第一批支持 OpenAI 兼容接口、通义千问、DeepSeek。
 8. 已确认接口适配器第一版需要支持流式响应。
 9. 已确认需要提供统一 Gateway 入口、统一处理跨域，并提供服务健康检查页面。
-10. 已确认本地端口由 Codex 统一规划，前端 3000，统一 Gateway 8080，platform 服务 3101，execution 服务 3104。
+10. 已确认开发环境使用 Node 本机进程，本地端口由 Codex 统一规划：前端 3000，统一 Gateway 8080，platform 服务 3101，execution 服务 3104；生产环境使用 Docker Compose，只暴露 nginx 最终入口，默认 5670。
 11. 已确认 Monorepo 使用 pnpm workspace。
 12. 已确认第一阶段按功能逐个完整开发，不做半成品模块。
 13. 已确认第一版接入 Excel 导入导出。

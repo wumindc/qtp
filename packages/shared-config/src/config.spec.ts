@@ -45,7 +45,12 @@ describe('shared config', () => {
     ]);
   });
 
-  it('builds public API URLs through the unified gateway port', () => {
+  it('builds public API URLs through the unified gateway port for node development', () => {
+    Object.defineProperty(globalThis, 'location', {
+      value: { hostname: '127.0.0.1', port: '3000', protocol: 'http:' },
+      configurable: true,
+    });
+
     expect(getGatewayApiUrl('business', '/app/list.do')).toBe(
       'http://127.0.0.1:8080/ai-quality-platform/api/business/app/list.do',
     );
@@ -54,14 +59,31 @@ describe('shared config', () => {
     );
   });
 
-  it('uses the current browser hostname for public gateway URLs', () => {
+  it('uses the current browser hostname for node development gateway URLs', () => {
     Object.defineProperty(globalThis, 'location', {
-      value: { hostname: '192.168.11.107', protocol: 'http:' },
+      value: { hostname: '192.168.11.107', port: '3000', protocol: 'http:' },
       configurable: true,
     });
 
     expect(getGatewayApiUrl('ai', '/provider/list.do')).toBe(
       'http://192.168.11.107:8080/ai-quality-platform/api/ai/provider/list.do',
+    );
+  });
+
+  it('uses same-origin public API URLs behind the production nginx entry', () => {
+    Object.defineProperty(globalThis, 'location', {
+      value: { hostname: 'qtp.example.com', port: '5670', protocol: 'http:' },
+      configurable: true,
+    });
+
+    expect(getGatewayApiUrl('system', '/health.do')).toBe('/ai-quality-platform/api/system/health.do');
+  });
+
+  it('allows production builds to force same-origin gateway URLs', () => {
+    vi.stubEnv('NEXT_PUBLIC_GATEWAY_ORIGIN', 'same-origin');
+
+    expect(getGatewayApiUrl('execution', '/execution/run-list.do')).toBe(
+      '/ai-quality-platform/api/execution/execution/run-list.do',
     );
   });
 

@@ -31,6 +31,11 @@ function fail(message) {
   process.exitCode = 1;
 }
 
+function readServiceBlock(compose, serviceName) {
+  const pattern = new RegExp(`\\n  ${serviceName}:\\n([\\s\\S]*?)(?=\\n  [a-zA-Z0-9_-]+:|\\n*$)`, 'u');
+  return pattern.exec(`\n${compose}`)?.[1] ?? '';
+}
+
 const appDirs = readdirSync(join(root, 'apps'), { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && entry.name.startsWith('quality-'))
   .map((entry) => entry.name)
@@ -53,6 +58,10 @@ for (const app of removedApps) {
 }
 
 const compose = readFileSync(join(root, 'docker-compose.yml'), 'utf8');
+if (!compose.includes('nginx:')) fail('docker-compose.yml must expose nginx as the only public entry');
+if (!compose.includes('${PUBLIC_WEB_PORT:-5670}:80')) {
+  fail('docker-compose.yml must expose only nginx on ${PUBLIC_WEB_PORT:-5670}:80');
+}
 for (const app of removedApps) {
   if (compose.includes(`${app}:`) || compose.includes(`SERVICE_NAME: ${app}`)) {
     fail(`docker-compose.yml still defines old service ${app}`);
@@ -68,6 +77,17 @@ if (!compose.includes('PLATFORM_SERVICE_HOST: quality-platform-service')) {
 }
 if (!compose.includes('EXECUTION_SERVICE_HOST: quality-execution-service')) {
   fail('docker-compose.yml must route gateway to quality-execution-service by service name');
+}
+for (const serviceName of ['web', 'quality-gateway', 'quality-platform-service', 'quality-execution-service', 'mysql', 'redis']) {
+  const block = readServiceBlock(compose, serviceName);
+  if (block.includes('\n    ports:')) fail(`${serviceName} must not expose host ports in production compose`);
+}
+const nginxConf = readFileSync(join(root, 'nginx/default.conf'), 'utf8');
+if (!nginxConf.includes('proxy_pass http://web:3000')) fail('nginx must route web traffic to web:3000');
+if (!nginxConf.includes('proxy_pass http://quality-gateway:8080')) fail('nginx must route API traffic to quality-gateway:8080');
+const devDepsCompose = readFileSync(join(root, 'docker-compose.dev-deps.yml'), 'utf8');
+if (!devDepsCompose.includes('"3306:3306"') || !devDepsCompose.includes('"6379:6379"')) {
+  fail('docker-compose.dev-deps.yml must expose mysql and redis for node development');
 }
 
 const envExample = readFileSync(join(root, '.env.example'), 'utf8');

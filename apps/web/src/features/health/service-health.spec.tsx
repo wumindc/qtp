@@ -18,12 +18,11 @@ describe('HealthPage', () => {
     expect(screen.queryByText('quality-ai-service')).not.toBeInTheDocument();
   });
 
-  it('uses unified gateway health URLs instead of internal service ports', async () => {
+  it('does not display gateway or internal service URLs', async () => {
     render(<HealthPage />);
 
-    expect(
-      await screen.findByText('http://localhost:8080/ai-quality-platform/api/system/health.do'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('quality-gateway')).toBeInTheDocument();
+    expect(screen.queryByText(/http:\/\//u)).not.toBeInTheDocument();
     expect(
       screen.queryByText('http://127.0.0.1:3101/ai-quality-platform/health.do'),
     ).not.toBeInTheDocument();
@@ -38,15 +37,24 @@ describe('HealthPage', () => {
     expect(screen.getAllByText('execution').length).toBeGreaterThan(0);
   });
 
-  it('checks real gateway health URLs when the recheck button is clicked', async () => {
+  it('checks one aggregated gateway health endpoint when the recheck button is clicked', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       json: async () => ({
         success: true,
         data: {
           status: 'UP',
-          dependencies: { database: { status: 'UP', message: 'SELECT 1 ok' } },
-          worker: { activeRunCount: 1, runningRunCount: 2, lastRecoveryStatus: 'SUCCEEDED' },
+          services: {
+            gateway: { status: 'UP' },
+            platform: {
+              status: 'UP',
+              dependencies: { database: { status: 'UP', message: 'SELECT 1 ok' } },
+            },
+            execution: {
+              status: 'UP',
+              worker: { activeRunCount: 1, runningRunCount: 2, lastRecoveryStatus: 'SUCCEEDED' },
+            },
+          },
         },
       }),
     } as Response);
@@ -57,8 +65,9 @@ describe('HealthPage', () => {
 
     await waitFor(() => expect(screen.getByText(/最近检查：/u)).toBeInTheDocument());
     expect(screen.getAllByText('UP').length).toBeGreaterThanOrEqual(3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8080/ai-quality-platform/api/system/health.do',
+      expect.stringContaining('/ai-quality-platform/health.do'),
       expect.objectContaining({ cache: 'no-store' }),
     );
     expect(screen.getAllByText(/数据库：UP/u).length).toBeGreaterThan(0);

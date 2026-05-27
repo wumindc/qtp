@@ -2,6 +2,21 @@
 
 ## [未发布]
 
+### 2026-05-27 — 开发 Node 与生产 Docker 拓扑收敛
+
+#### 重构 — 生产只暴露 nginx 最终入口，开发保留 Node 调试端口
+- **变更需求**：用户明确开发环境使用 Node，本机调试端口可以暴露；生产环境使用 Docker，只暴露最终系统入口，内部服务不映射宿主机端口。
+- **变更内容**：
+  - `docker-compose.yml`：改为生产拓扑，新增 nginx 入口，默认只映射 `${PUBLIC_WEB_PORT:-5670}:80`，web/gateway/platform/execution/mysql/redis 均不映射宿主机端口。
+  - `docker-compose.dev-deps.yml`：新增开发依赖 compose，仅暴露 MySQL 与 Redis，供本机 `pnpm dev:*` 使用。
+  - `nginx/default.conf`：新增入口转发规则，页面流量转发到 `web:3000`，API 与聚合健康转发到 `quality-gateway:8080`。
+  - `packages/shared-config/src/index.ts`：公共 API URL 支持开发端口 `3000 -> 8080` 与生产 nginx 同源两种模式，支持 `NEXT_PUBLIC_GATEWAY_ORIGIN=same-origin`。
+  - `apps/quality-gateway/src/health.controller.ts`：`/ai-quality-platform/health.do` 改为聚合 platform/execution 内部健康结果。
+  - `apps/web/src/features/health/*`：健康页只请求一个聚合健康接口，不再展示 gateway 或内部服务完整 URL。
+  - `Dockerfile`、各运行单元 `package.json`：Docker 镜像使用生产启动命令，不再使用 `dev`/`watch` 命令。
+  - `scripts/check-health.mjs`、`scripts/check-topology.mjs`：同步单聚合健康与生产拓扑校验。
+  - `docs/004-本地部署.md`、`docs/20260527-005-生产部署拓扑与开发运行标准.md`：补充开发 Node 与生产 Docker 的运行标准、拓扑图和健康检查边界。
+
 ### 2026-05-27 — 服务架构收敛设计
 
 #### 文档 — 规划后端从 8 个业务服务收敛为平台服务与执行服务

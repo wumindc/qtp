@@ -69,7 +69,9 @@ const API_SEGMENT_TO_DEPLOYABLE_SERVICE: Record<PublicApiSegment, DeployableServ
 };
 
 type BrowserLocationLike = {
+  host?: string;
   hostname?: string;
+  port?: string;
   protocol?: string;
 };
 
@@ -112,10 +114,29 @@ export function getPublicApiRouteMappings(): Array<{ segment: PublicApiSegment; 
  * @author codex
  * Uses the browser page host for public gateway calls so LAN access does not call the visitor's own localhost.
  */
+function readPublicGatewayOriginOverride(): string | undefined {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  const value = env?.NEXT_PUBLIC_GATEWAY_ORIGIN?.trim();
+  return value || undefined;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+/**
+ * @author codex
+ * Node development uses the standalone gateway port; production behind nginx uses same-origin paths.
+ */
 function getPublicGatewayOrigin(): string {
+  const override = readPublicGatewayOriginOverride();
+  if (override === 'same-origin') return '';
+  if (override) return trimTrailingSlash(override);
+
   const location = (globalThis as { location?: BrowserLocationLike }).location;
   const hostname = location?.hostname || '127.0.0.1';
   const protocol = location?.protocol === 'https:' ? 'https:' : 'http:';
+  if (location?.port && location.port !== String(SERVICE_PORTS.web)) return '';
   return `${protocol}//${hostname}:${GATEWAY_PORT}`;
 }
 
