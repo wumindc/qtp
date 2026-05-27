@@ -185,6 +185,63 @@ describe('ExecutionService', () => {
     expect((await service.rerun(run.runCode)).runCode).toBe(run.runCode);
   });
 
+  it('resets completed results and schedules only one background job when rerunning', async () => {
+    const backgroundTasks: Array<() => Promise<void>> = [];
+    const database = createJudgeReadyDatabase([
+      {
+        id: '2',
+        caseName: '重跑用例',
+        appCode: 'credit_assistant',
+        categoryId: 'cat-normal',
+        riskLevel: 'MEDIUM',
+        inputJson: { query: '信用修复怎么做' },
+        expectedJson: { expectedBehavior: '说明信用修复流程' },
+        enabled: true,
+      },
+    ]);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, content: '第一次回答' }), { status: 200 }))
+      .mockResolvedValueOnce(judgePassResponse('第一次通过'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, content: '第二次回答' }), { status: 200 }))
+      .mockResolvedValueOnce(judgePassResponse('第二次通过'));
+    const service = new ExecutionService({
+      database,
+      fetchImpl,
+      backgroundRunner: (task: () => Promise<void>) => backgroundTasks.push(task),
+    } as never);
+
+    const run = await service.start({ planCode: 'READY_PLAN', appCode: 'credit_assistant' });
+    await backgroundTasks.shift()?.();
+    expect((await service.resultList(run.runCode, { currentPage: 1, linesPerPage: 10 })).list[0]).toMatchObject({
+      finalAnswer: '第一次回答',
+      appStatus: 'PASSED',
+      evaluationStatus: 'PASSED',
+    });
+
+    const rerun = await service.rerun(run.runCode);
+    const duplicate = await service.rerun(run.runCode);
+
+    expect(rerun).toMatchObject({ runCode: run.runCode, status: 'RUNNING', phase: 'APP_CALLING' });
+    expect(duplicate).toMatchObject({ runCode: run.runCode, status: 'RUNNING', phase: 'APP_CALLING' });
+    expect(backgroundTasks).toHaveLength(1);
+    expect((await service.resultList(run.runCode, { currentPage: 1, linesPerPage: 10 })).list[0]).toMatchObject({
+      requestJson: {},
+      finalAnswer: '',
+      finalScore: 0,
+      passStatus: 'REVIEW',
+      appStatus: 'PENDING',
+      evaluationStatus: 'PENDING',
+    });
+
+    await backgroundTasks.shift()?.();
+    expect((await service.resultList(run.runCode, { currentPage: 1, linesPerPage: 10 })).list[0]).toMatchObject({
+      finalAnswer: '第二次回答',
+      appStatus: 'PASSED',
+      evaluationStatus: 'PASSED',
+    });
+  });
+
   it('cancels an execution run and keeps it visible in the run list', async () => {
     const service = new ExecutionService({ database: createJudgeReadyDatabase([]) } as never);
     const run = await service.start({ planCode: 'FULL_REGRESSION', appCode: 'credit_assistant' });
@@ -880,7 +937,7 @@ describe('ExecutionService', () => {
       passStatus: 'FAIL',
       failureReason: '评估模型调用超时：已等待 180 秒，评估模型未返回结果',
       problemType: '评估调用失败',
-      errorCode: 'JUDGE_EVALUATION_FAILED',
+      errorCode: 'PROVIDER_TIMEOUT',
     });
   });
 

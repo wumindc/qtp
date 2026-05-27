@@ -7,44 +7,61 @@ describe('HealthPage', () => {
     vi.restoreAllMocks();
   });
 
-  it('lists all backend services planned for local development', () => {
+  it('lists the deployable platform runtime services', async () => {
     render(<HealthPage />);
 
-    expect(screen.getByText('quality-business-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-case-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-plan-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-execution-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-ai-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-review-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-statistics-service')).toBeInTheDocument();
-    expect(screen.getByText('quality-system-service')).toBeInTheDocument();
+    expect(await screen.findByText('quality-gateway')).toBeInTheDocument();
+    expect(screen.getAllByText('quality-platform-service').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('quality-execution-service').length).toBeGreaterThan(0);
+    expect(screen.queryByText('quality-business-service')).not.toBeInTheDocument();
+    expect(screen.queryByText('quality-case-service')).not.toBeInTheDocument();
+    expect(screen.queryByText('quality-ai-service')).not.toBeInTheDocument();
   });
 
-  it('uses unified gateway health URLs instead of internal service ports', () => {
+  it('uses unified gateway health URLs instead of internal service ports', async () => {
     render(<HealthPage />);
 
     expect(
-      screen.getByText('http://localhost:8080/ai-quality-platform/api/business/health.do'),
+      await screen.findByText('http://localhost:8080/ai-quality-platform/api/system/health.do'),
     ).toBeInTheDocument();
     expect(
       screen.queryByText('http://127.0.0.1:3101/ai-quality-platform/health.do'),
     ).not.toBeInTheDocument();
   });
 
+  it('shows public API routing relationships for consolidated services', async () => {
+    render(<HealthPage />);
+
+    expect(await screen.findByText('公开 API 路由')).toBeInTheDocument();
+    expect(screen.getByText('business / case / plan / ai / review / statistics / system')).toBeInTheDocument();
+    expect(screen.getAllByText('quality-platform-service').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('execution').length).toBeGreaterThan(0);
+  });
+
   it('checks real gateway health URLs when the recheck button is clicked', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, data: { status: 'UP' } }),
+      json: async () => ({
+        success: true,
+        data: {
+          status: 'UP',
+          dependencies: { database: { status: 'UP', message: 'SELECT 1 ok' } },
+          worker: { activeRunCount: 1, runningRunCount: 2, lastRecoveryStatus: 'SUCCEEDED' },
+        },
+      }),
     } as Response);
 
     render(<HealthPage />);
+    await screen.findByText('quality-gateway');
     fireEvent.click(screen.getByRole('button', { name: '重新检查' }));
 
     await waitFor(() => expect(screen.getByText(/最近检查：/u)).toBeInTheDocument());
-    expect(screen.getAllByText('UP')).toHaveLength(9);
+    expect(screen.getAllByText('UP').length).toBeGreaterThanOrEqual(3);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8080/ai-quality-platform/api/business/health.do',
+      'http://localhost:8080/ai-quality-platform/api/system/health.do',
       expect.objectContaining({ cache: 'no-store' }),
     );
+    expect(screen.getAllByText(/数据库：UP/u).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Worker：运行 2，活跃 1/u).length).toBeGreaterThan(0);
   });
 });

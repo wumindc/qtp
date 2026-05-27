@@ -274,7 +274,8 @@ describe('AppHistoryDetail', () => {
     }));
     await waitFor(() => expect(screen.queryByText('人工修订')).not.toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: '重试' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: '重新业务调用+评估' }));
 
     await waitFor(() => expect(startPlan).toHaveBeenCalledWith('plan-c', 'c', ['case-b']));
     expect(navigationMock.push).toHaveBeenCalledWith('/ai-quality-platform/apps/c/plans/runs/run-next');

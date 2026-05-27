@@ -1,9 +1,17 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { CONTEXT_PATH, getGatewayApiUrl, getServicePort } from './index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CONTEXT_PATH,
+  getDeployableServiceForApiSegment,
+  getGatewayApiUrl,
+  getLocalServiceUrl,
+  getPublicApiRouteMappings,
+  getServicePort,
+} from './index';
 
 describe('shared config', () => {
   afterEach(() => {
     Reflect.deleteProperty(globalThis, 'location');
+    vi.unstubAllEnvs();
   });
 
   it('uses the ai-quality-platform context path', () => {
@@ -13,8 +21,28 @@ describe('shared config', () => {
   it('returns planned local service ports', () => {
     expect(getServicePort('web')).toBe(3000);
     expect(getServicePort('gateway')).toBe(8080);
-    expect(getServicePort('business')).toBe(3101);
-    expect(getServicePort('system')).toBe(3108);
+    expect(getServicePort('platform')).toBe(3101);
+    expect(getServicePort('execution')).toBe(3104);
+  });
+
+  it('maps public API segments to their deployable runtime services', () => {
+    for (const segment of ['business', 'case', 'plan', 'ai', 'review', 'statistics', 'system'] as const) {
+      expect(getDeployableServiceForApiSegment(segment)).toBe('platform');
+    }
+    expect(getDeployableServiceForApiSegment('execution')).toBe('execution');
+  });
+
+  it('exposes public API route mappings for health diagnostics', () => {
+    expect(getPublicApiRouteMappings()).toEqual([
+      { segment: 'business', targetService: 'platform' },
+      { segment: 'case', targetService: 'platform' },
+      { segment: 'plan', targetService: 'platform' },
+      { segment: 'execution', targetService: 'execution' },
+      { segment: 'ai', targetService: 'platform' },
+      { segment: 'review', targetService: 'platform' },
+      { segment: 'statistics', targetService: 'platform' },
+      { segment: 'system', targetService: 'platform' },
+    ]);
   });
 
   it('builds public API URLs through the unified gateway port', () => {
@@ -35,5 +63,13 @@ describe('shared config', () => {
     expect(getGatewayApiUrl('ai', '/provider/list.do')).toBe(
       'http://192.168.11.107:8080/ai-quality-platform/api/ai/provider/list.do',
     );
+  });
+
+  it('allows deployable service hosts to be overridden for container networking', () => {
+    vi.stubEnv('PLATFORM_SERVICE_HOST', 'quality-platform-service');
+    vi.stubEnv('EXECUTION_SERVICE_HOST', 'quality-execution-service');
+
+    expect(getLocalServiceUrl('platform')).toBe('http://quality-platform-service:3101');
+    expect(getLocalServiceUrl('execution')).toBe('http://quality-execution-service:3104');
   });
 });

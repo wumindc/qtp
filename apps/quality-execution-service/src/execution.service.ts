@@ -3,6 +3,11 @@
  * @author codex
  */
 import { randomBytes } from 'node:crypto';
+import {
+  buildChatCompletionsPayload,
+  createChatCompletionsProviderAdapter,
+  type ModelInvocationRequest,
+} from '@ai-quality-platform/ai-model-adapter';
 import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
 import { BadRequestException } from '@nestjs/common';
@@ -183,6 +188,13 @@ interface JudgeEvaluationResult {
   call: JudgeCallRecord;
 }
 
+class JudgeAdapterError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'JudgeAdapterError';
+  }
+}
+
 export interface JudgeCallRecord {
   callCode: string;
   runCode: string;
@@ -212,6 +224,17 @@ export interface JudgeCallRecord {
   errorCode?: string;
   errorMessage?: string;
   elapsedMs?: number;
+}
+
+export interface WorkerHealth {
+  enabled: boolean;
+  activeRunCount: number;
+  runningRunCount: number;
+  lastHeartbeatAt?: string;
+  lastRecoveryAt?: string;
+  lastRecoveryStatus?: 'SUCCEEDED' | 'FAILED' | 'IDLE';
+  recoveredRunCount?: number;
+  lastError?: string;
 }
 
 type ExecutionDataStore = {
@@ -993,6 +1016,11 @@ export class ExecutionService {
   private readonly judgeCalls = new Map<string, JudgeCallRecord[]>();
   private readonly runOrders = new Map<string, number>();
   private nextRunOrder = 0;
+  private lastWorkerHeartbeatAt?: string;
+  private lastRecoveryAt?: string;
+  private lastRecoveryStatus: WorkerHealth['lastRecoveryStatus'] = 'IDLE';
+  private recoveredRunCount = 0;
+  private lastWorkerError?: string;
 
   constructor(deps: ExecutionServiceDeps = {}) {
     this.database = deps.database ?? new ExecutionDatabase();
@@ -1112,6 +1140,24 @@ export class ExecutionService {
     return call;
   }
 
+  /**
+   * @author codex
+   * Reports worker recovery and activity state for service health diagnostics.
+   */
+  async getWorkerHealth(): Promise<WorkerHealth> {
+    const runs = await this.getRunSource().catch(() => []);
+    return {
+      enabled: this.workerEnabled,
+      activeRunCount: this.activeRunCodes.size,
+      runningRunCount: runs.filter((run) => run.status === 'RUNNING').length,
+      lastHeartbeatAt: this.lastWorkerHeartbeatAt,
+      lastRecoveryAt: this.lastRecoveryAt,
+      lastRecoveryStatus: this.lastRecoveryStatus,
+      recoveredRunCount: this.recoveredRunCount,
+      lastError: this.lastWorkerError,
+    };
+  }
+
   async recalculateCost(runCode: string): Promise<RunRecord> {
     const run = await this.getRun(runCode);
     const calls = await this.getJudgeCallSource(runCode);
@@ -1146,7 +1192,60 @@ export class ExecutionService {
 
   async rerun(runCode: string): Promise<RunRecord> {
     const run = await this.getRun(runCode);
-    return this.persistRun({ ...run, status: 'COMPLETED' });
+    if (run.status === 'RUNNING' || this.activeRunCodes.has(runCode)) {
+      const plan = await this.getPlan(run.planCode, run.appCode);
+      const sequencedRun = await this.attachRunSequence(run);
+      return { ...sequencedRun, planName: plan.planName };
+    }
+
+    const plan = await this.getPlan(run.planCode, run.appCode);
+    const existingResults = await this.getResultSource(runCode);
+    const cases = existingResults.length > 0
+      ? existingResults.map((result) => this.caseFromResultSnapshot(run, result))
+      : await this.resolveCases({ appCode: run.appCode }, plan);
+    if (cases.length === 0) {
+      const emptyRun = await this.persistRun(this.summarizeRun(run, [], 'COMPLETED', 'COMPLETED', { costStatus: 'NO_USAGE' }));
+      const sequencedRun = await this.attachRunSequence(emptyRun);
+      return { ...sequencedRun, planName: plan.planName };
+    }
+
+    const resetResults = await Promise.all(cases.map(async (testCase, index) => {
+      const previousResult = existingResults.find((result) => result.caseCode === testCase.id);
+      const nextResult = this.resetResultForRerun(runCode, testCase, index, previousResult);
+      return this.persistResultUpdate(nextResult, testCase);
+    }));
+    this.results.set(runCode, resetResults);
+    this.judgeCalls.set(runCode, []);
+    const startedAt = new Date().toISOString();
+    const nextRun = await this.persistRun({
+      ...run,
+      status: 'RUNNING',
+      phase: 'APP_CALLING',
+      totalCount: resetResults.length,
+      appCompletedCount: 0,
+      evalCompletedCount: 0,
+      passCount: 0,
+      failCount: 0,
+      reviewCount: 0,
+      avgScore: 0,
+      normalInputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      normalInputCostAmount: 0,
+      cachedInputCostAmount: 0,
+      outputCostAmount: 0,
+      totalCostAmount: 0,
+      currency: 'CNY',
+      costStatus: 'NOT_CALCULATED',
+      startAt: startedAt,
+      endAt: undefined,
+      durationMs: undefined,
+    });
+    this.runCaseSnapshots.set(runCode, cases);
+    this.scheduleRun(runCode);
+    const sequencedRun = await this.attachRunSequence(nextRun);
+    return { ...sequencedRun, planName: plan.planName };
   }
 
   /**
@@ -1226,11 +1325,21 @@ export class ExecutionService {
    * Uses eval_run as a durable queue: every RUNNING row can be resumed after service restart.
    */
   private async recoverRunningRuns() {
-    const runningRuns = (await this.getRunSource()).filter((run) => run.status === 'RUNNING');
-    for (const run of runningRuns) {
-      if (this.activeRunCodes.has(run.runCode)) continue;
-      this.activeRunCodes.add(run.runCode);
-      await this.processRunJob(run.runCode);
+    this.lastRecoveryAt = new Date().toISOString();
+    try {
+      const runningRuns = (await this.getRunSource()).filter((run) => run.status === 'RUNNING');
+      this.recoveredRunCount = runningRuns.length;
+      for (const run of runningRuns) {
+        if (this.activeRunCodes.has(run.runCode)) continue;
+        this.activeRunCodes.add(run.runCode);
+        this.touchWorkerHeartbeat();
+        await this.processRunJob(run.runCode);
+      }
+      this.lastRecoveryStatus = 'SUCCEEDED';
+    } catch (error) {
+      this.lastRecoveryStatus = 'FAILED';
+      this.lastWorkerError = this.describeExecutionError(error);
+      throw error;
     }
   }
 
@@ -1243,12 +1352,14 @@ export class ExecutionService {
   private async processRunJob(runCode: string) {
     let run: RunRecord | undefined;
     try {
+      this.touchWorkerHeartbeat();
       run = await this.getRun(runCode);
       if (run.status !== 'RUNNING') return;
 
       const plan = await this.getPlan(run.planCode, run.appCode);
       const cases = this.runCaseSnapshots.get(run.runCode) ?? (await this.resolveCases({ appCode: run.appCode }, plan));
       const results = await this.ensureRunResults(run, cases);
+      this.touchWorkerHeartbeat();
 
       if (run.phase !== 'EVALUATING' && run.phase !== 'COSTING') {
         const app = cases.length > 0 ? await this.getApp(run.appCode) : undefined;
@@ -1261,14 +1372,17 @@ export class ExecutionService {
           const nextResult = await this.executeAppCall(run!.runCode, testCase, index, app, result);
           this.replaceResult(results, nextResult);
           await this.persistResultUpdate(nextResult, testCase);
+          this.touchWorkerHeartbeat();
           await this.persistRun(this.summarizeRun(run!, results, 'RUNNING', 'APP_CALLING'));
         });
         run = await this.persistRun(this.summarizeRun(run, results, 'RUNNING', 'EVALUATING'));
+        this.touchWorkerHeartbeat();
       }
 
       if (run.phase !== 'COSTING') {
         await this.evaluateCompletedAppResults(run, cases, results);
         run = await this.persistRun(this.summarizeRun(run, results, 'RUNNING', 'COSTING'));
+        this.touchWorkerHeartbeat();
       }
 
       const costSummary = await this.calculateRunCostSummary(run.runCode);
@@ -1281,11 +1395,16 @@ export class ExecutionService {
       } catch {
         currentResults = this.results.get(run.runCode) ?? [];
       }
+      this.lastWorkerError = '执行任务处理失败';
       await this.persistRun(this.summarizeRun(run, currentResults, 'FAILED'));
     } finally {
       this.activeRunCodes.delete(runCode);
       this.runCaseSnapshots.delete(runCode);
     }
+  }
+
+  private touchWorkerHeartbeat() {
+    this.lastWorkerHeartbeatAt = new Date().toISOString();
   }
 
   private async ensureRunResults(run: RunRecord, cases: ExecutionCaseRecord[]) {
@@ -1539,10 +1658,43 @@ export class ExecutionService {
 
   private async getJudgeCallSource(runCode: string) {
     const memoryCalls = this.judgeCalls.get(runCode);
-    if (memoryCalls && memoryCalls.length > 0) return memoryCalls;
+    if (memoryCalls !== undefined) return memoryCalls;
     const databaseCalls = await this.database.listJudgeCalls?.(runCode);
     if (databaseCalls) this.judgeCalls.set(runCode, databaseCalls);
     return databaseCalls ?? [];
+  }
+
+  private resetResultForRerun(
+    runCode: string,
+    testCase: ExecutionCaseRecord,
+    index: number,
+    previousResult?: ResultRecord,
+  ): ResultRecord {
+    return {
+      ...this.pendingResult(runCode, testCase, index),
+      resultId: previousResult?.resultId ?? `${runCode}_RESULT_${index + 1}`,
+      hasJudgeCall: false,
+      manualResult: null,
+      reviewStatus: 'PENDING',
+      reviewComment: undefined,
+    };
+  }
+
+  private caseFromResultSnapshot(run: RunRecord, result: ResultRecord): ExecutionCaseRecord {
+    const snapshot = asPlainRecord(result.caseSnapshotJson);
+    const snapshotFields = readCaseSnapshotFields(snapshot, result.requestJson);
+    return {
+      id: result.caseCode,
+      caseName: snapshotFields.caseName ?? result.caseName ?? result.caseCode,
+      appCode: run.appCode,
+      categoryId: String(snapshot.categoryId ?? result.categoryId ?? ''),
+      riskLevel: String(snapshot.riskLevel ?? ''),
+      inputJson: asPlainRecord(snapshot.inputJson),
+      expectedJson: asPlainRecord(snapshot.expectedJson),
+      query: snapshotFields.query ?? result.query ?? '',
+      expectedBehavior: snapshotFields.expectedBehavior ?? result.expectedBehavior ?? '',
+      enabled: true,
+    };
   }
 
   private async calculateRunCostSummary(runCode: string): Promise<Partial<RunRecord>> {
@@ -1688,7 +1840,8 @@ export class ExecutionService {
     context: { runCode: string; resultId: string; appCode: string },
   ): Promise<JudgeEvaluationResult> {
     const judgeTimeoutMs = this.resolveJudgeTimeoutMs(judgeContext.model.parameters, finalAnswer);
-    const requestJson = this.buildJudgeRequestBody(judgeContext, testCase, finalAnswer);
+    const invocationRequest = this.buildJudgeInvocationRequest(judgeContext, testCase, finalAnswer, judgeTimeoutMs);
+    const requestJson = buildChatCompletionsPayload(invocationRequest);
     const startedAt = Date.now();
     const baseCall = (): Omit<JudgeCallRecord, 'status' | 'costStatus'> => ({
       callCode: createOpaqueId('judge'),
@@ -1704,26 +1857,25 @@ export class ExecutionService {
       requestJson,
     });
     try {
-      const response = await this.fetchWithTimeout(this.buildJudgeEndpoint(judgeContext.provider.baseUrl), {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${judgeContext.provider.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestJson),
-      }, judgeTimeoutMs);
-      const text = await response.text();
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = this.parseJsonObject(text, { rawText: text });
-      const content = this.extractJudgeMessageContent(payload);
-      const usage = normalizeJudgeUsage(payload.usage);
+      const adapter = createChatCompletionsProviderAdapter({
+        baseUrl: judgeContext.provider.baseUrl,
+        apiKey: judgeContext.provider.apiKey,
+        fetchImpl: this.fetchImpl,
+      });
+      const adapterResult = await adapter.invoke(invocationRequest);
+      if (adapterResult.status !== 'SUCCEEDED') {
+        throw new JudgeAdapterError(adapterResult.errorCode ?? 'JUDGE_EVALUATION_FAILED', adapterResult.errorMessage ?? '评估模型调用失败');
+      }
+      const payload = adapterResult.responseJson ?? {};
+      const content = adapterResult.content ?? this.extractJudgeMessageContent(payload);
+      const usage = normalizeJudgeUsage(adapterResult.usage?.rawUsage ?? payload.usage);
       const cost = calculateJudgeCost(usage, judgeContext.model.limits?.pricing);
       return {
         score: this.parseJudgeResult(content),
         call: {
           ...baseCall(),
           responseJson: payload,
-          rawResponseText: text,
+          rawResponseText: adapterResult.rawResponseText,
           rawUsageJson: usage.rawUsage,
           normalInputTokens: usage.normalInputTokens,
           cachedInputTokens: usage.cachedInputTokens,
@@ -1736,24 +1888,25 @@ export class ExecutionService {
           currency: cost.currency,
           costStatus: cost.costStatus,
           status: 'SUCCEEDED',
-          elapsedMs: Date.now() - startedAt,
+          elapsedMs: adapterResult.elapsedMs,
         },
       };
     } catch (error) {
       const failureReason = this.describeJudgeFailure(error, judgeTimeoutMs);
+      const errorCode = error instanceof JudgeAdapterError ? error.code : 'JUDGE_EVALUATION_FAILED';
       return {
         score: {
           finalScore: 0,
           passStatus: 'FAIL',
           failureReason,
           problemType: '评估调用失败',
-          errorCode: 'JUDGE_EVALUATION_FAILED',
+          errorCode,
         },
         call: {
           ...baseCall(),
           costStatus: 'NO_USAGE',
           status: 'FAILED',
-          errorCode: 'JUDGE_EVALUATION_FAILED',
+          errorCode,
           errorMessage: failureReason,
           elapsedMs: Date.now() - startedAt,
         },
@@ -1761,10 +1914,18 @@ export class ExecutionService {
     }
   }
 
-  private buildJudgeRequestBody(judgeContext: JudgeContext, testCase: ExecutionCaseRecord, finalAnswer: string) {
+  private buildJudgeInvocationRequest(
+    judgeContext: JudgeContext,
+    testCase: ExecutionCaseRecord,
+    finalAnswer: string,
+    timeoutMs: number,
+  ): ModelInvocationRequest {
     const parameters = judgeContext.model.parameters;
-    const body: Record<string, unknown> = {
-      model: judgeContext.model.modelId,
+    return {
+      traceId: `${testCase.id}:${Date.now()}`,
+      providerCode: judgeContext.provider.providerCode,
+      modelId: judgeContext.model.modelId,
+      protocol: judgeContext.model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT' ? 'DASHSCOPE_COMPATIBLE_CHAT' : 'OPENAI_COMPATIBLE',
       messages: [
         { role: 'system', content: judgeContext.config.effectivePrompt },
         {
@@ -1780,19 +1941,13 @@ export class ExecutionService {
       ],
       stream: false,
       temperature: typeof parameters.temperature === 'number' ? parameters.temperature : 0,
-      max_tokens: this.resolveJudgeMaxOutputTokens(parameters),
+      maxTokens: this.resolveJudgeMaxOutputTokens(parameters),
+      responseFormat: parameters.jsonMode === true ? 'json_object' : 'text',
+      topP: typeof parameters.topP === 'number' ? parameters.topP : undefined,
+      enableThinking: judgeContext.provider.providerType === 'QWEN' || judgeContext.model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT' ? false : undefined,
+      reasoningEffort: parameters.reasoningEffort,
+      timeoutMs,
     };
-    if (parameters.jsonMode === true) body.response_format = { type: 'json_object' };
-    if (typeof parameters.topP === 'number') body.top_p = parameters.topP;
-    if (judgeContext.provider.providerType === 'QWEN' || judgeContext.model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT') {
-      body.enable_thinking = false;
-    }
-    if (parameters.reasoningEffort) body.reasoning_effort = parameters.reasoningEffort;
-    return body;
-  }
-
-  private buildJudgeEndpoint(baseUrl: string) {
-    return `${baseUrl.replace(/\/+$/u, '')}/chat/completions`;
   }
 
   /**
@@ -1824,6 +1979,12 @@ export class ExecutionService {
   }
 
   private describeJudgeFailure(error: unknown, timeoutMs: number) {
+    if (error instanceof JudgeAdapterError) {
+      if (error.code === 'PROVIDER_TIMEOUT') {
+        return `评估模型调用超时：已等待 ${Math.round(timeoutMs / 1000)} 秒，评估模型未返回结果`;
+      }
+      return `评估模型调用失败：${error.message}`;
+    }
     if (this.isAbortError(error)) {
       return `评估模型调用超时：已等待 ${Math.round(timeoutMs / 1000)} 秒，评估模型未返回结果`;
     }

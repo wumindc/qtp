@@ -2,6 +2,28 @@
 
 ## [未发布]
 
+### 2026-05-27 — 服务架构收敛设计
+
+#### 文档 — 规划后端从 8 个业务服务收敛为平台服务与执行服务
+- **变更需求**：用户希望重新评估当前服务端服务数量，减少不必要的后端进程，同时保留 gateway、AI 调用标准和异步 worker 的合理边界。
+- **变更内容**：
+  - `docs/20260527-002-服务架构收敛设计.md`：新增服务架构收敛设计，明确目标拓扑为 `quality-gateway + quality-platform-service + quality-execution-service + ai-model-adapter package`。
+  - `docs/20260527-002-服务架构收敛设计.md`：梳理现有 business/case/plan/ai/review/statistics/system/execution 服务归并去向、公开 API 兼容策略、健康检查调整、AI 模型调用标准和分阶段迁移验收清单。
+  - `docs/20260527-003-服务架构收敛实施计划.md`：新增实施计划，将服务收敛拆分为共享配置、gateway、platform 服务、健康检查、AI adapter、旧服务删除和浏览器验收等可执行任务。
+  - `packages/shared-config/src/index.ts`、`apps/quality-gateway/src/gateway-router.ts`：区分公开 API 段与真实部署服务，business/case/plan/ai/review/statistics/system 统一转发到 platform，execution 继续转发到 execution。
+  - `apps/quality-platform-service`：新增平台服务，承载应用、用例、计划、模型配置、人工复核、报表统计和登录模块；删除旧的 business/case/plan/ai/review/statistics/system 独立服务目录。
+  - `packages/ai-model-adapter`：新增模型调用标准 package，统一 OpenAI/Qwen 兼容请求体、`enable_thinking: false`、usage 归一和失败结果结构；执行服务复用该 adapter。
+  - `package.json`、`scripts/check-health.mjs`、`apps/web/src/features/health/*`：本地启动和健康检查收敛为 gateway/platform/execution 三个关键运行单元，健康页同步展示新拓扑。
+  - `docs/ai-quality-platform-design.md`：更新总体架构、端口规划、服务拆分和 Docker 部署规划，移除旧 8 业务服务拓扑。
+  - `docs/ai-quality-platform-design.md`：修正执行链路中的旧 `ai-service`、`statistics-service` 和 Redis 队列表述，改为 execution service 阶段推进、`ai-model-adapter` 模型评估和 platform 统计查询。
+  - `docs/20260527-004-服务架构收敛后续优化目标.md`：新增收敛后的持续优化目标，按合并收口、运行健康、执行 Worker、AI 调用标准、Platform 模块治理和部署 CI 六类规划后续推进顺序。
+  - `apps/quality-platform-service/src/health.controller.ts`：健康检查返回数据库、Redis 和模型供应商诊断详情；数据库作为 platform 基础健康硬依赖，模型供应商作为可选诊断项。
+  - `apps/quality-execution-service/src/health.controller.ts`、`apps/quality-execution-service/src/execution.service.ts`：执行服务健康检查增加 worker 启用状态、活跃运行数、RUNNING 批次数、恢复状态和最近心跳。
+  - `apps/web/src/features/health/service-health.tsx`：健康页增加公开 API 段到运行单元的路由关系，并展示数据库和 worker 诊断摘要。
+  - `packages/ai-model-adapter`、`apps/quality-execution-service/src/execution.service.ts`：模型调用标准从请求体/usage 工具扩展为 OpenAI 兼容 ProviderAdapter、稳定供应商错误码和通用 token 费用计算，执行评估阶段改为复用 adapter。
+  - `apps/quality-platform-service/src/modules/*/README.md`：补充 platform 内部模块职责边界和依赖规则，避免服务合并后模块边界退化。
+  - `docker-compose.yml`、`.env.example`、`.github/workflows/ci.yml`、`scripts/check-topology.mjs`、`docs/004-本地部署.md`：部署和 CI 收敛为 web/gateway/platform/execution/mysql/redis 拓扑，新增拓扑检查脚本并记录 `WATCHPACK_POLLING=true` 本地兜底启动方式。
+
 ### 2026-05-27 — 首页应用工作台真实数据与布局重设计
 
 #### 修复与优化 — 工作台从裸文本占位改为平台级质量驾驶舱

@@ -42,22 +42,19 @@ services:
         SERVICE_NAME: quality-gateway
     ports:
       - "8080:8080"
+    environment:
+      PLATFORM_SERVICE_HOST: quality-platform-service
+      EXECUTION_SERVICE_HOST: quality-execution-service
     depends_on:
-      - quality-business-service
-      - quality-case-service
-      - quality-plan-service
+      - quality-platform-service
       - quality-execution-service
-      - quality-ai-service
-      - quality-review-service
-      - quality-statistics-service
-      - quality-system-service
 
-  quality-business-service:
+  quality-platform-service:
     build:
       context: .
       target: service
       args:
-        SERVICE_NAME: quality-business-service
+        SERVICE_NAME: quality-platform-service
     ports:
       - "3101:3101"
     environment: &service-env
@@ -65,32 +62,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: sunsharing
-    depends_on:
-      - mysql
-      - redis
-
-  quality-case-service:
-    build:
-      context: .
-      target: service
-      args:
-        SERVICE_NAME: quality-case-service
-    ports:
-      - "3102:3102"
-    environment: *service-env
-    depends_on:
-      - mysql
-      - redis
-
-  quality-plan-service:
-    build:
-      context: .
-      target: service
-      args:
-        SERVICE_NAME: quality-plan-service
-    ports:
-      - "3103:3103"
-    environment: *service-env
     depends_on:
       - mysql
       - redis
@@ -103,58 +74,6 @@ services:
         SERVICE_NAME: quality-execution-service
     ports:
       - "3104:3104"
-    environment: *service-env
-    depends_on:
-      - mysql
-      - redis
-
-  quality-ai-service:
-    build:
-      context: .
-      target: service
-      args:
-        SERVICE_NAME: quality-ai-service
-    ports:
-      - "3105:3105"
-    environment: *service-env
-    depends_on:
-      - mysql
-      - redis
-
-  quality-review-service:
-    build:
-      context: .
-      target: service
-      args:
-        SERVICE_NAME: quality-review-service
-    ports:
-      - "3106:3106"
-    environment: *service-env
-    depends_on:
-      - mysql
-      - redis
-
-  quality-statistics-service:
-    build:
-      context: .
-      target: service
-      args:
-        SERVICE_NAME: quality-statistics-service
-    ports:
-      - "3107:3107"
-    environment: *service-env
-    depends_on:
-      - mysql
-      - redis
-
-  quality-system-service:
-    build:
-      context: .
-      target: service
-      args:
-        SERVICE_NAME: quality-system-service
-    ports:
-      - "3108:3108"
     environment: *service-env
     depends_on:
       - mysql

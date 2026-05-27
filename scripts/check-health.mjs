@@ -3,14 +3,8 @@ const gatewayBaseUrl = process.env.GATEWAY_BASE_URL ?? `http://127.0.0.1:8080/${
 
 const services = [
   ['gateway', `${gatewayBaseUrl}/health.do`],
-  ['business', `${gatewayBaseUrl}/api/business/health.do`],
-  ['case', `${gatewayBaseUrl}/api/case/health.do`],
-  ['plan', `${gatewayBaseUrl}/api/plan/health.do`],
+  ['platform', `${gatewayBaseUrl}/api/system/health.do`],
   ['execution', `${gatewayBaseUrl}/api/execution/health.do`],
-  ['ai', `${gatewayBaseUrl}/api/ai/health.do`],
-  ['review', `${gatewayBaseUrl}/api/review/health.do`],
-  ['statistics', `${gatewayBaseUrl}/api/statistics/health.do`],
-  ['system', `${gatewayBaseUrl}/api/system/health.do`],
 ];
 
 /**
