@@ -1,5 +1,5 @@
 import { All, Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
-import type { BackendServiceKey } from '@ai-quality-platform/shared-config';
+import type { PublicApiSegment } from '@ai-quality-platform/shared-config';
 import { buildGatewayTargetUrl } from './gateway-router';
 
 type SupportedMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -28,7 +28,7 @@ export class GatewayController {
    */
   @All(':service/*path')
   async forwardAll(
-    @Param('service') service: BackendServiceKey,
+    @Param('service') service: PublicApiSegment,
     @Param('path') path: string | string[],
     @Req() request: GatewayHttpRequest,
     @Body() body: unknown,
@@ -47,13 +47,13 @@ export class GatewayController {
   }
 
   @Get(':service/*path')
-  async forwardGet(@Param('service') service: BackendServiceKey, @Param('path') path: string) {
+  async forwardGet(@Param('service') service: PublicApiSegment, @Param('path') path: string) {
     return this.forward(service, path, undefined, 'GET');
   }
 
   @Post(':service/*path')
   async forwardPost(
-    @Param('service') service: BackendServiceKey,
+    @Param('service') service: PublicApiSegment,
     @Param('path') path: string,
     @Body() body: unknown,
   ) {
@@ -61,7 +61,7 @@ export class GatewayController {
   }
 
   async forward(
-    service: BackendServiceKey,
+    service: PublicApiSegment,
     path: string,
     body?: unknown,
     method: SupportedMethod = body === undefined ? 'GET' : 'POST',
@@ -80,7 +80,7 @@ export class GatewayController {
    * Preserves HTTP details for the real gateway route, including query strings and SSE streams.
    */
   async forwardHttp(
-    service: BackendServiceKey,
+    service: PublicApiSegment,
     path: string,
     request: GatewayHttpRequest,
     response: GatewayHttpResponse,
@@ -125,7 +125,7 @@ export class GatewayController {
   }
 
   private buildTargetUrl(
-    service: BackendServiceKey,
+    service: PublicApiSegment,
     path: string,
     query?: Record<string, string | number | boolean | undefined>,
   ): string {

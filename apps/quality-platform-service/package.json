@@ -1,5 +1,5 @@
 {
-  "name": "quality-execution-service",
+  "name": "quality-platform-service",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,15 +9,17 @@
     "start:dev": "tsx watch src/main.ts"
   },
   "dependencies": {
-    "@ai-quality-platform/ai-model-adapter": "workspace:*",
     "@ai-quality-platform/shared-config": "workspace:*",
     "@ai-quality-platform/shared-database": "workspace:*",
     "@ai-quality-platform/shared-http": "workspace:*",
     "@nestjs/common": "^11.1.9",
     "@nestjs/core": "^11.1.9",
     "@nestjs/platform-express": "^11.1.9",
+    "@prisma/adapter-mariadb": "^7.8.0",
+    "@prisma/client": "^7.1.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "tsx": "^4.21.0",

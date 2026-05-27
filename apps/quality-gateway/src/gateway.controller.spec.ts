@@ -4,7 +4,7 @@ import { GatewayController } from './gateway.controller';
 describe('GatewayController', () => {
   it('forwards health requests to an internal service', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      json: async () => ({ success: true, data: { service: 'quality-business-service' } }),
+      json: async () => ({ success: true, data: { service: 'quality-platform-service' } }),
     });
     const controller = new GatewayController(fetchMock as unknown as typeof fetch);
 
@@ -14,7 +14,7 @@ describe('GatewayController', () => {
       'http://127.0.0.1:3101/ai-quality-platform/health.do',
       expect.objectContaining({ method: 'GET' }),
     );
-    expect(response.data.service).toBe('quality-business-service');
+    expect(response.data.service).toBe('quality-platform-service');
   });
 
   it('forwards POST bodies to an internal service', async () => {
@@ -26,7 +26,7 @@ describe('GatewayController', () => {
     await controller.forward('case', 'case/list.do', { keyword: '信用' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:3102/ai-quality-platform/case/list.do',
+      'http://127.0.0.1:3101/ai-quality-platform/case/list.do',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ keyword: '信用' }),

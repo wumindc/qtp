@@ -102,14 +102,9 @@ Next.js Web
   v
 Quality Gateway
   |
-  +--> quality-business-service
-  +--> quality-case-service
-  +--> quality-plan-service
+  +--> quality-platform-service
   +--> quality-execution-service
-  +--> quality-ai-service
-  +--> quality-review-service
-  +--> quality-statistics-service
-  +--> quality-system-service
+  +--> packages/ai-model-adapter
 
 MySQL: 业务数据、用例、计划、结果、复核、报告
 Redis: 队列、任务状态、缓存、异步执行
@@ -121,15 +116,11 @@ Redis: 队列、任务状态、缓存、异步执行
 ai-quality-platform/
   apps/
     web/
-    business-service/
-    case-service/
-    plan-service/
+    quality-gateway/
+    quality-platform-service/
     execution-service/
-    ai-service/
-    review-service/
-    statistics-service/
-    system-service/
   packages/
+    ai-model-adapter/
     shared-types/
     shared-config/
     shared-database/
@@ -151,14 +142,8 @@ Monorepo 工具选择：
 | --- | --- | --- |
 | web | 3000 | Next.js 前端 |
 | quality-gateway | 8080 | 前端统一后端入口 |
-| quality-business-service | 3101 | 内部端口，AI 应用与业务配置 |
-| quality-case-service | 3102 | 内部端口，测试用例 |
-| quality-plan-service | 3103 | 内部端口，测试计划 |
-| quality-execution-service | 3104 | 内部端口，执行调度 |
-| quality-ai-service | 3105 | 内部端口，AI 评分与模型供应商 |
-| quality-review-service | 3106 | 内部端口，人工复核 |
-| quality-statistics-service | 3107 | 内部端口，统计报告 |
-| quality-system-service | 3108 | 内部端口，用户、权限、字典、日志 |
+| quality-platform-service | 3101 | 内部端口，应用、用例、计划、模型配置、复核、统计和系统能力 |
+| quality-execution-service | 3104 | 内部端口，执行、评估、计费和任务恢复 |
 | MySQL | 3306 | 本地数据库 |
 | Redis | 6379 | 本地队列与缓存 |
 
@@ -174,7 +159,7 @@ http://127.0.0.1:3000/ai-quality-platform
 
 前端不直连各后端服务端口，只访问统一 Gateway 入口。
 
-每个服务仍独立暴露内部 HTTP 端口，但这些端口只作为服务内部端口使用。前端统一访问 quality-gateway，由反代层根据路径转发到具体服务。这样既保留后端服务边界，也避免前端配置多个服务地址。
+后端只保留 gateway、platform、execution 这几个真实运行单元。前端统一访问 quality-gateway，由反代层根据公开 API 段转发到 platform 或 execution。这样既保留外部接口稳定性，也避免把普通业务模块拆成过多独立进程。
 
 所有前端可见接口仍统一挂载在：
 
@@ -187,27 +172,27 @@ http://127.0.0.1:8080/ai-quality-platform/api/**
 示例：
 
 ```text
-business-service: /ai-quality-platform/api/business/app/list.do
-case-service: /ai-quality-platform/api/case/case/create.do
-execution-service: /ai-quality-platform/api/execution/run/start.do
+platform-service: /ai-quality-platform/api/business/app/list.do
+platform-service: /ai-quality-platform/api/case/case/create.do
+execution-service: /ai-quality-platform/api/execution/execution/start.do
 ```
 
 代理转发规则示例：
 
 ```text
 /ai-quality-platform/api/business/*   -> http://127.0.0.1:3101/ai-quality-platform/*
-/ai-quality-platform/api/case/*       -> http://127.0.0.1:3102/ai-quality-platform/*
-/ai-quality-platform/api/plan/*       -> http://127.0.0.1:3103/ai-quality-platform/*
+/ai-quality-platform/api/case/*       -> http://127.0.0.1:3101/ai-quality-platform/*
+/ai-quality-platform/api/plan/*       -> http://127.0.0.1:3101/ai-quality-platform/*
 /ai-quality-platform/api/execution/*  -> http://127.0.0.1:3104/ai-quality-platform/*
-/ai-quality-platform/api/ai/*         -> http://127.0.0.1:3105/ai-quality-platform/*
-/ai-quality-platform/api/review/*     -> http://127.0.0.1:3106/ai-quality-platform/*
-/ai-quality-platform/api/statistics/* -> http://127.0.0.1:3107/ai-quality-platform/*
-/ai-quality-platform/api/system/*     -> http://127.0.0.1:3108/ai-quality-platform/*
+/ai-quality-platform/api/ai/*         -> http://127.0.0.1:3101/ai-quality-platform/*
+/ai-quality-platform/api/review/*     -> http://127.0.0.1:3101/ai-quality-platform/*
+/ai-quality-platform/api/statistics/* -> http://127.0.0.1:3101/ai-quality-platform/*
+/ai-quality-platform/api/system/*     -> http://127.0.0.1:3101/ai-quality-platform/*
 ```
 
-### 5.2 quality-business-service
+### 5.2 quality-platform-service
 
-负责 AI 应用和业务配置。
+负责常规业务管理能力，内部按模块划分，不再把同库 CRUD 模块拆成多个独立进程。
 
 核心能力：
 
@@ -218,13 +203,6 @@ execution-service: /ai-quality-platform/api/execution/run/start.do
 - 认证配置
 - 负责人配置
 - 应用状态管理
-
-### 5.3 quality-case-service
-
-负责测试用例体系。
-
-核心能力：
-
 - 用例分类管理
 - 用例新增、编辑、删除、启停
 - 预期行为配置
@@ -233,13 +211,6 @@ execution-service: /ai-quality-platform/api/execution/run/start.do
 - Excel 导入导出
 - 用例版本管理
 - 回归用例集管理
-
-### 5.4 quality-plan-service
-
-负责测试计划。
-
-核心能力：
-
 - 测试计划模板
 - 冒烟测试计划
 - 全量回归计划
@@ -247,8 +218,18 @@ execution-service: /ai-quality-platform/api/execution/run/start.do
 - RAG 专项计划
 - 上线前验收计划
 - 按应用、分类、标签、风险等级筛选用例
+- 模型供应商配置
+- 评分模型配置
+- 模型连接测试
+- 人工复核列表
+- 人工判定
+- 工作台统计
+- 应用质量概览
+- 报告生成
+- 报告导出
+- 用户登录和基础系统配置
 
-### 5.5 quality-execution-service
+### 5.3 quality-execution-service
 
 负责执行调度和结果采集，是平台核心服务之一。
 
@@ -256,7 +237,6 @@ execution-service: /ai-quality-platform/api/execution/run/start.do
 
 - 创建执行批次
 - 拆分执行任务
-- 将任务投递到 Redis 队列
 - 调用被测 AI 应用层接口
 - 记录请求、响应、耗时、错误
 - 维护执行状态
@@ -264,30 +244,24 @@ execution-service: /ai-quality-platform/api/execution/run/start.do
 - 支持取消执行
 - 根据应用适配器配置完成请求参数映射
 - 根据响应映射规则抽取最终答案、引用来源、trace 信息和错误信息
-
-执行服务不直接做复杂语义评分，只负责执行链路和原始结果沉淀。
+- 按 `APP_CALLING -> EVALUATING -> COSTING` 推进持久化执行阶段
+- 服务启动时扫描 `RUNNING` 批次并恢复未完成任务
+- 记录评估模型调用审计、usage 和费用
 
 由于被测 AI 应用层接口无法保证统一输入输出格式，执行服务不能硬编码单一调用协议。平台需要为每个 AI 应用维护“接口适配器配置”，包括请求构造、字段映射、响应抽取和错误识别规则。
 
-### 5.6 quality-ai-service
+### 5.4 packages/ai-model-adapter
 
-负责 AI 评分和智能评估。
+负责沉淀 AI 模型调用标准，第一阶段作为共享 package 被 platform 和 execution 复用，不独立部署。
 
 核心能力：
 
-- 规则评分
-- LLM Judge
-- 分类评分模板
-- 敏感风险评分
-- 严谨问答评分
-- RAG 评分接口预留
-- Promptfoo / DeepEval / Ragas 集成预留
-- 评分结果解释
-- 模型供应商配置
-- 评分模型配置
-- 评分调用日志
-
-AI 服务通过队列异步处理评分任务，避免长耗时评分阻塞执行链路。
+- OpenAI compatible 请求体构造
+- Qwen compatible 请求体差异处理
+- 评估调用默认关闭 thinking
+- usage 字段归一
+- 错误码和原始响应保留
+- 后续成本归一和供应商治理能力预留
 
 LLM Judge 不依赖被测 AI 应用层，采用平台内单独配置的模型供应商。供应商配置由系统管理员维护，可支持不同环境配置不同模型。
 
@@ -308,50 +282,9 @@ LLM Judge 不依赖被测 AI 应用层，采用平台内单独配置的模型供
 - 是否启用
 - 连接测试
 
-### 5.7 quality-review-service
-
-负责人工复核闭环。
-
-核心能力：
-
-- 待复核列表
-- 人工判定
-- 问题类型标记
-- 需业务确认
-- 需开发排查
-- 加入回归用例
-- 复核记录追踪
-
-### 5.8 quality-statistics-service
-
-负责统计和报告。
-
-核心能力：
-
-- 工作台统计
-- 应用质量概览
-- 分类通过率
-- 平均分趋势
-- 高风险失败统计
-- 报告生成
-- 报告导出
-
-### 5.9 quality-system-service
-
-负责系统基础能力。
-
-核心能力：
-
-- 用户管理
-- 角色管理
-- 菜单管理
-- 权限控制
-- 字典管理
-- 操作日志
-
 登录方式采用本地账号密码。第一阶段先做简单版本，不强制验证码、密码复杂度和首次登录改密，但数据模型和系统设置中预留后续增强空间。
 
-### 5.10 接口适配器能力
+### 5.5 接口适配器能力
 
 由于被测 AI 应用接口不能统一输入输出格式，平台需要内置接口适配器能力。
 
@@ -451,7 +384,7 @@ LLM Judge 不依赖被测 AI 应用层，采用平台内单独配置的模型供
 - OPTIONS 预检请求统一处理
 - CORS 配置放入共享配置包，避免各服务分散维护
 
-每个后端服务必须提供健康检查接口：
+每个真实运行单元必须提供健康检查接口：
 
 ```text
 GET /ai-quality-platform/health.do
@@ -465,7 +398,7 @@ GET /ai-quality-platform/health.do
   "success": true,
   "message": "ok",
   "data": {
-    "service": "quality-case-service",
+    "service": "quality-platform-service",
     "status": "UP",
     "database": "UP",
     "redis": "UP",
@@ -474,12 +407,12 @@ GET /ai-quality-platform/health.do
 }
 ```
 
-前端增加“服务健康检查”页面，用于展示各服务状态、数据库状态、Redis 状态和最后检测时间，方便正式部署和联调排查。
+前端增加“服务健康检查”页面，用于展示 gateway、platform、execution 等关键运行单元状态、数据库状态、Redis 状态和最后检测时间，方便正式部署和联调排查。
 
 前端健康检查页访问代理后的地址，例如：
 
 ```text
-http://127.0.0.1:8080/ai-quality-platform/api/business/health.do
+http://127.0.0.1:8080/ai-quality-platform/api/system/health.do
 ```
 
 ## 6. 前端页面规划
@@ -624,14 +557,13 @@ http://127.0.0.1:8080/ai-quality-platform/api/business/health.do
   -> 创建执行批次
   -> 查询计划命中的用例
   -> 生成执行任务
-  -> 投递 Redis 队列
+  -> execution-service 持久化任务并推进阶段
   -> execution-service 调用被测应用接口
   -> 保存原始请求响应
-  -> 投递 AI 评分任务
-  -> ai-service 执行规则评分和 LLM Judge
+  -> execution-service 通过 ai-model-adapter 调用评估模型
   -> 汇总最终状态
   -> 生成待复核任务
-  -> statistics-service 汇总批次报告
+  -> platform-service 查询统计与报告数据
 ```
 
 ## 9. 核心数据模型
@@ -858,19 +790,13 @@ POST /ai-quality-platform/report/export.do
 ```text
 ai-quality-web
 ai-quality-gateway
-quality-business-service
-quality-case-service
-quality-plan-service
+quality-platform-service
 quality-execution-service
-quality-ai-service
-quality-review-service
-quality-statistics-service
-quality-system-service
 mysql
 redis
 ```
 
-本地开发允许按需启动服务，但每个服务都要具备独立构建和独立部署能力。
+本地开发允许按需启动服务，但真实运行单元需具备独立构建和独立部署能力；普通业务模块作为 platform 内部模块维护。
 
 ## 12. 第一阶段建设范围
 
@@ -935,10 +861,10 @@ redis
    - 新增、编辑、删除、启停
    - 按应用、分类、标签、风险等级筛选用例
 
-7. 执行批次与 Redis 队列
+7. 执行批次与执行 Worker
    - 创建执行批次
    - 根据计划生成任务
-   - Redis 队列执行
+   - 执行服务持久化任务并推进 APP_CALLING / EVALUATING / COSTING 阶段
    - 执行状态维护
    - 取消执行
    - 重跑失败用例
@@ -980,12 +906,13 @@ redis
     - 整改建议
     - 报告详情页
 
-13. Docker 本地部署脚本
+13. Docker 与 CI 部署脚本
     - 前端镜像
-    - 后端服务镜像
+    - gateway/platform/execution 后端服务镜像
     - MySQL 配置
     - Redis 配置
     - docker compose 本地启动
+    - CI 执行拓扑检查、类型检查、测试和 Web 构建
 
 14. 演示种子数据
     - 内置 1 个演示 AI 应用
@@ -1000,7 +927,7 @@ redis
 
 - 多租户
 - 复杂审批流
-- 复杂 CI/CD 集成
+- 复杂发布审批和多环境发布编排
 - 多模型横向对比
 - Promptfoo / DeepEval / Ragas 深度集成
 - Langfuse 深度集成
@@ -1016,7 +943,7 @@ redis
 7. 已确认模型供应商第一批支持 OpenAI 兼容接口、通义千问、DeepSeek。
 8. 已确认接口适配器第一版需要支持流式响应。
 9. 已确认需要提供统一 Gateway 入口、统一处理跨域，并提供服务健康检查页面。
-10. 已确认本地端口由 Codex 统一规划，前端 3000，统一 Gateway 8080，各后端服务内部使用 3101-3108。
+10. 已确认本地端口由 Codex 统一规划，前端 3000，统一 Gateway 8080，platform 服务 3101，execution 服务 3104。
 11. 已确认 Monorepo 使用 pnpm workspace。
 12. 已确认第一阶段按功能逐个完整开发，不做半成品模块。
 13. 已确认第一版接入 Excel 导入导出。

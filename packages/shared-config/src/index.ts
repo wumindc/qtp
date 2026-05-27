@@ -3,6 +3,12 @@ export const CONTEXT_PATH = 'ai-quality-platform';
 export type ServiceKey =
   | 'web'
   | 'gateway'
+  | 'platform'
+  | 'execution';
+
+export type DeployableServiceKey = ServiceKey;
+
+export type PublicApiSegment =
   | 'business'
   | 'case'
   | 'plan'
@@ -12,24 +18,24 @@ export type ServiceKey =
   | 'statistics'
   | 'system';
 
-export type BackendServiceKey = Exclude<ServiceKey, 'web' | 'gateway'>;
+export type BackendServiceKey = PublicApiSegment;
 
 export const GATEWAY_PORT = 8080;
 
 const SERVICE_PORTS: Record<ServiceKey, number> = {
   web: 3000,
   gateway: 8080,
-  business: 3101,
-  case: 3102,
-  plan: 3103,
+  platform: 3101,
   execution: 3104,
-  ai: 3105,
-  review: 3106,
-  statistics: 3107,
-  system: 3108,
 };
 
-const PUBLIC_SERVICE_SEGMENTS: Record<BackendServiceKey, string> = {
+const SERVICE_HOST_ENV: Partial<Record<DeployableServiceKey, string>> = {
+  gateway: 'GATEWAY_SERVICE_HOST',
+  platform: 'PLATFORM_SERVICE_HOST',
+  execution: 'EXECUTION_SERVICE_HOST',
+};
+
+const PUBLIC_SERVICE_SEGMENTS: Record<PublicApiSegment, string> = {
   business: 'business',
   case: 'case',
   plan: 'plan',
@@ -38,6 +44,28 @@ const PUBLIC_SERVICE_SEGMENTS: Record<BackendServiceKey, string> = {
   review: 'review',
   statistics: 'statistics',
   system: 'system',
+};
+
+const PUBLIC_API_SEGMENTS = [
+  'business',
+  'case',
+  'plan',
+  'execution',
+  'ai',
+  'review',
+  'statistics',
+  'system',
+] as const satisfies ReadonlyArray<PublicApiSegment>;
+
+const API_SEGMENT_TO_DEPLOYABLE_SERVICE: Record<PublicApiSegment, DeployableServiceKey> = {
+  business: 'platform',
+  case: 'platform',
+  plan: 'platform',
+  execution: 'execution',
+  ai: 'platform',
+  review: 'platform',
+  statistics: 'platform',
+  system: 'platform',
 };
 
 type BrowserLocationLike = {
@@ -57,8 +85,27 @@ export function getServicePort(service: ServiceKey): number {
  * @author codex
  * Builds the internal service base URL used by local service processes.
  */
-export function getLocalServiceUrl(service: BackendServiceKey): string {
-  return `http://127.0.0.1:${getServicePort(service)}`;
+export function getLocalServiceUrl(service: DeployableServiceKey): string {
+  return `http://${getLocalServiceHost(service)}:${getServicePort(service)}`;
+}
+
+/**
+ * @author codex
+ * Resolves a public API segment to the runtime service that currently owns it.
+ */
+export function getDeployableServiceForApiSegment(segment: PublicApiSegment): DeployableServiceKey {
+  return API_SEGMENT_TO_DEPLOYABLE_SERVICE[segment];
+}
+
+/**
+ * @author codex
+ * Exposes the public API routing table for diagnostics and health pages.
+ */
+export function getPublicApiRouteMappings(): Array<{ segment: PublicApiSegment; targetService: DeployableServiceKey }> {
+  return PUBLIC_API_SEGMENTS.map((segment) => ({
+    segment,
+    targetService: getDeployableServiceForApiSegment(segment),
+  }));
 }
 
 /**
@@ -70,6 +117,13 @@ function getPublicGatewayOrigin(): string {
   const hostname = location?.hostname || '127.0.0.1';
   const protocol = location?.protocol === 'https:' ? 'https:' : 'http:';
   return `${protocol}//${hostname}:${GATEWAY_PORT}`;
+}
+
+function getLocalServiceHost(service: DeployableServiceKey): string {
+  const envName = SERVICE_HOST_ENV[service];
+  if (!envName) return '127.0.0.1';
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  return env?.[envName] || '127.0.0.1';
 }
 
 /**
@@ -85,7 +139,7 @@ export function getGatewayPublicUrl(path: string): string {
  * @author codex
  * Builds the public URL that frontend code should call through the gateway.
  */
-export function getGatewayApiUrl(service: BackendServiceKey, path: string): string {
+export function getGatewayApiUrl(service: PublicApiSegment, path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
 
   return getGatewayPublicUrl(`/${CONTEXT_PATH}/api/${PUBLIC_SERVICE_SEGMENTS[service]}${normalizedPath}`);

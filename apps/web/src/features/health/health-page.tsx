@@ -2,6 +2,7 @@
 /**
  * 服务健康检查页面
  * @author Antigravity/Gemini
+ * @author codex
  */
 import { Activity, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -29,8 +30,20 @@ function StatusIcon({ status }: { status: HealthStatus }) {
   return <Activity className={cn('h-5 w-5', status === 'CHECKING' && 'animate-pulse text-primary')} />;
 }
 
+function dependencyLine(result: HealthResult) {
+  const database = result.dependencies?.database?.status;
+  return database ? `数据库：${database}` : '依赖：-';
+}
+
+function workerLine(result: HealthResult) {
+  const runningRunCount = result.worker?.runningRunCount;
+  const activeRunCount = result.worker?.activeRunCount;
+  if (runningRunCount === undefined && activeRunCount === undefined) return 'Worker：-';
+  return `Worker：运行 ${runningRunCount ?? 0}，活跃 ${activeRunCount ?? 0}`;
+}
+
 /* ── 单行卡片 ── */
-function HealthRow({ name, url, result }: { name: string; url: string; result: HealthResult }) {
+function HealthRow({ name, serviceKey, url, result }: { name: string; serviceKey: string; url: string; result: HealthResult }) {
   return (
     <div className="flex items-center gap-4 rounded-lg border bg-card px-5 py-4 transition-colors hover:bg-accent/20">
       {/* 图标 + 名称 */}
@@ -43,6 +56,12 @@ function HealthRow({ name, url, result }: { name: string; url: string; result: H
       {/* 消息 */}
       <div className="hidden md:block min-w-0 max-w-[280px] text-right shrink-0">
         <p className="text-xs text-muted-foreground truncate">{result.message ?? '等待触发检查'}</p>
+        {serviceKey !== 'gateway' ? (
+          <p className="text-xs text-muted-foreground truncate">{dependencyLine(result)}</p>
+        ) : null}
+        {serviceKey === 'execution' ? (
+          <p className="text-xs text-muted-foreground truncate">{workerLine(result)}</p>
+        ) : null}
       </div>
 
       {/* 耗时 */}
@@ -75,7 +94,15 @@ function SummaryCard({ label, value, className }: { label: string; value: number
 
 /* ══ 主页面 ══ */
 export function HealthPage() {
-  const { targets, results, summary, lastCheckedAt, checking, checkAll } = useHealthCheck();
+  const { targets, routeMappings, results, summary, lastCheckedAt, checking, checkAll } = useHealthCheck();
+  const platformSegments = routeMappings
+    .filter((route) => route.targetService === 'platform')
+    .map((route) => route.segment)
+    .join(' / ');
+  const executionSegments = routeMappings
+    .filter((route) => route.targetService === 'execution')
+    .map((route) => route.segment)
+    .join(' / ');
 
   return (
     <div className="space-y-6">
@@ -112,12 +139,30 @@ export function HealthPage() {
         <SummaryCard label="待检测" value={summary.unknown} />
       </div>
 
+      <div className="rounded-lg border bg-card px-5 py-4">
+        <div className="flex items-center gap-2">
+          <Activity className="h-5 w-5 text-muted-foreground" />
+          <p className="text-sm font-semibold text-foreground">公开 API 路由</p>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">quality-platform-service</p>
+            <p className="text-sm font-medium truncate">{platformSegments}</p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">quality-execution-service</p>
+            <p className="text-sm font-medium truncate">{executionSegments}</p>
+          </div>
+        </div>
+      </div>
+
       {/* 服务列表 */}
       <div className="space-y-2">
         {targets.map((t) => (
           <HealthRow
             key={t.key}
             name={t.name}
+            serviceKey={t.key}
             url={t.url}
             result={results[t.key] ?? { status: 'UNKNOWN' }}
           />
