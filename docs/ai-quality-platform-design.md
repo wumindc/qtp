@@ -393,9 +393,9 @@ LLM Judge 不依赖被测 AI 应用层，采用平台内单独配置的模型供
     }
   },
   "response": {
-    "answerPath": "$.data.content",
-    "traceIdPath": "$.data.traceId",
-    "sourcesPath": "$.data.sources",
+    "answerPath": "$.content",
+    "traceIdPath": "$.traceId",
+    "sourcesPath": "$.sources",
     "successExpression": "$.code == 200"
   }
 }

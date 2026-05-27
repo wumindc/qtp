@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import {
   CaseService,
+  type CaseCsvImportRequest,
   type CaseCategoryQuery,
   type CaseQuery,
   type CreateCaseCategoryRequest,
@@ -106,7 +107,7 @@ export class CaseController {
   @Post('preset/unsubscribe-category.do')
   async unsubscribePresetCategory(@Body() request: { appCode: string; categoryId: string }) {
     await this.caseService.unsubscribePresetCategory(request.appCode, request.categoryId);
-    return ok();
+    return ok(null);
   }
 
   @Post('preset/subscriptions.do')
@@ -137,6 +138,11 @@ export class CaseController {
   @Post('import.do')
   async importRows(@Body() request: { rows: CreateCaseRequest[] }) {
     return ok(await this.caseService.importRows(request.rows ?? []));
+  }
+
+  @Post('import-csv.do')
+  async importCsvRows(@Body() request: CaseCsvImportRequest) {
+    return ok(await this.caseService.importCsvRows({ ...request, rows: request.rows ?? [] }));
   }
 
   /**

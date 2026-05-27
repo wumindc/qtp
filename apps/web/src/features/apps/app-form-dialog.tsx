@@ -75,9 +75,10 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
         url: '',
         headers: '{\n  "Content-Type": "application/json"\n}',
         body: '{\n  "messages": [{"role": "user", "content": "{{case.query}}"}]\n}',
-        answerPath: '$.data.content',
+        answerPath: '$.content',
         successExpr: '$.code == 0',
         streamEnabled: false,
+        appConcurrency: 3,
       },
     });
   };

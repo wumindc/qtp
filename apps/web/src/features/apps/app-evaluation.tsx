@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BrainCircuit, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +26,7 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
   const [modelId, setModelId] = useState('');
   const [promptOverrideEnabled, setPromptOverrideEnabled] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
+  const [evaluationConcurrency, setEvaluationConcurrency] = useState(3);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -40,6 +42,7 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
       setModelId(configData.modelId || modelData[0]?.id || '');
       setPromptOverrideEnabled(configData.promptOverrideEnabled);
       setCustomPrompt(configData.customPrompt);
+      setEvaluationConcurrency(configData.evaluationConcurrency || 3);
     } catch {
       toast.error('加载评估配置失败');
     } finally {
@@ -67,10 +70,12 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
         modelId,
         promptOverrideEnabled,
         customPrompt: customPrompt.trim(),
+        evaluationConcurrency,
       });
       setConfig(saved);
       setPromptOverrideEnabled(saved.promptOverrideEnabled);
       setCustomPrompt(saved.customPrompt);
+      setEvaluationConcurrency(saved.evaluationConcurrency || 3);
       toast.success('评估配置已保存');
     } catch {
       toast.error('保存评估配置失败');
@@ -148,6 +153,21 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
 
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-muted-foreground">
             没有保存评估模型、模型停用或供应商停用时，执行计划不会启动；若执行过程中评估调用失败，只标记当前用例失败。
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="evaluation-concurrency">评估调用并发数</Label>
+            <Input
+              id="evaluation-concurrency"
+              type="number"
+              min={1}
+              max={10}
+              value={evaluationConcurrency}
+              onChange={(event) => setEvaluationConcurrency(Math.max(1, Math.min(10, Number(event.target.value || 3))))}
+            />
+            <p className="text-xs text-muted-foreground">
+              接口阶段全部结束后，评估阶段按该并发数调用裁判模型。
+            </p>
           </div>
         </section>
 

@@ -43,6 +43,7 @@ function mapApp(item: GatewayRow): App {
       answerPath: toStringField(protocol.answerPath ?? responseConfig.answerPath),
       successExpr: toStringField(protocol.successExpr ?? responseConfig.successExpression),
       streamEnabled: Boolean(protocol.streamEnabled ?? item.streamEnabled),
+      appConcurrency: Number(protocol.appConcurrency ?? item.appConcurrency ?? 3),
     },
     stats: { caseCount, planCount, lastRunAt, lastPassRate },
     icon: normalizeAppIconConfig(item.icon ?? uiConfig.icon),
@@ -100,6 +101,7 @@ export async function loadAppProtocol(appCode: string): Promise<AppProtocol> {
     answerPath: toStringField(protocol.answerPath, '$.data.answer'),
     successExpr: toStringField(protocol.successExpression, '$.code == 0'),
     streamEnabled: Boolean(protocol.streamEnabled),
+    appConcurrency: Number(protocol.appConcurrency ?? 3),
   };
 }
 
@@ -112,6 +114,7 @@ export async function saveAppProtocol(appCode: string, protocol: AppProtocol) {
     answerPath: protocol.answerPath,
     successExpression: protocol.successExpr,
     streamEnabled: protocol.streamEnabled,
+    appConcurrency: protocol.appConcurrency,
   };
   return postGateway('business', '/app/protocol/save.do', { appCode, data });
 }

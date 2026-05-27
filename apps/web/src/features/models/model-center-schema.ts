@@ -55,6 +55,9 @@ export function buildModelForm(providerCode = '', providerType: ProviderType = '
     toolCalling: providerType === 'DEEPSEEK' ? 'false' : 'true',
     thinkingEnabled: providerType === 'DEEPSEEK' ? 'true' : 'false',
     dimensions: modelType === 'EMBEDDING' ? '1024' : '',
+    normalInputPrice: '',
+    cachedInputPrice: '',
+    outputPrice: '',
   };
 }
 
@@ -104,6 +107,13 @@ function toNumber(value: string, fallback?: number) {
   return Number.isFinite(parsed) && value.trim() !== '' ? parsed : fallback;
 }
 
+function toOptionalNonNegativeNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 function toBoolean(value: string) {
   return value === 'true';
 }
@@ -139,6 +149,13 @@ export function buildModelPayload(modelForm: ModelFormState, provider: ModelProv
       : {
           contextWindow: parseTokenCount(modelForm.contextWindow, 128000),
           maxOutputTokens: parseTokenCount(modelForm.maxOutputTokens, 4096),
+          pricing: {
+            currency: 'CNY' as const,
+            unit: 'PER_MILLION_TOKENS' as const,
+            normalInputPrice: toOptionalNonNegativeNumber(modelForm.normalInputPrice),
+            cachedInputPrice: toOptionalNonNegativeNumber(modelForm.cachedInputPrice),
+            outputPrice: toOptionalNonNegativeNumber(modelForm.outputPrice),
+          },
         };
   return {
     modelName: modelForm.name.trim(),

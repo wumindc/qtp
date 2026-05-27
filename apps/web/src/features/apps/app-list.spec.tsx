@@ -34,7 +34,7 @@ vi.mock('./app-form-dialog', () => ({
           url: '',
           headers: '{}',
           body: '{}',
-          answerPath: '$.data.content',
+          answerPath: '$.content',
           successExpr: '$.code == 0',
           streamEnabled: false,
         },
@@ -76,6 +76,7 @@ describe('AppListPage', () => {
           answerPath: '$.content',
           successExpr: '$.code == 0',
           streamEnabled: false,
+          appConcurrency: 3,
         },
         stats: {
           caseCount: 5,

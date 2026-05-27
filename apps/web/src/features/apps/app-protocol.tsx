@@ -266,6 +266,26 @@ export function AppProtocolPage({ appCode }: { appCode: string }) {
             </div>
           </div>
 
+          <div className="grid gap-3 md:grid-cols-[12rem_minmax(0,1fr)]">
+            <div className="space-y-2">
+              <Label htmlFor="app-concurrency">接口调用并发数</Label>
+              <Input
+                id="app-concurrency"
+                type="number"
+                min={1}
+                max={10}
+                value={protocol.appConcurrency}
+                onChange={(e) => setProtocol({
+                  ...protocol,
+                  appConcurrency: Math.max(1, Math.min(10, Number(e.target.value || 3))),
+                })}
+              />
+            </div>
+            <div className="flex items-end text-xs text-muted-foreground pb-2">
+              执行计划批量调用被测应用接口时使用，单次发送测试不受影响。
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label>
               请求头配置 (JSON 格式)

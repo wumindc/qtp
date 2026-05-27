@@ -4,8 +4,8 @@
  * @author Antigravity/Gemini
  * @author codex
  */
-import { useMemo, useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Search, FileText, FolderTree, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Trash2, Pencil } from 'lucide-react';
+import { useMemo, useState, useEffect, useCallback, useRef, type ChangeEvent } from 'react';
+import { Plus, RefreshCw, Search, FileText, FolderTree, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Trash2, Pencil, Upload, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,8 +24,10 @@ import {
   deleteCategory,
   deleteCase,
   changeCategoryStatus,
-  changeCaseStatus
+  changeCaseStatus,
+  importCaseCsvRows
 } from './api/case-api';
+import { buildCaseCsvTemplate, buildCaseExportFilename, downloadCaseCsv, formatCaseCsv, parseCaseCsv, readCaseCsvFile } from './case-csv';
 import type { PresetCase, PresetCategory } from './types';
 
 /* ══ 主组件 ══ */
@@ -40,6 +42,7 @@ export function CasesPage() {
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [editingCase, setEditingCase] = useState<PresetCase | null>(null);
   const [editingCategory, setEditingCategory] = useState<PresetCategory | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   /* ── 计算 ── */
   const categoryCounts = useMemo(() => {
@@ -65,6 +68,15 @@ export function CasesPage() {
       [c.input, c.expected, categoryNameById.get(c.categoryId) ?? c.categoryId].join(' ').toLowerCase().includes(kw),
     );
   }, [categoryCases, categoryNameById, query]);
+
+  const csvExportRows = useMemo(
+    () => visibleCases.map((c) => ({
+      categoryName: categoryNameById.get(c.categoryId) ?? '未归类',
+      query: c.input,
+      expectedBehavior: c.expected,
+    })),
+    [categoryNameById, visibleCases],
+  );
 
   /* ── 刷新 ── */
   const refresh = useCallback(async (silent = false) => {
@@ -200,6 +212,33 @@ export function CasesPage() {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    downloadCaseCsv('预置用例导入模板.csv', buildCaseCsvTemplate());
+  };
+
+  const handleExportCases = () => {
+    downloadCaseCsv(buildCaseExportFilename('预置用例导出'), formatCaseCsv(csvExportRows));
+  };
+
+  const handleImportCsv = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const rows = parseCaseCsv(await readCaseCsvFile(file));
+      if (rows.length === 0) {
+        toast.error('CSV 中没有可导入的用例');
+        return;
+      }
+      await importCaseCsvRows('SYSTEM_PRESET', rows);
+      toast.success(`导入完成，共 ${rows.length} 条`);
+      await refresh(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* 头部 */}
@@ -210,7 +249,27 @@ export function CasesPage() {
             全局维护平台可复用的测试分类和预置用例，应用内只能引用。
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+          <input
+            ref={importInputRef}
+            aria-label="导入预置用例 CSV"
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(event) => void handleImportCsv(event)}
+          />
+          <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+            <Download className="h-4 w-4" />
+            下载模板
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => importInputRef.current?.click()}>
+            <Upload className="h-4 w-4" />
+            导入 CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportCases} disabled={activeTab !== 'cases' || csvExportRows.length === 0}>
+            <Download className="h-4 w-4" />
+            导出 CSV
+          </Button>
           <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={refreshing}>
             <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
             {refreshing ? '刷新中' : '刷新'}

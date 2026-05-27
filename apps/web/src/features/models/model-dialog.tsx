@@ -60,6 +60,13 @@ export function ModelDialog({ open, onOpenChange, providers, initialForm, onSave
     if (!form.name.trim()) { setError('请填写模型名称'); return; }
     if (!form.modelId.trim()) { setError('请填写 Model ID'); return; }
     if (!selectedProvider) { setError('请选择供应商'); return; }
+    const priceValues = [form.normalInputPrice, form.cachedInputPrice, form.outputPrice]
+      .filter((value) => value.trim() !== '')
+      .map(Number);
+    if (priceValues.some((value) => !Number.isFinite(value) || value < 0)) {
+      setError('计费价格必须为空或非负数');
+      return;
+    }
     setSaving(true);
     try {
       await onSave(form, selectedProvider);
@@ -189,6 +196,53 @@ export function ModelDialog({ open, onOpenChange, providers, initialForm, onSave
             <div className="space-y-1.5">
               <Label>向量维度</Label>
               <Input placeholder="1024" value={form.dimensions} onChange={(e) => setForm({ ...form, dimensions: e.target.value })} />
+            </div>
+          )}
+
+          {!isEmbedding && (
+            <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">计费配置</p>
+                <p className="text-xs text-muted-foreground mt-1">单位固定为元 / 百万 tokens，可留空后续补充。</p>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="normal-input-price">普通输入</Label>
+                  <Input
+                    id="normal-input-price"
+                    type="number"
+                    min={0}
+                    step="0.000001"
+                    value={form.normalInputPrice}
+                    onChange={(e) => setForm({ ...form, normalInputPrice: e.target.value })}
+                    placeholder="如 0.8"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="cached-input-price">缓存命中输入</Label>
+                  <Input
+                    id="cached-input-price"
+                    type="number"
+                    min={0}
+                    step="0.000001"
+                    value={form.cachedInputPrice}
+                    onChange={(e) => setForm({ ...form, cachedInputPrice: e.target.value })}
+                    placeholder="如 0.2"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="output-price">输出</Label>
+                  <Input
+                    id="output-price"
+                    type="number"
+                    min={0}
+                    step="0.000001"
+                    value={form.outputPrice}
+                    onChange={(e) => setForm({ ...form, outputPrice: e.target.value })}
+                    placeholder="如 2.0"
+                  />
+                </div>
+              </div>
             </div>
           )}
 

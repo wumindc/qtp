@@ -14,6 +14,7 @@ export interface AppEvaluationConfig {
   systemPrompt: string;
   customPrompt: string;
   effectivePrompt: string;
+  evaluationConcurrency: number;
 }
 
 export interface EvaluationModelOption {
@@ -28,6 +29,7 @@ export interface SaveEvaluationConfigPayload {
   modelId: string;
   promptOverrideEnabled: boolean;
   customPrompt: string;
+  evaluationConcurrency: number;
 }
 
 function toStringField(value: unknown, fallback = '') {

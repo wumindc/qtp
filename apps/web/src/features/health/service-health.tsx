@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { getGatewayApiUrl, CONTEXT_PATH, GATEWAY_PORT } from '@ai-quality-platform/shared-config';
+import { getGatewayApiUrl, getGatewayPublicUrl } from '@ai-quality-platform/shared-config';
 import { Activity, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 
 export const HEALTH_SERVICES = [
@@ -26,7 +26,7 @@ interface HealthResult {
 const UNKNOWN_RESULT: HealthResult = { status: 'UNKNOWN' };
 
 function getGatewayHealthUrl() {
-  return `http://127.0.0.1:${GATEWAY_PORT}/${CONTEXT_PATH}/health.do`;
+  return getGatewayPublicUrl('/ai-quality-platform/health.do');
 }
 
 function getStatusLabel(status: HealthStatus) {

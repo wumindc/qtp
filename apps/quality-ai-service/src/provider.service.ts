@@ -64,6 +64,16 @@ export interface ModelLimits {
   embeddingDimensions?: number;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  pricing?: ModelPricing;
+}
+
+export interface ModelPricing {
+  currency?: 'CNY';
+  unit?: 'PER_MILLION_TOKENS';
+  normalInputPrice?: number | null;
+  cachedInputPrice?: number | null;
+  outputPrice?: number | null;
+  cacheWriteInputPrice?: number | null;
 }
 
 export interface ModelRecord {
@@ -695,11 +705,26 @@ export class ProviderService {
       return {
         maxInputTokens: this.optionalNumber(input.maxInputTokens) ?? 8192,
         embeddingDimensions: this.optionalNumber(input.embeddingDimensions) ?? this.optionalNumber(parameters.dimensions),
+        pricing: this.normalizePricing(input.pricing),
       };
     }
     return {
       contextWindow: this.optionalNumber(input.contextWindow) ?? 128000,
       maxOutputTokens: this.optionalNumber(input.maxOutputTokens) ?? this.optionalNumber(parameters.maxOutputTokens) ?? 4096,
+      pricing: this.normalizePricing(input.pricing),
+    };
+  }
+
+  private normalizePricing(input: unknown): ModelPricing | undefined {
+    const pricing = this.asRecord(input);
+    if (Object.keys(pricing).length === 0) return undefined;
+    return {
+      currency: 'CNY',
+      unit: 'PER_MILLION_TOKENS',
+      normalInputPrice: this.optionalPrice(pricing.normalInputPrice),
+      cachedInputPrice: this.optionalPrice(pricing.cachedInputPrice),
+      outputPrice: this.optionalPrice(pricing.outputPrice),
+      cacheWriteInputPrice: this.optionalPrice(pricing.cacheWriteInputPrice),
     };
   }
 
@@ -716,6 +741,18 @@ export class ProviderService {
   private optionalNumber(value: unknown) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && value !== '' && value !== null ? parsed : undefined;
+  }
+
+  private optionalPrice(value: unknown) {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    if (parsed < 0) throw new BadRequestException('模型价格不能为负数');
+    return parsed;
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   }
 
   private buildEndpoint(baseUrl: string, path: string) {

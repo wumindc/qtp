@@ -40,6 +40,7 @@ describe('AppEvaluationPage', () => {
       systemPrompt: '你是 AI 应用质量评估裁判。',
       customPrompt: '',
       effectivePrompt: '你是 AI 应用质量评估裁判。',
+      evaluationConcurrency: 3,
     });
     loadModelsMock.mockResolvedValue([
       {
@@ -58,6 +59,7 @@ describe('AppEvaluationPage', () => {
       systemPrompt: '你是 AI 应用质量评估裁判。',
       customPrompt: '请严格评估回答是否满足期望。',
       effectivePrompt: '请严格评估回答是否满足期望。',
+      evaluationConcurrency: 3,
     });
 
     render(<AppEvaluationPage appCode="c" />);
@@ -76,6 +78,7 @@ describe('AppEvaluationPage', () => {
         modelId: '4',
         promptOverrideEnabled: true,
         customPrompt: '请严格评估回答是否满足期望。',
+        evaluationConcurrency: 3,
       }),
     );
   });

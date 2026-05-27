@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { CONTEXT_PATH, getGatewayApiUrl, getServicePort } from './index';
 
 describe('shared config', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'location');
+  });
+
   it('uses the ai-quality-platform context path', () => {
     expect(CONTEXT_PATH).toBe('ai-quality-platform');
   });
@@ -19,6 +23,17 @@ describe('shared config', () => {
     );
     expect(getGatewayApiUrl('system', '/health.do')).toBe(
       'http://127.0.0.1:8080/ai-quality-platform/api/system/health.do',
+    );
+  });
+
+  it('uses the current browser hostname for public gateway URLs', () => {
+    Object.defineProperty(globalThis, 'location', {
+      value: { hostname: '192.168.11.107', protocol: 'http:' },
+      configurable: true,
+    });
+
+    expect(getGatewayApiUrl('ai', '/provider/list.do')).toBe(
+      'http://192.168.11.107:8080/ai-quality-platform/api/ai/provider/list.do',
     );
   });
 });

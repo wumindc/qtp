@@ -48,7 +48,20 @@ export function ModelsPanel({ models, providers, onSave, onToggleStatus, onDelet
     toolCalling: String(m.capabilities.toolCalling ?? m.parameters.toolCalling ?? false),
     thinkingEnabled: String(m.capabilities.reasoning ?? m.parameters.thinkingEnabled ?? false),
     dimensions: String(m.limits.embeddingDimensions ?? m.parameters.dimensions ?? ''),
+    normalInputPrice: String(m.limits.pricing?.normalInputPrice ?? ''),
+    cachedInputPrice: String(m.limits.pricing?.cachedInputPrice ?? ''),
+    outputPrice: String(m.limits.pricing?.outputPrice ?? ''),
   });
+
+  const formatPricingSummary = (m: ModelCenterRecord) => {
+    const pricing = m.limits.pricing;
+    if (!pricing || (
+      pricing.normalInputPrice == null &&
+      pricing.cachedInputPrice == null &&
+      pricing.outputPrice == null
+    )) return '未配置价格';
+    return `入 ${pricing.normalInputPrice ?? '-'} · 缓 ${pricing.cachedInputPrice ?? '-'} · 出 ${pricing.outputPrice ?? '-'}`;
+  };
 
   return (
     <div className="space-y-4">
@@ -112,6 +125,13 @@ export function ModelsPanel({ models, providers, onSave, onToggleStatus, onDelet
                   {formatTokenDisplay(m.limits.contextWindow ?? m.limits.maxInputTokens)}
                 </p>
                 <p className="text-[10px] text-muted-foreground">上下文</p>
+              </div>
+
+              <div className="hidden xl:block text-right shrink-0 w-36">
+                <p className="text-xs font-mono text-muted-foreground truncate">
+                  {formatPricingSummary(m)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">元 / 百万 tokens</p>
               </div>
 
               {/* 状态 */}

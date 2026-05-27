@@ -94,6 +94,27 @@ export interface PresetImportRequest {
   presetCaseCodes: string[];
 }
 
+export interface CaseCsvImportRow {
+  categoryName?: string;
+  query?: string;
+  expectedBehavior?: string;
+}
+
+export interface CaseCsvImportRequest {
+  scope: 'APP' | 'SYSTEM_PRESET';
+  appCode?: string;
+  rows: CaseCsvImportRow[];
+}
+
+export interface CaseCsvImportResult {
+  created: number;
+  updated: number;
+  createdCategories: number;
+  skipped: number;
+  errors: Array<{ row: number; message: string }>;
+  message: string;
+}
+
 type CasePrismaClient = {
   evalCaseCategory: {
     findMany(input?: { orderBy?: object }): Promise<unknown[]>;
@@ -892,6 +913,73 @@ export class CaseService {
     return { created, updated, errors };
   }
 
+  async importCsvRows(request: CaseCsvImportRequest): Promise<CaseCsvImportResult> {
+    const scope = request.scope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP';
+    const appCode = request.appCode?.trim();
+    if (scope === 'APP' && !appCode) throw new Error('缺少应用编码');
+
+    let created = 0;
+    let updated = 0;
+    let createdCategories = 0;
+    let skipped = 0;
+    const errors: Array<{ row: number; message: string }> = [];
+
+    for (const [index, row] of (request.rows ?? []).entries()) {
+      try {
+        const normalized = this.normalizeCsvImportRow(row);
+        if (!normalized) {
+          skipped += 1;
+          continue;
+        }
+        const categoryResult = await this.findOrCreateCsvCategory(scope, appCode, normalized.categoryName);
+        if (categoryResult.created) createdCategories += 1;
+
+        const existingCase = await this.findCsvImportCase(scope, appCode, categoryResult.category.id, normalized.query);
+        if (existingCase) {
+          const updatePayload = {
+            categoryId: categoryResult.category.id,
+            query: normalized.query,
+            expectedBehavior: normalized.expectedBehavior,
+            enabled: true,
+          };
+          if (scope === 'SYSTEM_PRESET') {
+            await this.updatePresetCase(existingCase.id, updatePayload);
+          } else {
+            await this.update(existingCase.id, updatePayload);
+          }
+          updated += 1;
+        } else if (scope === 'SYSTEM_PRESET') {
+          await this.createPresetCase({
+            appCode: SYSTEM_PRESET_APP_CODE,
+            categoryId: categoryResult.category.id,
+            query: normalized.query,
+            expectedBehavior: normalized.expectedBehavior,
+          });
+          created += 1;
+        } else {
+          await this.create({
+            appCode: appCode ?? '',
+            categoryId: categoryResult.category.id,
+            query: normalized.query,
+            expectedBehavior: normalized.expectedBehavior,
+          });
+          created += 1;
+        }
+      } catch (error) {
+        errors.push({ row: index + 2, message: error instanceof Error ? error.message : '导入失败' });
+      }
+    }
+
+    return {
+      created,
+      updated,
+      createdCategories,
+      skipped,
+      errors,
+      message: `导入完成：新增 ${created} 条，更新 ${updated} 条，新增分类 ${createdCategories} 个`,
+    };
+  }
+
   excelTemplateHeaders() {
     return [
       'appCode',
@@ -927,6 +1015,42 @@ export class CaseService {
     if (!row.categoryId && !row.categoryCode) throw new Error('缺少必填字段 categoryId');
     if (row.riskLevel && !['LOW', 'MEDIUM', 'HIGH'].includes(row.riskLevel)) throw new Error('风险等级不合法');
     this.validateCaseCategory(row.categoryId ?? row.categoryCode ?? '', row.appCode);
+  }
+
+  private normalizeCsvImportRow(row: CaseCsvImportRow) {
+    const categoryName = row.categoryName?.trim() ?? '';
+    const query = row.query?.trim() ?? '';
+    const expectedBehavior = row.expectedBehavior?.trim() ?? '';
+    if (!categoryName && !query && !expectedBehavior) return null;
+    if (!categoryName) throw new Error('缺少必填字段 问题分类');
+    if (!query) throw new Error('缺少必填字段 问题内容');
+    if (!expectedBehavior) throw new Error('缺少必填字段 期望回答');
+    return { categoryName, query, expectedBehavior };
+  }
+
+  private async findOrCreateCsvCategory(scope: 'APP' | 'SYSTEM_PRESET', appCode: string | undefined, categoryName: string) {
+    const sourceCategories = await this.getCategorySource();
+    const matched = sourceCategories.find((category) => {
+      const scopeMatched = scope === 'SYSTEM_PRESET' ? !category.appCode : category.appCode === appCode;
+      return scopeMatched && category.name === categoryName && category.enabled;
+    });
+    if (matched) return { category: matched, created: false };
+
+    const category = await this.createCategory({
+      appCode: scope === 'APP' ? appCode : undefined,
+      name: categoryName,
+      description: 'CSV 导入自动创建',
+      enabled: true,
+    });
+    return { category, created: true };
+  }
+
+  private async findCsvImportCase(scope: 'APP' | 'SYSTEM_PRESET', appCode: string | undefined, categoryId: string, query: string) {
+    const sourceCases = await this.getCaseSource(scope);
+    return sourceCases.find((testCase) => {
+      const scopeMatched = scope === 'SYSTEM_PRESET' ? testCase.caseScope === 'SYSTEM_PRESET' : testCase.appCode === appCode;
+      return scopeMatched && testCase.categoryId === categoryId && testCase.query === query;
+    });
   }
 
   private validateCaseCategory(categoryId: string, appCode?: string) {

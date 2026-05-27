@@ -24,7 +24,7 @@ describe('HealthPage', () => {
     render(<HealthPage />);
 
     expect(
-      screen.getByText('http://127.0.0.1:8080/ai-quality-platform/api/business/health.do'),
+      screen.getByText('http://localhost:8080/ai-quality-platform/api/business/health.do'),
     ).toBeInTheDocument();
     expect(
       screen.queryByText('http://127.0.0.1:3101/ai-quality-platform/health.do'),
@@ -43,7 +43,7 @@ describe('HealthPage', () => {
     await waitFor(() => expect(screen.getByText(/最近检查：/u)).toBeInTheDocument());
     expect(screen.getAllByText('UP')).toHaveLength(9);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8080/ai-quality-platform/api/business/health.do',
+      'http://localhost:8080/ai-quality-platform/api/business/health.do',
       expect.objectContaining({ cache: 'no-store' }),
     );
   });

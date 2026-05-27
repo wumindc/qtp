@@ -4,7 +4,7 @@
  * @author Antigravity/Gemini
  */
 import { useMemo, useState } from 'react';
-import { getGatewayApiUrl, CONTEXT_PATH, GATEWAY_PORT } from '@ai-quality-platform/shared-config';
+import { getGatewayApiUrl, getGatewayPublicUrl } from '@ai-quality-platform/shared-config';
 
 export type HealthStatus = 'UNKNOWN' | 'CHECKING' | 'UP' | 'DOWN';
 
@@ -37,7 +37,7 @@ export function useHealthCheck() {
       {
         key: 'gateway',
         name: 'quality-gateway',
-        url: `http://127.0.0.1:${GATEWAY_PORT}/${CONTEXT_PATH}/health.do`,
+        url: getGatewayPublicUrl('/ai-quality-platform/health.do'),
       },
       ...SERVICES.map((s) => ({
         key: s.key,

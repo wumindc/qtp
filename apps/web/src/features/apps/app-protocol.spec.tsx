@@ -53,6 +53,7 @@ describe('AppProtocolPage', () => {
       answerPath: '$.content',
       successExpr: '$.code == 0',
       streamEnabled: false,
+      appConcurrency: 3,
     });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ content: 'ok' }), {

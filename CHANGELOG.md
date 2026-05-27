@@ -2,6 +2,162 @@
 
 ## [未发布]
 
+### 2026-05-27 — 首页应用工作台真实数据与布局重设计
+
+#### 修复与优化 — 工作台从裸文本占位改为平台级质量驾驶舱
+- **变更需求**：用户反馈首页应用工作台也存在数据展示和页面设计问题，需要按真实业务重新规划设计。
+- **变更内容**：
+  - `apps/web/src/features/dashboard/dashboard.tsx`：移除失效的旧样式 class，重构为当前系统统一的卡片、列表和操作入口布局；工作台展示平台统计、最近执行、重点关注应用和快速入口。
+  - `apps/web/src/features/dashboard/dashboard.tsx`：除统计服务外，额外读取应用列表、计划列表和执行记录，将最近执行展示为应用名、计划名、第 N 次执行、通过/未达标数量和耗时，避免继续展示技术编码。
+  - `apps/web/src/features/dashboard/dashboard.spec.tsx`：补充首页真实统计、计划名映射、最近执行摘要和隐藏计划编码的回归测试。
+
+### 2026-05-27 — 应用概览页真实统计与布局重设计
+
+#### 修复与优化 — 概览页展示真实统计和可读执行记录
+- **变更需求**：用户反馈应用概览页测试用例、执行计划等数据没有正确显示，最近执行记录展示技术编码且整体布局需要重新设计。
+- **变更内容**：
+  - `apps/quality-business-service/src/app.service.ts`：应用详情接口补齐与应用列表一致的聚合统计，保证概览页通过 `detail.do` 获取到真实用例数、计划数和最近通过率。
+  - `apps/web/src/features/apps/app-overview.tsx`：概览页重构为应用头部、关键指标、最近执行记录和应用配置四块；最近记录合并计划列表映射，展示计划名称、第 N 次执行、通过/未达标数量和耗时，不再把计划编码作为主信息。
+  - `apps/quality-business-service/src/app.service.spec.ts`、`apps/web/src/features/apps/app-overview.spec.tsx`：新增后端详情统计和前端可读执行记录回归测试。
+
+### 2026-05-27 — 根路径自动进入平台文根
+
+#### 优化 — 访问 `/` 自动跳转到 `/ai-quality-platform`
+- **变更需求**：用户反馈通过局域网 IP 直接访问 `http://192.168.11.107:3000/` 时还需要手动补文根，希望裸根路径能自动进入平台。
+- **变更内容**：
+  - `apps/web/src/app/page.tsx`：新增 Next 根路由，服务端直接重定向到共享配置中的平台文根 `/${CONTEXT_PATH}`。
+
+### 2026-05-27 — 局域网访问下网关地址跟随页面 Host
+
+#### 修复 — LAN IP 打开前端时业务数据不再请求访问端本机 localhost
+- **变更需求**：用户反馈用 `http://192.168.11.107:3000` 访问前端时模型供应商等业务数据加载不出来，而 `http://127.0.0.1:3000` 正常。
+- **变更内容**：
+  - `packages/shared-config/src/index.ts`：公共 Gateway URL 在浏览器环境下改为使用当前页面 `location.hostname`，避免局域网访问时仍请求 `127.0.0.1:8080`。
+  - `apps/web/next.config.ts`：开发环境自动放行本机局域网 IPv4 作为 `allowedDevOrigins`，避免通过 `192.168.x.x:3000` 打开时 Next 开发客户端资源被拦截，导致页面未正常 hydrate、客户端数据加载不执行。
+  - `apps/web/src/features/health/service-health.tsx`、`apps/web/src/features/health/hooks.ts`：健康检查中的 gateway 地址同步使用共享的公共 Gateway URL 生成逻辑。
+  - `packages/shared-config/src/config.spec.ts`、`apps/web/src/lib/api/gateway-client.spec.ts`、`apps/web/src/features/health/service-health.spec.tsx`：补充和更新回归测试，覆盖局域网 IP host 生成与 Web 默认 `localhost` host 断言。
+
+### 2026-05-27 — 修复执行详情页分类联动与列表布局
+
+#### 修复 — 状态统计支持分类联动，列表宽度防溢出
+- **变更需求**：用户反馈点击左侧分类后，右侧顶部的状态统计卡片（总用例数、达标率等）没有按分类变化，且右侧列表区域内容过长时撑开了父容器导致排版变形。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：统计区数据（`total/passed/failed`）改为基于当前选中分类过滤后的结果（`categoryResults`）进行动态计算，确保顶部统计卡片和 Tab 数字完全与左侧选择联动；同时保证左侧「全部」按钮依然显示大盘总数。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：为右侧 Tab 过滤 + 结果列表的 flex 父容器增加 `min-w-0` 类名，截断内部可能过长的不换行元素（如 JSON 或长文本段落），解决 flex 布局下子元素将父级容器宽度撑开溢出的问题。
+
+### 2026-05-27 — 执行详情界面支持分类统计与重试筛选
+
+#### 新增与优化 — 详情页增加左侧分类边栏，重试逻辑精细化
+- **变更需求**：用户反馈在任务详情里没有分类，用例多的时候无法了解每个分类的情况，建议使用类似用例管理左侧显示分类的设计；另外，未达标/执行失败的需要增加“重新发起评估”按钮，业务接口调用失败的需要可以重新发起全量重试（调用+评估）。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：重构布局，增加左侧分类统计边栏，计算每个分类下的总用例数与通过率；原有的统计面板保留为总体统计，放在右上区域；卡片操作区重构为 DropdownMenu，包含更精细的「全量重试」与「重新自动评估」操作。
+  - `apps/quality-execution-service/src/execution.service.ts`、`apps/quality-execution-service/src/execution.controller.ts`：后端执行服务增加分类映射支持；新增 `/execution/re-evaluate.do` 接口方法 `reEvaluate`，实现绕过业务接口调用的纯 LLM 重新评估逻辑，只更新相关记录的 evaluationStatus 和评估数据。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`：前端 API 层增加 `reEvaluateResults` 调用封装，并在 `ResultRecord` 类型中增加 `categoryId`。
+
+
+
+#### 修复 — 执行计划启动只保留一条成功提示
+- **变更需求**：用户反馈执行计划启动后页面连续弹出两条成功消息，分别提示“已触发”和“执行批次已创建”，造成重复干扰。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-plans.tsx`：移除点击确认后的即时成功 toast，保留服务端返回后的“执行批次已创建 / 执行完成”结果提示；执行中状态继续由按钮禁用和计划卡片进度区即时反馈。
+  - `apps/web/src/features/apps/app-plans.spec.tsx`：新增回归测试，验证启动 RUNNING 执行批次时只弹出一条成功提示。
+
+### 2026-05-27 — 评估调用关闭思考模式
+
+#### 修复 — Qwen 评估请求显式禁用 thinking
+- **变更需求**：用户反馈结果评估阶段不需要开启 thinking，评估模型调用应显式关闭，避免产生无意义的思考过程和额外 token 消耗。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：百炼/Qwen 兼容评估请求体增加 `enable_thinking: false`，普通 OpenAI 兼容请求不额外写入该非标准字段。
+  - `apps/quality-execution-service/src/execution.service.spec.ts`：新增回归测试，验证评估请求和持久化的 judge call 审计请求都包含 `enable_thinking: false`。
+
+### 2026-05-27 — 通用系统预置与信用网站应用用例 CSV 规划
+
+#### 文档 — 区分通用系统预置与信用网站应用自有用例
+- **变更需求**：用户希望先审核用例规划，再生成存放于 `docs/` 的 CSV 文件；系统预置用例必须与具体业务无关，可被所有 AI 应用复用，信用业务类用例应作为当前应用自有用例。
+- **变更内容**：
+  - `docs/20260527-001-信用网站预置用例CSV规划.md`：新增规划文档，定义约 80 条通用系统预置用例的 6 个大方向分类清单，覆盖敏感词问题、安全渗透、胡乱咨询、涉密涉黄与违规、隐私与权限越界、诱导编造与虚假承诺；同时定义当前信用网站应用引用全部通用预置分类，并额外导入 62 条“信用中国（北京）”应用自有用例。
+  - `docs/20260527-通用系统预置用例.csv`：新增 80 条通用系统预置用例，使用 `问题分类 / 问题内容 / 期望回答` 三列表头和 UTF-8 BOM 编码。
+  - `docs/20260527-信用中国北京应用用例.csv`：新增 62 条信用中国北京应用自有用例，覆盖站点身份、动态资讯、政策法规、公共报告、专项报告、信用修复、异议申诉、信用查询、政务诚信投诉和信用专题。
+
+### 2026-05-27 — 用例 CSV 导入导出
+
+#### 新增 — 预置用例与应用用例支持批量导入导出
+- **变更需求**：预置用例和应用用例管理都需要支持下载导入模板、CSV 批量导入和导出，方便用户线下维护 `问题分类 / 问题内容 / 期望回答` 三列后快速批量添加用例。
+- **变更内容**：
+  - `apps/quality-case-service/src/case.service.ts`、`apps/quality-case-service/src/case.controller.ts`：新增 `/case/import-csv.do`，按中文最小字段导入；分类按名称自动匹配或创建，同作用域同分类同问题执行更新，否则新增。
+  - `apps/web/src/features/cases/case-csv.ts`：新增 CSV 解析、生成、模板与下载工具，支持中文表头、引号、逗号、换行和空行处理。
+  - `apps/web/src/features/cases/index.tsx`：系统预置用例页增加“下载模板 / 导入 CSV / 导出 CSV”，导入写入系统预置库。
+  - `apps/web/src/features/apps/app-cases.tsx`：应用用例页增加“下载模板 / 导入 CSV / 导出 CSV”，导入写入当前应用自有用例，并保持顶部按钮响应式换行。
+  - `apps/web/src/features/cases/case-csv.ts`、`apps/web/src/features/apps/app-cases.tsx`：导出文件名追加 `yyyyMMddHHmmss` 下载时间；应用用例导出额外带当前应用名称，无法解析应用名称时回退应用编码。
+  - `apps/quality-case-service/src/case.service.spec.ts`、`apps/web/src/features/cases/case-csv.spec.ts`、`apps/web/src/features/cases/api/case-api.spec.ts`、`apps/web/src/features/cases/index.spec.tsx`、`apps/web/src/features/apps/app-cases.spec.tsx`：补充 CSV 导入、导出工具、API 封装和两处页面入口的回归测试。
+
+### 2026-05-27 — 执行详情紧凑展示与响应式优化
+
+#### 优化 — 收敛全通过、计费、长文本与耗时展示
+- **变更需求**：用户反馈执行详情页全量通过时不应再提供全量重试，已通过结果不应出现重复的“标为评估通过”动作，计费状态、实际回答、评估结论、耗时和多尺寸布局都需要更符合真实验收场景。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：全量通过时隐藏“全量重试”；人工修订菜单按当前结果状态只展示有效动作，已通过结果仅允许改为未达标或恢复 AI 评估。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：费用已计算时隐藏冗余计费状态，未计费/部分计费/未配置价格直接作为状态文案；总费用继续保留最多 2 位小数。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：非已计费状态下合并费用金额与计费状态，费用块直接显示“未计费 / 部分计费 / 未配置价格”，不再额外展示“费用 -”加状态块。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：列表里的实际回答和评估结论改为单行截断，并支持悬浮查看完整内容；单条耗时与整次执行总耗时改为秒、分钟、小时等可读格式。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：执行详情摘要区、统计区、列表行和操作区增加响应式布局；token/费用摘要改为自适应列宽，避免中小屏下费用卡片过早换行。
+  - `apps/web/src/features/apps/app-history-detail.spec.tsx`：补充全量通过按钮显隐、人工修订动作过滤、计费状态、单行截断浮层、耗时格式化、费用摘要自适应网格和响应式布局的回归测试。
+
+### 2026-05-27 — 执行详情语义与历史快照修复落地
+
+#### 修复 — 执行详情筛选、人工修订和历史快照一致性
+- **变更需求**：按 `docs/20260526-005-执行详情语义与历史快照修复计划.md` 推进实现，修复执行详情页结果语义、未计费展示、人工修订入口、亮色层次和历史数据随用例变更漂移的问题。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：移除“待复核”筛选，统一区分“评估通过 / 未达标 / 执行失败”；列表行内增加人工修订入口并支持恢复 AI 评估；未计费时不再显示“未计算”；亮色模式摘要与列表补充层次背景。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`、`apps/quality-review-service/src/review.service.ts`：人工修订 API 支持 `manualResult: null`，用于清除人工修订并回到 AI 原始评估。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行结果详情优先读取 `caseSnapshotJson` 和执行时请求快照，不再用当前用例数据补问题内容和期望回答，保证历史日志固化。
+  - `apps/web/src/features/apps/app-history-detail.spec.tsx`、`apps/quality-review-service/src/review.service.spec.ts`、`apps/quality-execution-service/src/execution.service.spec.ts`：补充未计费展示、列表行内修订、恢复 AI 评估和历史快照固化的回归测试。
+
+### 2026-05-26 — 执行详情语义与历史快照修复计划
+
+#### 文档 — 梳理详情页结果语义、人工修订与历史快照固化
+- **变更需求**：用户反馈执行详情页未达标图标、待复核分类、人工修订入口、未计费展示、亮色模式层次和历史用例快照存在设计与数据一致性问题，需要先形成可审核实施计划。
+- **变更内容**：
+  - `docs/20260526-005-执行详情语义与历史快照修复计划.md`：新增实施计划，覆盖前端筛选语义、列表行内人工修订、计费摘要显示、亮暗模式样式、后端 `caseSnapshotJson` 固化读取、人工修订 API 和验收标准。
+
+### 2026-05-26 — 执行详情结果语义与审计布局优化
+
+#### 优化 — 区分评估未达标、执行失败与人工修订
+- **变更需求**：用户反馈执行详情页统计卡片过多、结果状态“失败”语义不准、明细抽屉的问题/期望展示占位过大，且接口调用与评估调用 JSON 不应默认铺满页面。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-history-detail.tsx`：统计区收敛为一个紧凑摘要面板；筛选项调整为“评估通过 / 未达标 / 执行失败 / 待复核”；列表和抽屉统一把“评分依据”改为“评估结论”，并用图标标识结论状态。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：明细抽屉内问题内容与期望回答改为两行紧凑展示，评估调用状态改为中文业务文案，接口调用和评估调用默认折叠，JSON 区域限制高度并在区域内滚动。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`、`apps/web/src/features/apps/app-history-detail.tsx`：复用 `start.do` 支持全量重试和执行失败单条重试；接入 `review/submit.do` 支持人工修订结果并显示“人工修订”标识。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行结果列表读取 `eval_review` 最新人工复核记录，返回 `manualResult`、`reviewStatus` 和 `reviewComment`，保证人工修订标识可持久化。
+  - `apps/web/src/features/apps/app-history-detail.spec.tsx`：补充结果语义、人工修订和单条重试的回归测试。
+
+### 2026-05-26 — 执行详情费用展示与明细抽屉优化
+
+#### 修复 — 重算费用后保留任务名称和执行版本
+- **变更需求**：用户反馈执行详情页点击重新计费后标题退化为计划 ID，执行版本也没有选中；总费用展示精度过高；结果明细弹窗希望改成侧边栏并优化展示。
+- **变更内容**：
+  - `apps/quality-execution-service/src/execution.service.ts`：`cost/recalculate.do` 返回值补齐可读任务名称和执行序号，并保留原完成时间，避免重算费用污染执行记录上下文。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：费用展示改为最多 2 位小数；重新计算费用后保留已有 `planName` 和 `sequenceNo`；结果明细从居中弹窗改为右侧抽屉式详情面板。
+  - `apps/quality-execution-service/src/execution.service.spec.ts`、`apps/web/src/features/apps/app-history-detail.spec.tsx`：补充费用重算上下文保留、费用展示精度和侧边抽屉的回归测试。
+
+### 2026-05-26 — 执行评估两阶段与计费审计落地
+
+#### 新增 — 执行计划拆分接口执行、评估执行与费用汇总
+- **变更需求**：按设计文档推进执行计划真实化，记录评估模型调用输入输出、usage、token 与费用，支持应用接口并发和评估并发分开配置。
+- **变更内容**：
+  - `packages/shared-database/prisma/schema.prisma`：扩展 `EvalRun`、`EvalResult`，新增 `EvalJudgeCall` 审计表，并为应用评估配置增加 `evaluationConcurrency`。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行批次改为 `APP_CALLING -> EVALUATING -> COSTING` 三阶段持久化推进，启动时立即创建结果占位记录，支持服务重启恢复、分阶段并发、评估调用审计和费用重算。
+  - `apps/quality-execution-service/src/judge-usage.ts`、`apps/quality-execution-service/src/judge-cost.ts`：新增 usage 归一化和三档价格计费逻辑，支持 Qwen cached token。
+  - `apps/quality-business-service/src/app.service.ts`、`apps/quality-ai-service/src/provider.service.ts`：接口配置增加应用接口并发数，评估配置增加评估并发数，模型中心支持普通输入、缓存命中输入和输出价格。
+  - `apps/web/src/features/apps`、`apps/web/src/features/models`：协议页、评估配置页、模型中心、执行计划页和执行详情页同步展示并发配置、模型价格、分阶段进度、token/费用摘要、评估调用审计和重新计算费用入口。
+
+### 2026-05-26 — 执行评估两阶段与计费审计计划
+
+#### 文档 — 覆盖前端、后端与 DB 的实施计划
+- **变更需求**：用户提出执行计划需要拆分为接口执行与评估执行两个独立阶段，完整记录评估模型调用输入输出，并按模型中心配置的普通输入、缓存命中输入、输出价格计算 token 用量和费用。
+- **变更内容**：
+  - `docs/20260526-004-执行评估两阶段与计费审计计划.md`：新增正式实施计划，覆盖 DB schema、后端执行服务、业务配置服务、模型中心服务、前端配置页、执行计划/历史详情页面、API 契约、usage 归一化、费用计算、兼容迁移和验收标准。
+
 ### 2026-05-26 — 执行详情版本切换器
 
 #### 新增 — 详情页可切换同计划执行版本

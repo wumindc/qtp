@@ -124,6 +124,9 @@ describe('model center form connection tests', () => {
         toolCalling: 'false',
         thinkingEnabled: 'true',
         dimensions: '',
+        normalInputPrice: '',
+        cachedInputPrice: '',
+        outputPrice: '',
       },
       provider,
     );

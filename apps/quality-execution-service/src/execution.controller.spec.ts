@@ -90,4 +90,44 @@ describe('ExecutionController', () => {
       }),
     ]);
   });
+
+  it('returns judge call audit detail for a result', async () => {
+    const executionService = {
+      judgeCallDetail: vi.fn().mockResolvedValue({
+        callCode: 'judge-abc123def0',
+        status: 'SUCCEEDED',
+        modelId: 'qwen-plus',
+        requestJson: { model: 'qwen-plus' },
+      }),
+    };
+    const controller = new ExecutionController(executionService as never);
+
+    const response = await controller.judgeCallDetail({ resultId: '12' });
+
+    expect(executionService.judgeCallDetail).toHaveBeenCalledWith('12');
+    expect(response.data).toMatchObject({
+      callCode: 'judge-abc123def0',
+      modelId: 'qwen-plus',
+    });
+  });
+
+  it('recalculates cost for an execution run', async () => {
+    const executionService = {
+      recalculateCost: vi.fn().mockResolvedValue({
+        runCode: 'run-abc123def0',
+        totalTokens: 2300,
+        totalCostAmount: 0.00172,
+        costStatus: 'CALCULATED',
+      }),
+    };
+    const controller = new ExecutionController(executionService as never);
+
+    const response = await controller.recalculateCost({ runCode: 'run-abc123def0' });
+
+    expect(executionService.recalculateCost).toHaveBeenCalledWith('run-abc123def0');
+    expect(response.data).toMatchObject({
+      runCode: 'run-abc123def0',
+      totalCostAmount: 0.00172,
+    });
+  });
 });

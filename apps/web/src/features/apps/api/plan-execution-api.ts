@@ -20,11 +20,21 @@ export interface RunRecord {
   sequenceNo?: number;
   appCode: string;
   status: 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  phase?: 'PENDING' | 'APP_CALLING' | 'EVALUATING' | 'COSTING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   totalCount: number;
+  appCompletedCount?: number;
+  evalCompletedCount?: number;
   passCount: number;
   failCount: number;
   reviewCount: number;
   avgScore: number;
+  normalInputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  totalCostAmount?: number | null;
+  currency?: string;
+  costStatus?: 'NOT_CALCULATED' | 'CALCULATED' | 'NO_USAGE' | 'SKIPPED_NO_PRICE' | 'PARTIAL';
   /** 执行开始时间（ISO 字符串） */
   startAt?: string;
   /** 执行结束时间 */
@@ -55,17 +65,63 @@ export interface ResultRecord {
   runCode: string;
   caseCode: string;
   caseName?: string;
+  /** 来自 caseSnapshot，用于前端分类导航 */
+  categoryId?: string;
   query?: string;
   expectedBehavior?: string;
   requestJson?: Record<string, unknown>;
   responseJson?: Record<string, unknown>;
+  appStatus?: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
+  evaluationStatus?: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
   finalAnswer: string;
   finalScore: number;
   passStatus: 'PASS' | 'FAIL' | 'REVIEW';
   failureReason?: string;
   problemType?: string;
   elapsedMs?: number;
+  appElapsedMs?: number;
+  judgeElapsedMs?: number;
   errorCode?: string;
+  hasJudgeCall?: boolean;
+  manualResult?: 'PASS' | 'FAIL' | null;
+  reviewStatus?: 'PENDING' | 'REVIEWED';
+  reviewComment?: string;
+}
+
+export interface JudgeCallDetail {
+  callCode: string;
+  status: 'SUCCEEDED' | 'FAILED';
+  providerCode: string;
+  modelId: string;
+  protocol: string;
+  promptText: string;
+  requestJson: Record<string, unknown>;
+  responseJson?: Record<string, unknown>;
+  rawResponseText?: string;
+  rawUsageJson?: Record<string, unknown>;
+  normalInputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  normalInputCostAmount?: number | null;
+  cachedInputCostAmount?: number | null;
+  outputCostAmount?: number | null;
+  totalCostAmount?: number | null;
+  currency?: string;
+  costStatus?: RunRecord['costStatus'];
+  errorCode?: string;
+  errorMessage?: string;
+  elapsedMs?: number;
+}
+
+export interface ResultReviewRecord {
+  resultId: string;
+  reviewStatus: 'PENDING' | 'REVIEWED';
+  manualResult?: 'PASS' | 'FAIL' | null;
+  problemType?: string;
+  reviewComment?: string;
+  nextAction?: string;
+  reviewer?: string;
 }
 
 // ── 计划 API ──
@@ -106,11 +162,11 @@ export async function deletePlan(planCode: string): Promise<void> {
   await postGateway('plan', '/plan/delete.do', { planCode });
 }
 
-export async function startPlan(planCode: string, appCode: string): Promise<RunRecord> {
+export async function startPlan(planCode: string, appCode: string, caseCodes: string[] = []): Promise<RunRecord> {
   return postGateway<RunRecord>('execution', '/execution/start.do', {
     planCode,
     appCode,
-    caseCodes: [],
+    caseCodes,
   });
 }
 
@@ -161,6 +217,35 @@ export async function listResults(runCode: string): Promise<ResultRecord[]> {
   }, { cache: 'no-store' });
   const data = res as Record<string, unknown>;
   return (data?.list ?? []) as ResultRecord[];
+}
+
+export async function loadJudgeCallDetail(resultId: string): Promise<JudgeCallDetail> {
+  return postGateway<JudgeCallDetail>('execution', '/execution/judge-call/detail.do', { resultId }, { cache: 'no-store' });
+}
+
+export async function recalculateRunCost(runCode: string): Promise<RunRecord> {
+  return postGateway<RunRecord>('execution', '/execution/cost/recalculate.do', { runCode });
+}
+
+export async function submitResultReview(payload: {
+  resultId: string;
+  manualResult: 'PASS' | 'FAIL' | null;
+  reviewComment?: string;
+  problemType?: string;
+}): Promise<ResultReviewRecord> {
+  return postGateway<ResultReviewRecord>('review', '/review/submit.do', {
+    ...payload,
+    reviewer: '管理员',
+  });
+}
+
+/**
+ * 仅重新发起 AI 评估，不重新调用业务接口。
+ * @author Antigravity/Claude-Sonnet-4.6
+ */
+export async function reEvaluateResults(resultIds: string[]): Promise<ResultRecord[]> {
+  const res = await postGateway<unknown>('execution', '/execution/re-evaluate.do', { resultIds });
+  return (Array.isArray(res) ? res : []) as ResultRecord[];
 }
 
 /** 从旧版 runCode 末尾时间戳解析执行时间（仅兼容历史数据） */

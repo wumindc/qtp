@@ -4,6 +4,7 @@
  */
 import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
 import type { PresetCase, PresetCategory } from '../types';
+import type { CaseCsvRow } from '../case-csv';
 
 type GatewayRow = Record<string, unknown>;
 
@@ -93,4 +94,12 @@ export async function deleteCategory(id: string) {
 
 export async function deleteCase(id: string) {
   return postGateway('case', '/case/preset/delete.do', { id });
+}
+
+export async function importCaseCsvRows(scope: 'APP' | 'SYSTEM_PRESET', rows: CaseCsvRow[], appCode?: string) {
+  return postGateway('case', '/case/import-csv.do', {
+    scope,
+    appCode,
+    rows,
+  });
 }

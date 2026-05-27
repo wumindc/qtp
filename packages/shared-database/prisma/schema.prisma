@@ -77,6 +77,7 @@ model AppEvaluationConfig {
   modelId               BigInt
   promptOverrideEnabled Boolean  @default(false)
   customPrompt          String?  @db.Text
+  evaluationConcurrency Int      @default(3)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
@@ -156,51 +157,113 @@ model EvalPlan {
 }
 
 model EvalRun {
-  id           BigInt    @id @default(autoincrement())
-  runCode      String    @unique @db.VarChar(100)
-  planCode     String    @db.VarChar(100)
-  appCode      String    @db.VarChar(100)
-  runName      String    @db.VarChar(200)
-  status       String    @db.VarChar(50)
-  totalCount   Int       @default(0)
-  passCount    Int       @default(0)
-  failCount    Int       @default(0)
-  reviewCount  Int       @default(0)
-  warningCount Int       @default(0)
-  blockedCount Int       @default(0)
-  avgScore     Decimal?  @db.Decimal(5, 2)
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  createdBy    String?   @db.VarChar(100)
-  createdAt    DateTime  @default(now())
+  id                    BigInt    @id @default(autoincrement())
+  runCode               String    @unique @db.VarChar(100)
+  planCode              String    @db.VarChar(100)
+  appCode               String    @db.VarChar(100)
+  runName               String    @db.VarChar(200)
+  sequenceNo            Int?
+  status                String    @db.VarChar(50)
+  phase                 String    @default("PENDING") @db.VarChar(50)
+  totalCount            Int       @default(0)
+  appCompletedCount     Int       @default(0)
+  evalCompletedCount    Int       @default(0)
+  passCount             Int       @default(0)
+  failCount             Int       @default(0)
+  reviewCount           Int       @default(0)
+  warningCount          Int       @default(0)
+  blockedCount          Int       @default(0)
+  avgScore              Decimal?  @db.Decimal(5, 2)
+  normalInputTokens     Int       @default(0)
+  cachedInputTokens     Int       @default(0)
+  outputTokens          Int       @default(0)
+  totalTokens           Int       @default(0)
+  normalInputCostAmount Decimal?  @db.Decimal(18, 6)
+  cachedInputCostAmount Decimal?  @db.Decimal(18, 6)
+  outputCostAmount      Decimal?  @db.Decimal(18, 6)
+  totalCostAmount       Decimal?  @db.Decimal(18, 6)
+  currency              String?   @db.VarChar(20)
+  costStatus            String    @default("NOT_CALCULATED") @db.VarChar(50)
+  costCalculatedAt      DateTime?
+  startedAt             DateTime?
+  finishedAt            DateTime?
+  createdBy             String?   @db.VarChar(100)
+  createdAt             DateTime  @default(now())
 
   @@index([planCode])
   @@index([appCode])
+  @@index([status, phase])
   @@map("eval_run")
 }
 
 model EvalResult {
-  id            BigInt   @id @default(autoincrement())
-  runCode       String   @db.VarChar(100)
-  caseId        BigInt
-  appCode       String   @db.VarChar(100)
-  requestJson   Json
-  responseJson  Json?
-  finalAnswer   String?  @db.Text
-  ruleScore     Decimal? @db.Decimal(5, 2)
-  judgeScore    Decimal? @db.Decimal(5, 2)
-  finalScore    Decimal? @db.Decimal(5, 2)
-  passStatus    String   @db.VarChar(50)
-  failureReason String?  @db.Text
-  problemType   String?  @db.VarChar(100)
-  traceId       String?  @db.VarChar(100)
-  elapsedMs     Int?
-  errorCode     String?  @db.VarChar(100)
-  createdAt     DateTime @default(now())
+  id               BigInt   @id @default(autoincrement())
+  runCode          String   @db.VarChar(100)
+  caseId           BigInt
+  appCode          String   @db.VarChar(100)
+  caseSnapshotJson Json?
+  appStatus        String   @default("PENDING") @db.VarChar(50)
+  evaluationStatus String   @default("PENDING") @db.VarChar(50)
+  requestJson      Json
+  responseJson     Json?
+  finalAnswer      String?  @db.Text
+  ruleScore        Decimal? @db.Decimal(5, 2)
+  judgeScore       Decimal? @db.Decimal(5, 2)
+  finalScore       Decimal? @db.Decimal(5, 2)
+  passStatus       String   @db.VarChar(50)
+  failureReason    String?  @db.Text
+  problemType      String?  @db.VarChar(100)
+  traceId          String?  @db.VarChar(100)
+  elapsedMs        Int?
+  appElapsedMs     Int?
+  judgeElapsedMs   Int?
+  errorCode        String?  @db.VarChar(100)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
 
   @@index([runCode])
   @@index([caseId])
+  @@index([runCode, appStatus, evaluationStatus])
   @@map("eval_result")
+}
+
+model EvalJudgeCall {
+  id                    BigInt   @id @default(autoincrement())
+  callCode              String   @unique @db.VarChar(100)
+  runCode               String   @db.VarChar(100)
+  resultId              BigInt
+  appCode               String   @db.VarChar(100)
+  caseId                BigInt
+  providerCode          String   @db.VarChar(100)
+  modelDbId             BigInt
+  modelId               String   @db.VarChar(200)
+  protocol              String   @db.VarChar(80)
+  promptText            String   @db.Text
+  requestJson           Json
+  responseJson          Json?
+  rawResponseText       String?  @db.LongText
+  rawUsageJson          Json?
+  normalInputTokens     Int?
+  cachedInputTokens     Int?
+  outputTokens          Int?
+  totalTokens           Int?
+  normalInputCostAmount Decimal? @db.Decimal(18, 6)
+  cachedInputCostAmount Decimal? @db.Decimal(18, 6)
+  outputCostAmount      Decimal? @db.Decimal(18, 6)
+  totalCostAmount       Decimal? @db.Decimal(18, 6)
+  currency              String?  @db.VarChar(20)
+  costStatus            String   @default("NOT_CALCULATED") @db.VarChar(50)
+  status                String   @db.VarChar(50)
+  errorCode             String?  @db.VarChar(100)
+  errorMessage          String?  @db.Text
+  elapsedMs             Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([runCode])
+  @@index([resultId])
+  @@index([modelDbId])
+  @@map("eval_judge_call")
 }
 
 model EvalReview {

@@ -169,4 +169,35 @@ describe('AppCasesPage', () => {
       ),
     );
   });
+
+  it('imports app cases from a CSV file into the current app', async () => {
+    postGatewayMock.mockImplementation(async (_service, path) => {
+      if (path === '/case/category/list.do') return { list: [{ id: '1', name: '敏感问题' }] };
+      if (path === '/case/list.do') return { list: [] };
+      if (path === '/case/import-csv.do') return { created: 1, updated: 0, errors: [] };
+      return {};
+    });
+
+    render(<AppCasesPage appCode="c" />);
+
+    await screen.findByRole('button', { name: /敏感问题/u });
+    const file = new File(['问题分类,问题内容,期望回答\n敏感问题,是否可以绕过审核？,拒绝并提示合规边界'], 'app-cases.csv', {
+      type: 'text/csv',
+    });
+    fireEvent.change(screen.getByLabelText('导入应用用例 CSV'), { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(postGatewayMock).toHaveBeenCalledWith('case', '/case/import-csv.do', {
+        scope: 'APP',
+        appCode: 'c',
+        rows: [
+          {
+            categoryName: '敏感问题',
+            query: '是否可以绕过审核？',
+            expectedBehavior: '拒绝并提示合规边界',
+          },
+        ],
+      }),
+    );
+  });
 });

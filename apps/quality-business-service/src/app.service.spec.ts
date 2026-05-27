@@ -73,6 +73,44 @@ describe('AppService', () => {
     await expect(service.detail('missing_app')).rejects.toThrow('应用不存在');
   });
 
+  it('enriches detail apps with aggregate stats used by overview pages', async () => {
+    const service = new AppService();
+    (service as unknown as { database: unknown }).database = {
+      find: vi.fn().mockResolvedValue({
+        appCode: 'overview_app',
+        appName: '概览应用',
+        appType: 'CHAT',
+        businessDomain: '应用工作台',
+        invokeUrl: 'http://example.com/chat.do',
+        owner: 'qa',
+        status: 'ENABLED',
+        requestMethod: 'POST',
+        authType: 'NONE',
+        adapterConfig: {
+          response: { answerPath: '$.content', successExpression: '$.code == 0' },
+          ui: { description: '用于概览页统计' },
+        },
+      }),
+      statsByAppCode: vi.fn().mockResolvedValue(new Map([
+        ['overview_app', {
+          caseCount: 143,
+          planCount: 1,
+          lastRunAt: '2026-05-27T02:38:40.978Z',
+          lastPassRate: 20,
+        }],
+      ])),
+    };
+
+    await expect(service.detail('overview_app')).resolves.toMatchObject({
+      appCode: 'overview_app',
+      stats: {
+        caseCount: 143,
+        planCount: 1,
+        lastPassRate: 20,
+      },
+    });
+  });
+
   it('enriches list apps with protocol fields and aggregate stats', async () => {
     const service = new AppService();
     (service as unknown as { database: unknown }).database = {
@@ -162,12 +200,17 @@ describe('AppService', () => {
       answerPath: '$.data.answer',
       successExpression: '$.success == true',
       streamEnabled: true,
+      appConcurrency: 6,
     });
 
     expect(saved.requestMethod).toBe('GET');
     expect(saved.answerPath).toBe('$.data.answer');
+    expect(saved.appConcurrency).toBe(6);
     expect((await service.detail('credit_assistant')).icon).toEqual(iconBeforeSave);
-    expect((await service.protocolDetail('credit_assistant')).invokeUrl).toContain('/search.do');
+    expect(await service.protocolDetail('credit_assistant')).toMatchObject({
+      invokeUrl: expect.stringContaining('/search.do'),
+      appConcurrency: 6,
+    });
     await expect(service.testProtocol('credit_assistant', { query: '信用修复' })).resolves.toMatchObject({
       success: true,
       appCode: 'credit_assistant',
@@ -192,6 +235,7 @@ describe('AppService', () => {
 
     expect(initial.configured).toBe(false);
     expect(initial.modelId).toBe('');
+    expect(initial.evaluationConcurrency).toBe(3);
     expect(initial.systemPrompt).toContain('AI 应用质量评估裁判');
     expect(initial.effectivePrompt).toBe(initial.systemPrompt);
 
@@ -199,16 +243,40 @@ describe('AppService', () => {
       modelId: '4',
       promptOverrideEnabled: true,
       customPrompt: '请严格判断回答是否符合期望。',
+      evaluationConcurrency: 5,
     });
 
     expect(saved.configured).toBe(true);
     expect(saved.modelId).toBe('4');
     expect(saved.promptOverrideEnabled).toBe(true);
+    expect(saved.evaluationConcurrency).toBe(5);
     expect(saved.effectivePrompt).toBe('请严格判断回答是否符合期望。');
     await expect(service.evaluationConfigDetail('credit_assistant')).resolves.toMatchObject({
       configured: true,
       modelId: '4',
       customPrompt: '请严格判断回答是否符合期望。',
+      evaluationConcurrency: 5,
+    });
+  });
+
+  it('clamps protocol and evaluation concurrency into the supported range', async () => {
+    const service = new AppService();
+    await service.create({
+      appCode: 'concurrency_app',
+      appName: '并发应用',
+      appType: 'CHATBOT',
+      businessDomain: '信用服务',
+      invokeUrl: 'http://127.0.0.1:3104/search.do',
+    });
+
+    await expect(service.saveProtocol('concurrency_app', { appConcurrency: 999 })).resolves.toMatchObject({
+      appConcurrency: 10,
+    });
+    await expect(service.saveEvaluationConfig('concurrency_app', {
+      modelId: '4',
+      evaluationConcurrency: 0,
+    })).resolves.toMatchObject({
+      evaluationConcurrency: 1,
     });
   });
 });

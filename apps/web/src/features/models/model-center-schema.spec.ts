@@ -35,6 +35,9 @@ describe('model-center-schema', () => {
           toolCalling: 'false',
           thinkingEnabled: 'true',
           dimensions: '',
+          normalInputPrice: '0.8',
+          cachedInputPrice: '0.2',
+          outputPrice: '2',
         },
         provider,
       ),
@@ -60,6 +63,13 @@ describe('model-center-schema', () => {
       limits: {
         contextWindow: 128000,
         maxOutputTokens: 4000,
+        pricing: {
+          currency: 'CNY',
+          unit: 'PER_MILLION_TOKENS',
+          normalInputPrice: 0.8,
+          cachedInputPrice: 0.2,
+          outputPrice: 2,
+        },
       },
     });
   });

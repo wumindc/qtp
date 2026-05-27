@@ -4,8 +4,8 @@
  * @author Antigravity/Gemini-2.5-Pro
  * @author codex
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid, Edit, Trash2, MessageSquare, Target } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from 'react';
+import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid, Edit, Trash2, MessageSquare, Target, Upload, Download } from 'lucide-react';
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
 import { postGateway } from '@/lib/api/gateway-client';
+import { buildCaseCsvTemplate, buildCaseExportFilename, downloadCaseCsv, formatCaseCsv, parseCaseCsv, readCaseCsvFile } from '@/features/cases/case-csv';
+import { importCaseCsvRows } from '@/features/cases/api/case-api';
+import { loadApp } from './api/app-api';
 import {
   Dialog,
   DialogContent,
@@ -133,9 +136,19 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
   const [selectedPresetCategoryIds, setSelectedPresetCategoryIds] = useState<string[]>([]);
   const [presetLoading, setPresetLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [appDisplayName, setAppDisplayName] = useState(appCode);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const categoryNameById = useMemo(
     () => new Map(categories.map((category) => [category.id, category.name])),
     [categories],
+  );
+  const csvExportRows = useMemo(
+    () => cases.map((testCase) => ({
+      categoryName: categoryNameById.get(testCase.categoryId) ?? '未分类',
+      query: testCase.query,
+      expectedBehavior: testCase.expectedBehavior,
+    })),
+    [cases, categoryNameById],
   );
 
   const loadData = useCallback(async (kw = keyword, cat = activeCategoryId) => {
@@ -156,6 +169,13 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
   }, [appCode, keyword, activeCategoryId]);
 
   useEffect(() => { void loadData(); }, [loadData]);
+
+  useEffect(() => {
+    setAppDisplayName(appCode);
+    void loadApp(appCode)
+      .then((app) => setAppDisplayName(app?.appName || appCode))
+      .catch(() => setAppDisplayName(appCode));
+  }, [appCode]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,9 +284,36 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    downloadCaseCsv('应用用例导入模板.csv', buildCaseCsvTemplate());
+  };
+
+  const handleExportCases = () => {
+    downloadCaseCsv(buildCaseExportFilename(`${appDisplayName}_应用用例导出`), formatCaseCsv(csvExportRows));
+  };
+
+  const handleImportCsv = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const rows = parseCaseCsv(await readCaseCsvFile(file));
+      if (rows.length === 0) {
+        toast.error('CSV 中没有可导入的用例');
+        return;
+      }
+      await importCaseCsvRows('APP', rows, appCode);
+      toast.success(`导入完成，共 ${rows.length} 条`);
+      await loadData(keyword, activeCategoryId);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '导入失败');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6 h-[calc(100vh-6rem)] flex flex-col">
-      <div className="flex items-center justify-between shrink-0">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
             <ClipboardList className="h-5 w-5 text-primary" />
@@ -276,7 +323,24 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
             <p className="text-sm text-muted-foreground">共 {cases.length} 条用例</p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <input
+            ref={importInputRef}
+            aria-label="导入应用用例 CSV"
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(event) => void handleImportCsv(event)}
+          />
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadTemplate}>
+            <Download className="h-4 w-4" />下载模板
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => importInputRef.current?.click()}>
+            <Upload className="h-4 w-4" />导入 CSV
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleExportCases} disabled={csvExportRows.length === 0}>
+            <Download className="h-4 w-4" />导出 CSV
+          </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCategoryDialogOpen(true)}>
             <FolderPlus className="h-4 w-4" />新建分类
           </Button>

@@ -30,6 +30,9 @@ export interface AppRecord {
       answerPath: string;
       successExpression: string;
     };
+    execution?: {
+      appConcurrency: number;
+    };
   };
   stats?: AppStats;
   icon?: AppIconConfig;
@@ -69,6 +72,7 @@ export interface CreateAppRequest {
   answerPath?: string;
   successExpression?: string;
   streamEnabled?: boolean;
+  appConcurrency?: number;
   icon?: Partial<AppIconConfig>;
 }
 
@@ -88,6 +92,7 @@ export interface AppProtocolDetail {
   answerPath: string;
   successExpression: string;
   streamEnabled: boolean;
+  appConcurrency: number;
 }
 
 export interface AppProtocolSaveRequest {
@@ -102,6 +107,7 @@ export interface AppProtocolSaveRequest {
   answerPath?: string;
   successExpression?: string;
   streamEnabled?: boolean;
+  appConcurrency?: number;
 }
 
 export interface AppEvaluationConfigRecord {
@@ -112,12 +118,14 @@ export interface AppEvaluationConfigRecord {
   systemPrompt: string;
   customPrompt: string;
   effectivePrompt: string;
+  evaluationConcurrency: number;
 }
 
 export interface AppEvaluationConfigSaveRequest {
   modelId: string;
   promptOverrideEnabled?: boolean;
   customPrompt?: string;
+  evaluationConcurrency?: number;
 }
 
 export interface AppProtocolTestResult {
@@ -165,8 +173,11 @@ const DEFAULT_HEADER_TEMPLATE = '{\n  "Content-Type": "application/json"\n}';
 const DEFAULT_BODY_TEMPLATE = '{\n  "query": "{{case.input.query}}"\n}';
 const DEFAULT_REQUEST_SCHEMA = '{\n  "query": "string"\n}';
 const DEFAULT_RESPONSE_SCHEMA = '{\n  "data": {\n    "content": "string"\n  }\n}';
-const DEFAULT_ANSWER_PATH = '$.data.content';
+const DEFAULT_ANSWER_PATH = '$.content';
 const DEFAULT_SUCCESS_EXPRESSION = '$.code == 0';
+const DEFAULT_EXECUTION_CONCURRENCY = 3;
+const MIN_EXECUTION_CONCURRENCY = 1;
+const MAX_EXECUTION_CONCURRENCY = 10;
 export const DEFAULT_EVALUATION_PROMPT = [
   '你是 AI 应用质量评估裁判。',
   '请根据测试用例的问题内容、期望回答和被测应用实际回答，判断实际回答是否满足期望。',
@@ -179,6 +190,12 @@ class AppDatabase {
 
   constructor() {
     this.prismaPromise = this.createClient();
+  }
+
+  private normalizeConcurrency(value: unknown) {
+    const numberValue = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+    if (!Number.isFinite(numberValue)) return DEFAULT_EXECUTION_CONCURRENCY;
+    return Math.max(MIN_EXECUTION_CONCURRENCY, Math.min(MAX_EXECUTION_CONCURRENCY, Math.round(numberValue)));
   }
 
   /**
@@ -247,6 +264,7 @@ class AppDatabase {
       modelId: BigInt(record.modelId),
       promptOverrideEnabled: record.promptOverrideEnabled,
       customPrompt: record.customPrompt || null,
+      evaluationConcurrency: record.evaluationConcurrency,
     };
     const saved = await prisma.appEvaluationConfig.upsert({
       where: { appCode: record.appCode },
@@ -279,6 +297,9 @@ class AppDatabase {
           description: record.description ?? '',
         },
         response: record.adapterConfig.response,
+        execution: {
+          appConcurrency: this.normalizeConcurrency(record.adapterConfig.execution?.appConcurrency),
+        },
         templates: {
           headerTemplate: record.headerTemplate,
           bodyTemplate: record.bodyTemplate,
@@ -296,6 +317,7 @@ class AppDatabase {
     const appCode = String(data.appCode);
     const appName = String(data.appName);
     const response = this.asRecord(adapterConfig.response);
+    const execution = this.asRecord(adapterConfig.execution);
     const templates = this.asRecord(adapterConfig.templates);
     const ui = this.asRecord(adapterConfig.ui);
     const icon = normalizeAppIconConfig(ui.icon) ?? createStableAppIconConfig(`${appCode}:${appName}`);
@@ -322,6 +344,9 @@ class AppDatabase {
           answerPath: String(response.answerPath ?? DEFAULT_ANSWER_PATH),
           successExpression: String(response.successExpression ?? DEFAULT_SUCCESS_EXPRESSION),
         },
+        execution: {
+          appConcurrency: this.normalizeConcurrency(execution.appConcurrency),
+        },
       },
       icon,
     };
@@ -334,6 +359,7 @@ class AppDatabase {
       modelId: String(data.modelId ?? ''),
       promptOverrideEnabled: data.promptOverrideEnabled === true,
       customPrompt: typeof data.customPrompt === 'string' ? data.customPrompt : '',
+      evaluationConcurrency: this.normalizeConcurrency(data.evaluationConcurrency),
     };
   }
 
@@ -403,7 +429,7 @@ export class AppService {
   private readonly apps = new Map<string, AppRecord>();
   private readonly evaluationConfigs = new Map<string, Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'>>();
 
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(private readonly fetchImpl: typeof fetch = fetch) { }
 
   /**
    * @author codex
@@ -456,6 +482,9 @@ export class AppService {
           answerPath: request.answerPath ?? DEFAULT_ANSWER_PATH,
           successExpression: request.successExpression ?? DEFAULT_SUCCESS_EXPRESSION,
         },
+        execution: {
+          appConcurrency: this.normalizeConcurrency(request.appConcurrency),
+        },
       },
       icon: normalizeAppIconConfig(request.icon) ?? createRandomAppIconConfig(),
     };
@@ -472,7 +501,7 @@ export class AppService {
    * Returns the canonical application record used by frontend workspace pages.
    */
   async detail(appCode: string): Promise<AppRecord> {
-    return this.getApp(appCode);
+    return this.enrichAppStats(await this.getApp(appCode));
   }
 
   async update(appCode: string, request: UpdateAppRequest): Promise<AppRecord> {
@@ -528,6 +557,7 @@ export class AppService {
       modelId,
       promptOverrideEnabled,
       customPrompt,
+      evaluationConcurrency: this.normalizeConcurrency(request.evaluationConcurrency),
     };
     const saved = await this.database.saveEvaluationConfig(record);
     const next = saved ?? record;
@@ -553,6 +583,9 @@ export class AppService {
         response: {
           answerPath: request.answerPath ?? app.adapterConfig.response.answerPath,
           successExpression: request.successExpression ?? app.adapterConfig.response.successExpression,
+        },
+        execution: {
+          appConcurrency: this.normalizeConcurrency(request.appConcurrency ?? app.adapterConfig.execution?.appConcurrency),
         },
       },
     };
@@ -629,6 +662,18 @@ export class AppService {
     return app;
   }
 
+  /**
+   * @author codex
+   * Aligns detail pages with list-card aggregate statistics.
+   */
+  private async enrichAppStats(app: AppRecord): Promise<AppRecord> {
+    const statsByAppCode = await this.database.statsByAppCode([app.appCode]);
+    return {
+      ...app,
+      stats: statsByAppCode?.get(app.appCode) ?? app.stats,
+    };
+  }
+
   private async resolveCreateAppCode(rawCode: string | undefined, appName: string) {
     const explicitCode = rawCode?.trim();
     if (explicitCode) {
@@ -682,6 +727,7 @@ export class AppService {
       answerPath: app.adapterConfig.response.answerPath,
       successExpression: app.adapterConfig.response.successExpression,
       streamEnabled: app.streamEnabled,
+      appConcurrency: this.normalizeConcurrency(app.adapterConfig.execution?.appConcurrency),
     };
   }
 
@@ -700,7 +746,14 @@ export class AppService {
       systemPrompt: DEFAULT_EVALUATION_PROMPT,
       customPrompt,
       effectivePrompt,
+      evaluationConcurrency: this.normalizeConcurrency(config?.evaluationConcurrency),
     };
+  }
+
+  private normalizeConcurrency(value: unknown) {
+    const numberValue = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+    if (!Number.isFinite(numberValue)) return DEFAULT_EXECUTION_CONCURRENCY;
+    return Math.max(MIN_EXECUTION_CONCURRENCY, Math.min(MAX_EXECUTION_CONCURRENCY, Math.round(numberValue)));
   }
 
   private renderTemplate(template: string, data: Record<string, unknown>) {

@@ -14,7 +14,7 @@ describe('postGateway', () => {
 
     await expect(postGateway('ai', '/provider/model/create.do', { modelName: 'Qwen' })).resolves.toEqual({ id: 'model-1' });
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8080/ai-quality-platform/api/ai/provider/model/create.do',
+      'http://localhost:8080/ai-quality-platform/api/ai/provider/model/create.do',
       expect.objectContaining({
         body: JSON.stringify({ modelName: 'Qwen' }),
         headers: { 'Content-Type': 'application/json' },

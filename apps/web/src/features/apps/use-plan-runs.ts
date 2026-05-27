@@ -70,7 +70,7 @@ function readRunSortTime(run: RunRecord): number {
   return Number.isFinite(legacyTime) ? legacyTime : 0;
 }
 
-async function loadPlanCategories(appCode: string): Promise<Category[]> {
+export async function loadPlanCategories(appCode: string): Promise<Category[]> {
   const [appCategoryResponse, subscribedCategoryResponse] = await Promise.all([
     postGateway<unknown>(
       'case',

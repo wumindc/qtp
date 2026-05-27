@@ -39,6 +39,16 @@ export interface ModelLimits {
   embeddingDimensions?: number;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  pricing?: ModelPricing;
+}
+
+export interface ModelPricing {
+  currency?: 'CNY';
+  unit?: 'PER_MILLION_TOKENS';
+  normalInputPrice?: number | null;
+  cachedInputPrice?: number | null;
+  outputPrice?: number | null;
+  cacheWriteInputPrice?: number | null;
 }
 
 export interface ModelProviderRecord {
@@ -78,6 +88,9 @@ export interface ModelFormState {
   toolCalling: string;
   thinkingEnabled: string;
   dimensions: string;
+  normalInputPrice: string;
+  cachedInputPrice: string;
+  outputPrice: string;
 }
 
 export interface ProviderFormState {

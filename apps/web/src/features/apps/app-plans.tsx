@@ -110,15 +110,21 @@ function buildCaseFilter(form: {
 function RunningStatusArea({ run }: { run: RunRecord }) {
   const startTime = run.startAt ? new Date(run.startAt) : parseRunStartTime(run.runCode);
   const elapsed = startTime ? Date.now() - startTime.getTime() : null;
-
-  // 已处理用例数（后端边跑边写，不代表最终结果）
-  const doneCount = run.passCount + run.failCount + run.reviewCount;
-  // 最多显示 99%，等状态切换到 COMPLETED 后再显示完成态
+  const phase = run.phase ?? 'APP_CALLING';
+  const phaseLabel = phase === 'EVALUATING'
+    ? '评估中'
+    : phase === 'COSTING'
+      ? '费用汇总中'
+      : '接口执行中';
+  const doneCount = phase === 'EVALUATING'
+    ? (run.evalCompletedCount ?? 0)
+    : phase === 'COSTING'
+      ? run.totalCount
+      : (run.appCompletedCount ?? 0);
   const progress = run.totalCount > 0
     ? Math.min(Math.round((doneCount / run.totalCount) * 100), 99)
     : 0;
-  // 所有用例已处理但状态还未切换时，提示「汇总中」
-  const isSummarizing = run.totalCount > 0 && doneCount >= run.totalCount;
+  const isSummarizing = phase === 'COSTING';
 
   return (
     <div className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
@@ -126,7 +132,7 @@ function RunningStatusArea({ run }: { run: RunRecord }) {
         <div className="flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
           <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
-            {isSummarizing ? '结果汇总中...' : '执行中'}
+            {phaseLabel}
           </span>
           {run.sequenceNo && (
             <span className="text-xs text-blue-500">{formatRunSequence(run)}</span>
@@ -149,7 +155,7 @@ function RunningStatusArea({ run }: { run: RunRecord }) {
       {run.totalCount > 0 && (
         <div className="mt-2 space-y-1.5">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{isSummarizing ? '正在生成报告' : '执行进度'}</span>
+            <span>{phase === 'EVALUATING' ? '评估进度' : phase === 'COSTING' ? '计费进度' : '接口进度'}</span>
             <span className="font-mono text-blue-500">
               {doneCount} / {run.totalCount}
             </span>
@@ -167,7 +173,7 @@ function RunningStatusArea({ run }: { run: RunRecord }) {
           </div>
           <p className="text-xs text-muted-foreground">
             {isSummarizing
-              ? '所有用例已处理，等待后端切换最终状态...'
+              ? '正在汇总 token 与费用，完成后显示最终结果。'
               : doneCount > 0
                 ? `已处理 ${doneCount} 条，完成后显示最终结果`
                 : '等待执行引擎分配任务...'}
@@ -601,7 +607,6 @@ export function AppPlansPage({ appCode }: { appCode: string }) {
     async (plan: PlanRecord) => {
       // @author codex 本地标记执行中（立即更新按钮状态）
       setExecutingPlanCodes((prev) => new Set(prev).add(plan.planCode));
-      toast.success(`已触发「${plan.planName}」，正在执行...`);
 
       try {
         const run = await startPlan(plan.planCode, plan.appCode);

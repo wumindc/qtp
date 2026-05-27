@@ -155,11 +155,28 @@ describe('ProviderService', () => {
         temperature: 0.2,
         maxOutputTokens: 2048,
       },
+      limits: {
+        pricing: {
+          currency: 'CNY',
+          unit: 'PER_MILLION_TOKENS',
+          normalInputPrice: 0.8,
+          cachedInputPrice: 0.2,
+          outputPrice: 2,
+        },
+      },
     });
 
     expect(created.enabled).toBe(true);
     expect(created.protocol).toBe('DASHSCOPE_COMPATIBLE_CHAT');
     expect(created.parameters.temperature).toBe(0.2);
+    expect(created.limits.pricing).toEqual({
+      currency: 'CNY',
+      unit: 'PER_MILLION_TOKENS',
+      normalInputPrice: 0.8,
+      cachedInputPrice: 0.2,
+      outputPrice: 2,
+      cacheWriteInputPrice: null,
+    });
     expect((await service.modelList({ providerCode: 'qwen-main', modelType: 'LLM' }, { currentPage: 1, linesPerPage: 10 })).page.totalNum).toBe(1);
     expect(await service.testModelConnection(created.id)).toMatchObject({
       id: created.id,
@@ -172,6 +189,32 @@ describe('ProviderService', () => {
     expect((await service.updateModel(created.id, { parameters: { temperature: 0.1 } })).parameters.temperature).toBe(0.1);
     expect((await service.changeModelStatus(created.id, false)).enabled).toBe(false);
     expect((await service.deleteModel(created.id)).id).toBe(created.id);
+  });
+
+  it('rejects negative model token prices', async () => {
+    const service = new ProviderService();
+    await service.create({
+      providerCode: 'qwen-main',
+      providerName: '通义千问',
+      providerType: 'QWEN',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'sk-test',
+    });
+
+    await expect(service.createModel({
+      modelName: 'Qwen Plus 模型',
+      providerCode: 'qwen-main',
+      modelId: 'qwen-plus',
+      modelType: 'LLM',
+      limits: {
+        pricing: {
+          currency: 'CNY',
+          unit: 'PER_MILLION_TOKENS',
+          normalInputPrice: -1,
+          outputPrice: 2,
+        },
+      },
+    })).rejects.toThrow('模型价格不能为负数');
   });
 
   it('supports embedding model test payloads for compatible providers', async () => {

@@ -40,6 +40,11 @@ const PUBLIC_SERVICE_SEGMENTS: Record<BackendServiceKey, string> = {
   system: 'system',
 };
 
+type BrowserLocationLike = {
+  hostname?: string;
+  protocol?: string;
+};
+
 /**
  * @author codex
  * Centralizes planned local ports so frontend and services do not drift.
@@ -58,10 +63,30 @@ export function getLocalServiceUrl(service: BackendServiceKey): string {
 
 /**
  * @author codex
+ * Uses the browser page host for public gateway calls so LAN access does not call the visitor's own localhost.
+ */
+function getPublicGatewayOrigin(): string {
+  const location = (globalThis as { location?: BrowserLocationLike }).location;
+  const hostname = location?.hostname || '127.0.0.1';
+  const protocol = location?.protocol === 'https:' ? 'https:' : 'http:';
+  return `${protocol}//${hostname}:${GATEWAY_PORT}`;
+}
+
+/**
+ * @author codex
+ * Builds public gateway URLs that should follow the current browser host.
+ */
+export function getGatewayPublicUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${getPublicGatewayOrigin()}${normalizedPath}`;
+}
+
+/**
+ * @author codex
  * Builds the public URL that frontend code should call through the gateway.
  */
 export function getGatewayApiUrl(service: BackendServiceKey, path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
 
-  return `http://127.0.0.1:${GATEWAY_PORT}/${CONTEXT_PATH}/api/${PUBLIC_SERVICE_SEGMENTS[service]}${normalizedPath}`;
+  return getGatewayPublicUrl(`/${CONTEXT_PATH}/api/${PUBLIC_SERVICE_SEGMENTS[service]}${normalizedPath}`);
 }

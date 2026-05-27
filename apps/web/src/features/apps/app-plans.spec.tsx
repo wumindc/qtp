@@ -145,12 +145,52 @@ describe('AppPlansPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '确认执行' }));
 
     await waitFor(() => expect(startPlanMock).toHaveBeenCalled());
-    expect(await screen.findByText('执行中')).toBeInTheDocument();
-    expect(screen.getAllByText('执行中')).toHaveLength(1);
+    expect(await screen.findByText('接口执行中')).toBeInTheDocument();
+    expect(screen.getAllByText('接口执行中')).toHaveLength(1);
     expect(await screen.findByText('0 / 3')).toBeInTheDocument();
     expect(await screen.findByText('第 2 次')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /执行中|立即执行/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '删除计划' })).not.toBeInTheDocument();
+  });
+
+  it('shows a single success toast when starting a running execution', async () => {
+    listPlansMock.mockResolvedValue([
+      {
+        planCode: 'plan-c-1',
+        planName: '全量测试',
+        appCode: 'c',
+        caseFilter: {},
+        status: 'ENABLED',
+      },
+    ]);
+    listRunsMock.mockResolvedValue([]);
+    postGatewayMock.mockResolvedValue({ list: [] });
+    startPlanMock.mockResolvedValue({
+      runCode: 'run-started',
+      planCode: 'plan-c-1',
+      appCode: 'c',
+      status: 'RUNNING',
+      totalCount: 143,
+      passCount: 0,
+      failCount: 0,
+      reviewCount: 0,
+      avgScore: 0,
+      sequenceNo: 10,
+      startAt: '2026-05-27T02:38:40.000Z',
+    });
+
+    render(<AppPlansPage appCode="c" />);
+
+    expect(await screen.findByText('全量测试')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /立即执行/u }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认执行' }));
+
+    await waitFor(() => expect(startPlanMock).toHaveBeenCalledWith('plan-c-1', 'c'));
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+      expect(toastSuccessMock).toHaveBeenCalledWith('执行批次已创建，共 143 条用例，正在执行...');
+    });
   });
 
   it('creates a plan without exposing or submitting plan type', async () => {

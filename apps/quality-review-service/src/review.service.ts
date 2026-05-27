@@ -4,7 +4,7 @@ import { pageResult } from '@ai-quality-platform/shared-http';
 export interface ReviewRecord {
   resultId: string;
   reviewStatus: 'PENDING' | 'REVIEWED';
-  manualResult?: string;
+  manualResult?: string | null;
   problemType?: string;
   reviewComment?: string;
   nextAction?: string;
@@ -39,7 +39,7 @@ class ReviewDatabase {
       data: {
         resultId: BigInt(request.resultId),
         reviewStatus: 'REVIEWED',
-        manualResult: request.manualResult,
+        manualResult: request.manualResult ?? null,
         problemType: request.problemType,
         reviewComment: request.reviewComment,
         nextAction: request.nextAction,
@@ -60,7 +60,7 @@ class ReviewDatabase {
     return {
       resultId: String(data.resultId),
       reviewStatus: data.reviewStatus === 'REVIEWED' ? 'REVIEWED' : 'PENDING',
-      manualResult: typeof data.manualResult === 'string' ? data.manualResult : undefined,
+      manualResult: typeof data.manualResult === 'string' ? data.manualResult : data.manualResult === null ? null : undefined,
       problemType: typeof data.problemType === 'string' ? data.problemType : undefined,
       reviewComment: typeof data.reviewComment === 'string' ? data.reviewComment : undefined,
       nextAction: typeof data.nextAction === 'string' ? data.nextAction : undefined,

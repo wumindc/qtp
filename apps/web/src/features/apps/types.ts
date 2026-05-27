@@ -22,11 +22,13 @@ export interface AppProtocol {
   headers: string;
   /** JSON 模板，{{case.query}} 会被用例输入替换 */
   body: string;
-  /** JSONPath 提取答案文本，如 $.data.content */
+  /** JSONPath 提取答案文本，如 $.content */
   answerPath: string;
   /** 接口成功条件，如 $.code == 0 */
   successExpr: string;
   streamEnabled: boolean;
+  /** 执行计划批量调用被测应用接口的并发数 */
+  appConcurrency: number;
 }
 
 /* ── AI 应用 ── */

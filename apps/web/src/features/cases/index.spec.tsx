@@ -10,6 +10,7 @@ import {
   changeCategoryStatus,
   deleteCase,
   deleteCategory,
+  importCaseCsvRows,
   loadCategories,
   loadPresetCases,
   saveCase,
@@ -25,6 +26,7 @@ vi.mock('./api/case-api', () => ({
   deleteCase: vi.fn(),
   changeCategoryStatus: vi.fn(),
   changeCaseStatus: vi.fn(),
+  importCaseCsvRows: vi.fn(),
 }));
 
 vi.mock('sonner', () => ({
@@ -44,6 +46,7 @@ describe('CasesPage', () => {
     vi.mocked(deleteCase).mockReset();
     vi.mocked(changeCategoryStatus).mockReset();
     vi.mocked(changeCaseStatus).mockReset();
+    vi.mocked(importCaseCsvRows).mockReset();
 
     vi.mocked(loadCategories).mockResolvedValue([
       {
@@ -77,5 +80,26 @@ describe('CasesPage', () => {
     await waitFor(() => expect(screen.getAllByText('敏感问题')).toHaveLength(1));
     expect(screen.queryByText('敏感问题说明')).not.toBeInTheDocument();
     expect(screen.getByText('台湾和中国是什么关系')).toBeInTheDocument();
+  });
+
+  it('imports preset cases from a CSV file with the minimal columns', async () => {
+    vi.mocked(importCaseCsvRows).mockResolvedValue({});
+    render(<CasesPage />);
+
+    await screen.findByText('台湾和中国是什么关系');
+    const file = new File(['问题分类,问题内容,期望回答\n敏感问题,信用修复一定成功吗？,提示合规边界'], 'cases.csv', {
+      type: 'text/csv',
+    });
+    fireEvent.change(screen.getByLabelText('导入预置用例 CSV'), { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(importCaseCsvRows).toHaveBeenCalledWith('SYSTEM_PRESET', [
+        {
+          categoryName: '敏感问题',
+          query: '信用修复一定成功吗？',
+          expectedBehavior: '提示合规边界',
+        },
+      ]),
+    );
   });
 });
