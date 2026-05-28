@@ -109,8 +109,17 @@ export function AnimatedLoginLayout({
         <div 
           className={`flex-1 flex flex-col items-center justify-center relative ${rightPanelClassName}`}
         >
+          {/* 移动端专属：顶部 Logo & Title */}
+          <div className="absolute top-6 left-6 flex flex-col gap-1 lg:hidden z-20">
+            <div className="flex items-center gap-2">
+              {logo && <div className="[&>svg]:w-6 [&>svg]:h-6">{logo}</div>}
+              {title && <span className="text-lg font-bold text-foreground/90">{title}</span>}
+            </div>
+            {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+          </div>
+
           {topRight && (
-            <div className="absolute top-6 right-8 z-20">
+            <div className="absolute top-6 right-6 lg:right-8 z-20">
               {topRight}
             </div>
           )}
@@ -132,6 +141,13 @@ export function AnimatedLoginLayout({
               {children}
             </div>
           </div>
+
+          {/* 移动端专属：底部文字 */}
+          {footer && (
+            <div className="absolute bottom-6 left-0 right-0 text-center text-xs text-muted-foreground lg:hidden z-20 px-4">
+              {footer}
+            </div>
+          )}
         </div>
       </div>
     </LoginAnimationContext.Provider>
