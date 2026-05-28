@@ -577,16 +577,16 @@ export function AppHistoryDetail({ runCode, backHref, onBack }: AppHistoryDetail
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex gap-4">
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-4">
         {/* 左侧分类导航 */}
         {categoryStats.length > 1 && (
-          <div className="w-48 shrink-0 border border-border bg-card rounded-xl flex flex-col overflow-hidden">
-            <div className="p-3 border-b border-border text-xs font-semibold text-muted-foreground bg-muted/20">用例分类</div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          <div className="w-full md:w-48 shrink-0 border border-border bg-card rounded-xl flex flex-col overflow-hidden">
+            <div className="p-3 border-b border-border text-xs font-semibold text-muted-foreground bg-muted/20 hidden md:block">用例分类</div>
+            <div className="flex-none md:flex-1 flex md:flex-col overflow-x-auto md:overflow-y-auto md:overflow-x-hidden p-2 gap-1 hide-scrollbar whitespace-nowrap md:whitespace-normal">
               <button
                 onClick={() => setSelectedCategory('ALL')}
                 className={cn(
-                  'w-full flex items-center justify-between px-2.5 py-2 rounded-md text-sm transition-colors text-left',
+                  'w-auto md:w-full flex items-center justify-between px-2.5 py-2 rounded-md text-sm transition-colors text-left shrink-0',
                   selectedCategory === 'ALL' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground',
                 )}
               >
@@ -601,7 +601,7 @@ export function AppHistoryDetail({ runCode, backHref, onBack }: AppHistoryDetail
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
                   className={cn(
-                    'w-full flex items-center justify-between px-2.5 py-2 rounded-md text-sm transition-colors text-left',
+                    'w-auto md:w-full flex items-center justify-between px-2.5 py-2 rounded-md text-sm transition-colors text-left shrink-0',
                     selectedCategory === cat.id ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground',
                   )}
                 >

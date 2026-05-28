@@ -201,8 +201,8 @@ function LatestRunSummary({
       onClick={() => onSelect(run.runCode)}
       className="mt-3 w-full text-left rounded-xl border border-border/60 bg-muted/20 px-4 py-3 hover:border-primary/30 hover:bg-primary/5 transition-all duration-150 group cursor-pointer"
     >
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground w-full md:w-auto">
           <span className="flex items-center gap-1 text-foreground font-medium group-hover:text-primary transition-colors">
             <Clock3 className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
             {formatRunActionLabel(run)}
@@ -218,8 +218,8 @@ function LatestRunSummary({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center justify-between md:justify-end gap-4 w-full md:w-auto mt-2 md:mt-0">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-emerald-500 flex items-center gap-1">
               <CheckCircle2 className="h-3.5 w-3.5" /> {run.passCount}
             </span>
@@ -384,10 +384,10 @@ function PlanCard({
       )}
     >
       {/* ── 卡片主体 ── */}
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-4">
+      <div className="p-4 md:p-5">
+        <div className="flex flex-col md:flex-row items-start justify-between gap-4">
           {/* 左侧信息 */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 w-full">
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <h3 className="text-sm font-semibold text-foreground">{plan.planName}</h3>
             </div>
@@ -416,7 +416,7 @@ function PlanCard({
 
           {/* 右侧操作 */}
           {!isRunning && (
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center justify-end gap-2 shrink-0 w-full md:w-auto mt-2 md:mt-0">
               <PopoverConfirm
                 trigger={
                   <Button
@@ -696,17 +696,17 @@ export function AppPlansPage({ appCode }: { appCode: string }) {
   return (
     <div className="space-y-6">
       {/* 页头 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
             <Layers3 className="h-5 w-5 text-primary" />
           </div>
           <div>
             <h1 className="text-xl font-bold text-foreground">执行计划</h1>
-            <p className="text-sm text-muted-foreground">
-              共 {plans.length} 个计划
+            <p className="text-sm text-muted-foreground flex flex-wrap gap-1">
+              <span>共 {plans.length} 个计划</span>
               {plans.length > 0 && (
-                <span className="ml-2">
+                <span className="text-muted-foreground/60">
                   · 总执行{' '}
                   {Array.from(totalRunsByPlan.values()).reduce((a, b) => a + b, 0)} 次
                 </span>
@@ -714,7 +714,7 @@ export function AppPlansPage({ appCode }: { appCode: string }) {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
           <Button
             size="sm"
             variant="ghost"

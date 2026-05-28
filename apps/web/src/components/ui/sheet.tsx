@@ -9,6 +9,7 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 export const Sheet = DialogPrimitive.Root;
+export const SheetTrigger = DialogPrimitive.Trigger;
 const SheetPortal = DialogPrimitive.Portal;
 
 const SheetOverlay = React.forwardRef<

@@ -174,7 +174,7 @@ function RecentRunItem({ run }: { run: DashboardRun }) {
   return (
     <Link
       href={href}
-      className="group grid gap-4 border-t border-border py-4 first:border-t-0 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_260px]"
+      className="group flex flex-col md:grid gap-4 border-t border-border py-4 first:border-t-0 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_260px]"
     >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
@@ -201,7 +201,7 @@ function RecentRunItem({ run }: { run: DashboardRun }) {
           </span>
         </div>
       </div>
-      <div className="flex items-center justify-between gap-5 md:justify-end">
+      <div className="flex items-center justify-between gap-5 md:justify-end mt-1 md:mt-0 pt-3 border-t border-border/50 md:border-0 md:pt-0">
         <div className="min-w-[108px] text-left md:text-right">
           <p className={cn('text-lg font-semibold', passRateColor(passRate))}>{passRate}%</p>
           <p className="text-xs text-muted-foreground">{`${run.passCount} / ${run.totalCount} 通过`}</p>

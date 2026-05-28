@@ -5,12 +5,13 @@
  * @author codex
  */
 import { useMemo, useState, useEffect, useCallback, useRef, type ChangeEvent } from 'react';
-import { Plus, RefreshCw, Search, FileText, FolderTree, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Trash2, Pencil, Upload, Download } from 'lucide-react';
+import { Plus, RefreshCw, Search, FileText, FolderTree, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Trash2, Pencil, Upload, Download, MoreVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { cn } from '@/lib/cn';
@@ -258,29 +259,64 @@ export function CasesPage() {
             className="hidden"
             onChange={(event) => void handleImportCsv(event)}
           />
-          <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
-            <Download className="h-4 w-4" />
-            下载模板
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => importInputRef.current?.click()}>
-            <Upload className="h-4 w-4" />
-            导入 CSV
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportCases} disabled={activeTab !== 'cases' || csvExportRows.length === 0}>
-            <Download className="h-4 w-4" />
-            导出 CSV
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={refreshing}>
-            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-            {refreshing ? '刷新中' : '刷新'}
-          </Button>
+          <div className="hidden md:flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+              <Download className="h-4 w-4" />
+              下载模板
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => importInputRef.current?.click()}>
+              <Upload className="h-4 w-4" />
+              导入 CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportCases} disabled={activeTab !== 'cases' || csvExportRows.length === 0}>
+              <Download className="h-4 w-4" />
+              导出 CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={refreshing}>
+              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+              {refreshing ? '刷新中' : '刷新'}
+            </Button>
+          </div>
+
+          {/* 移动端更多操作 */}
+          <div className="md:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon-sm" className="h-9 w-9">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void refresh()} disabled={refreshing}>
+                  <RefreshCw className={cn('h-4 w-4 mr-2', refreshing && 'animate-spin')} />
+                  刷新
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDownloadTemplate}>
+                  <Download className="h-4 w-4 mr-2" />
+                  下载模板
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => importInputRef.current?.click()}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  导入 CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportCases} disabled={activeTab !== 'cases' || csvExportRows.length === 0}>
+                  <Download className="h-4 w-4 mr-2" />
+                  导出 CSV
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <Button
             size="sm"
             disabled={activeTab === 'cases' && categories.length === 0}
             onClick={() => activeTab === 'categories' ? setCategoryDialogOpen(true) : setCaseDialogOpen(true)}
           >
             <Plus className="h-4 w-4" />
-            {activeTab === 'categories' ? '新增分类' : '新增用例'}
+            <span className="hidden sm:inline">
+              {activeTab === 'categories' ? '新增分类' : '新增用例'}
+            </span>
+            <span className="sm:hidden">新增</span>
           </Button>
         </div>
       </div>
@@ -309,22 +345,22 @@ export function CasesPage() {
 
         {/* ── 用例面板 ── */}
         <TabsContent value="cases" className="mt-4">
-          <div className="flex gap-4 h-full">
+          <div className="flex flex-col md:flex-row gap-4 h-full">
             {/* 分类侧栏 */}
-            <aside className="w-56 shrink-0 space-y-1">
-              <p className="px-3 text-xs font-medium text-muted-foreground mb-2">测试用例分类</p>
+            <aside className="flex md:w-56 shrink-0 flex-row md:flex-col overflow-x-auto md:overflow-visible hide-scrollbar space-x-2 md:space-x-0 md:space-y-1 pb-2 md:pb-0">
+              <p className="hidden md:block px-3 text-xs font-medium text-muted-foreground mb-2">测试用例分类</p>
               <button
                 type="button"
                 onClick={() => setSelectedCategoryId('ALL')}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
+                  'flex shrink-0 md:w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap',
                   selectedCategoryId === 'ALL'
                     ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    : 'bg-muted/50 md:bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
                 )}
               >
                 <span>全部用例</span>
-                <span className="text-xs opacity-70">{cases.length}</span>
+                <span className="text-xs opacity-70 ml-2">{cases.length}</span>
               </button>
               {categories.map((cat) => (
                 <button
@@ -332,20 +368,21 @@ export function CasesPage() {
                   type="button"
                   onClick={() => setSelectedCategoryId(cat.id)}
                   className={cn(
-                    'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
+                    'flex shrink-0 md:w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap',
                     selectedCategoryId === cat.id
                       ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                      : 'bg-muted/50 md:bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
                     cat.status === '停用' && 'opacity-50',
                   )}
                 >
-                  <span className="truncate text-left">{cat.name}</span>
-                  <span className="text-xs opacity-70 shrink-0 ml-1">{categoryCounts.get(cat.id) ?? 0}</span>
+                  <span className="truncate text-left max-w-[120px] md:max-w-none">{cat.name}</span>
+                  <span className="text-xs opacity-70 shrink-0 ml-2">{categoryCounts.get(cat.id) ?? 0}</span>
                 </button>
               ))}
             </aside>
 
-            <Separator orientation="vertical" className="h-auto" />
+            <Separator orientation="vertical" className="hidden md:block h-auto" />
+            <Separator orientation="horizontal" className="md:hidden w-full" />
 
             {/* 用例列表 */}
             <div className="flex-1 min-w-0 space-y-3">

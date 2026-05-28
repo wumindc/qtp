@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
   loadEvaluationConfig,
@@ -125,20 +126,18 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
 
           <div className="space-y-2">
             <Label htmlFor="judge-model">评估模型</Label>
-            <select
-              id="judge-model"
-              aria-label="评估模型"
-              value={modelId}
-              onChange={(event) => setModelId(event.target.value)}
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-            >
-              <option value="">请选择评估模型</option>
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
+            <Select value={modelId} onValueChange={setModelId}>
+              <SelectTrigger id="judge-model" aria-label="评估模型" className="w-full">
+                <SelectValue placeholder="请选择评估模型" />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {selectedModel ? (

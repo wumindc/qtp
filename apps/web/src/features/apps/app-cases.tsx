@@ -5,8 +5,9 @@
  * @author codex
  */
 import { useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from 'react';
-import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid, Edit, Trash2, MessageSquare, Target, Upload, Download } from 'lucide-react';
+import { ClipboardList, Plus, Search, BookCopy, CheckSquare, Square, Folder, FolderPlus, LayoutGrid, Edit, Trash2, MessageSquare, Target, Upload, Download, MoreVertical } from 'lucide-react';
 import { PopoverConfirm } from '@/components/ui/popover-confirm';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -402,15 +403,43 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
             className="hidden"
             onChange={(event) => void handleImportCsv(event)}
           />
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadTemplate}>
-            <Download className="h-4 w-4" />下载模板
-          </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => importInputRef.current?.click()}>
-            <Upload className="h-4 w-4" />导入 CSV
-          </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleExportCases} disabled={csvExportRows.length === 0}>
-            <Download className="h-4 w-4" />导出 CSV
-          </Button>
+          <div className="hidden md:flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadTemplate}>
+              <Download className="h-4 w-4" />下载模板
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => importInputRef.current?.click()}>
+              <Upload className="h-4 w-4" />导入 CSV
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleExportCases} disabled={csvExportRows.length === 0}>
+              <Download className="h-4 w-4" />导出 CSV
+            </Button>
+          </div>
+
+          {/* 移动端更多操作 */}
+          <div className="md:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon-sm" className="h-9 w-9">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleDownloadTemplate}>
+                  <Download className="h-4 w-4 mr-2" />
+                  下载模板
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => importInputRef.current?.click()}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  导入 CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportCases} disabled={csvExportRows.length === 0}>
+                  <Download className="h-4 w-4 mr-2" />
+                  导出 CSV
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCategoryDialogOpen(true)}>
             <FolderPlus className="h-4 w-4" />新建分类
           </Button>
@@ -423,17 +452,17 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
         </div>
       </div>
 
-      <div className="flex gap-6 flex-1 min-h-0">
+      <div className="flex flex-col md:flex-row gap-6 flex-1 min-h-0">
         {/* 左侧分类导航 */}
-        <div className="w-56 border border-border bg-card rounded-xl flex flex-col shrink-0 overflow-hidden">
-          <div className="p-3 border-b border-border font-medium text-sm text-foreground bg-muted/20">
+        <div className="w-full md:w-56 border border-border bg-card rounded-xl flex flex-col shrink-0 overflow-hidden shadow-sm">
+          <div className="p-3 border-b border-border font-medium text-sm text-foreground bg-muted/20 hidden md:block">
             用例分类
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-none md:flex-1 flex md:flex-col overflow-x-auto md:overflow-y-auto md:overflow-x-hidden p-2 gap-1 hide-scrollbar whitespace-nowrap md:whitespace-normal">
             <button
               onClick={() => handleCategorySelect('ALL')}
               className={cn(
-                'w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left',
+                'w-auto md:w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left shrink-0',
                 activeCategoryId === 'ALL' ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground'
               )}
             >
@@ -452,7 +481,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                 key={c.id}
                 onClick={() => handleCategorySelect(c.id)}
                 className={cn(
-                  'w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left',
+                  'w-auto md:w-full flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors text-left shrink-0',
                   activeCategoryId === c.id ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground'
                 )}
               >

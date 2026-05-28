@@ -140,7 +140,7 @@ function AppCard({
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-base font-semibold text-foreground truncate">{app.appName}</h3>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={app.status === 'ENABLED' ? 'default' : 'secondary'} className="text-xs">
               {app.status === 'ENABLED' ? '运行中' : '已停用'}
             </Badge>
@@ -278,31 +278,31 @@ export function AppListPage() {
   return (
     <div className="space-y-6">
       {/* ── 页头 ── */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">AI 应用</h1>
           <p className="text-sm text-muted-foreground mt-1">
             管理需要进行质量评测的业务 AI 接口
           </p>
         </div>
-        <Button onClick={handleCreate} className="gap-2">
+        <Button onClick={handleCreate} className="w-full sm:w-auto gap-2">
           <Plus className="h-4 w-4" />
           新建应用
         </Button>
       </div>
 
       {/* ── 搜索栏 ── */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative w-full sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="搜索应用名称或编码..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="pl-9 w-full"
           />
         </div>
-        <span className="text-sm text-muted-foreground">共 {filtered.length} 个应用</span>
+        <span className="text-sm text-muted-foreground shrink-0">共 {filtered.length} 个应用</span>
       </div>
 
       {/* ── 卡片网格 ── */}
