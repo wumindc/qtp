@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppListPage } from './app-list';
 import { loadApps, saveApp } from './api/app-api';
 import { toast } from 'sonner';
+import type { App } from './types';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -109,5 +110,27 @@ describe('AppListPage', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('请填写应用名称');
     });
+  });
+
+  it('does not render malformed app cards with default protocol or zero metrics', async () => {
+    vi.mocked(loadApps).mockResolvedValue([
+      {
+        appCode: 'bad-app',
+        appName: '坏应用',
+        appType: 'CHAT',
+        description: '',
+        owner: '',
+        status: 'ENABLED',
+      } as unknown as App,
+    ]);
+
+    render(<AppListPage />);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('应用列表缺少应用协议配置', { id: 'app-list-load-error' });
+    });
+    expect(screen.queryByText('坏应用')).not.toBeInTheDocument();
+    expect(screen.queryByText('POST 未配置接口')).not.toBeInTheDocument();
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
   });
 });

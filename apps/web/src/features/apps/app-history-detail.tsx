@@ -2,6 +2,7 @@
 /**
  * 执行历史详情页
  * @author Antigravity/Claude-Sonnet-4.6
+ * @author codex
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -45,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/cn';
+import { getErrorMessage } from '@/lib/error';
 import {
   getRunStatus,
   listResults,
@@ -293,32 +295,18 @@ export function AppHistoryDetail({ runCode, backHref, onBack }: AppHistoryDetail
   const loadResults = useCallback(async () => {
     try {
       setLoading(true);
-      const [runResult, resultResult, versionsResult] = await Promise.allSettled([
+      const [currentRun, resultList, versionList] = await Promise.all([
         getRunStatus(runCode),
         listResults(runCode),
         listRunVersions(runCode),
       ]);
-      if (runResult.status === 'fulfilled') {
-        const currentRun = runResult.value;
-        setRun(currentRun);
-        if (currentRun) {
-          loadPlanCategories(currentRun.appCode)
-            .then(setCategories)
-            .catch(() => {});
-        }
-      }
-      if (resultResult.status === 'fulfilled') {
-        setResults(resultResult.value);
-      } else {
-        throw resultResult.reason;
-      }
-      if (versionsResult.status === 'fulfilled') {
-        setVersions(versionsResult.value);
-      } else if (runResult.status === 'fulfilled' && runResult.value) {
-        setVersions([runResult.value]);
-      }
-    } catch {
-      toast.error('加载执行详情失败');
+      const categoryList = currentRun ? await loadPlanCategories(currentRun.appCode) : [];
+      setRun(currentRun);
+      setResults(resultList);
+      setVersions(versionList);
+      setCategories(categoryList);
+    } catch (error: unknown) {
+      toast.error(`加载执行详情失败: ${getErrorMessage(error, '请求失败')}`);
     } finally {
       setLoading(false);
     }
@@ -457,7 +445,6 @@ export function AppHistoryDetail({ runCode, backHref, onBack }: AppHistoryDetail
       const reviewRecord = await submitResultReview({
         resultId: result.resultId,
         manualResult,
-        problemType: result.problemType,
       });
       const nextManualResult = manualResult === null ? undefined : (reviewRecord.manualResult ?? manualResult);
       const nextCase: ResultRecord = {

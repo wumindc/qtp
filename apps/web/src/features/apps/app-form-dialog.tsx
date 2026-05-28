@@ -3,7 +3,7 @@
 /**
  * 应用创建/编辑弹窗
  * 只包含基本信息，接口配置在应用内"接口配置"页单独管理
- * @author Antigravity/Claude-Sonnet-4.6
+ * @author codex
  */
 
 import { useEffect, useState } from 'react';
@@ -19,42 +19,30 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import type { App } from './types';
 
 interface AppFormDialogProps {
   open: boolean;
   editingApp: App | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (data: Omit<App, 'appCode' | 'createdAt' | 'stats'>) => void;
+  onSubmit: (data: Omit<App, 'appCode' | 'createdAt' | 'stats' | 'icon'>) => void;
 }
 
 export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppFormDialogProps) {
   const isEdit = !!editingApp;
 
-  /* 表单状态 */
   const [appName, setAppName] = useState('');
-  const [appType, setAppType] = useState<'CHAT' | 'WORKFLOW'>('CHAT');
   const [description, setDescription] = useState('');
   const [owner, setOwner] = useState('');
 
-  /* 编辑时回填 */
   useEffect(() => {
     if (open) {
       if (editingApp) {
         setAppName(editingApp.appName);
-        setAppType(editingApp.appType);
         setDescription(editingApp.description ?? '');
         setOwner(editingApp.owner);
       } else {
         setAppName('');
-        setAppType('CHAT');
         setDescription('');
         setOwner('');
       }
@@ -65,16 +53,15 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
     if (!appName.trim()) return;
     onSubmit({
       appName: appName.trim(),
-      appType,
+      appType: 'CHAT',
       description: description.trim(),
       owner: owner.trim(),
       status: editingApp?.status ?? 'ENABLED',
-      // 接口配置由独立的接口配置页管理，这里传入编辑前的值或默认值
       protocol: editingApp?.protocol ?? {
         method: 'POST',
         url: '',
         headers: '{\n  "Content-Type": "application/json"\n}',
-        body: '{\n  "messages": [{"role": "user", "content": "{{case.query}}"}]\n}',
+        body: '{\n  "messages": [{"role": "user", "content": "{{case.input.query}}"}]\n}',
         answerPath: '$.content',
         successExpr: '$.code == 0',
         streamEnabled: false,
@@ -108,15 +95,9 @@ export function AppFormDialog({ open, editingApp, onOpenChange, onSubmit }: AppF
             </div>
             <div className="space-y-2">
               <Label htmlFor="appType">应用类型</Label>
-              <Select value={appType} onValueChange={(v) => setAppType(v as 'CHAT' | 'WORKFLOW')}>
-                <SelectTrigger id="appType">
-                  <SelectValue placeholder="选择类型" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CHAT">CHAT - 对话问答</SelectItem>
-                  <SelectItem value="WORKFLOW" disabled>WORKFLOW - 工作流（待开发）</SelectItem>
-                </SelectContent>
-              </Select>
+              <div id="appType" className="flex h-9 items-center rounded-md border px-3 text-sm text-muted-foreground">
+                CHAT - 对话问答
+              </div>
             </div>
           </div>
 

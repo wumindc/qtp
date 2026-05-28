@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import {
   AppService,
@@ -16,6 +16,12 @@ interface ListRequest {
   data: AppQuery;
 }
 
+interface ProtocolTestRequest {
+  appCode: string;
+  data?: AppProtocolSaveRequest;
+  sampleInput?: Record<string, unknown>;
+}
+
 @Controller('ai-quality-platform/app')
 export class AppController {
   constructor(private readonly appService = new AppService()) {}
@@ -26,7 +32,7 @@ export class AppController {
    */
   @Post('list.do')
   async list(@Body() request: ListRequest) {
-    return ok(await this.appService.list(request.data ?? {}, request.page));
+    return ok(await this.appService.list(this.readRequiredObject<AppQuery>(request.data, '缺少应用查询条件'), request.page));
   }
 
   @Post('create.do')
@@ -46,7 +52,7 @@ export class AppController {
 
   /**
    * @author codex
-   * Returns one AI application for the Semi workspace detail page.
+   * Returns one AI application for the workspace detail page.
    */
   @Post('detail.do')
   async detail(@Body() request: { appCode: string }) {
@@ -73,8 +79,10 @@ export class AppController {
   }
 
   @Post('protocol/test.do')
-  async protocolTest(@Body() request: { appCode: string; sampleInput?: Record<string, unknown> }) {
-    return ok(await this.appService.testProtocol(request.appCode, request.sampleInput ?? {}));
+  async protocolTest(@Body() request: ProtocolTestRequest) {
+    const sampleInput = this.readRequiredObject<Record<string, unknown>>(request.sampleInput, '缺少协议测试输入');
+    const override = this.readOptionalObject<AppProtocolSaveRequest>(request.data, '协议测试配置必须是对象');
+    return ok(await this.appService.testProtocol(request.appCode, sampleInput, override));
   }
 
   @Post('evaluation-config/detail.do')
@@ -85,5 +93,16 @@ export class AppController {
   @Post('evaluation-config/save.do')
   async evaluationConfigSave(@Body() request: { appCode: string; data: AppEvaluationConfigSaveRequest }) {
     return ok(await this.appService.saveEvaluationConfig(request.appCode, request.data));
+  }
+
+  private readRequiredObject<TRecord extends object>(value: unknown, message: string): TRecord {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
+  }
+
+  private readOptionalObject<TRecord extends object>(value: unknown, message: string): TRecord | undefined {
+    if (value === undefined) return undefined;
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
   }
 }

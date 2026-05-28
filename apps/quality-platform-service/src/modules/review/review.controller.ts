@@ -1,6 +1,6 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
-import { ReviewService, type ReviewRecord } from './review.service';
+import { ReviewService, type ReviewSubmission } from './review.service';
 
 @Controller('ai-quality-platform/review')
 export class ReviewController {
@@ -16,7 +16,7 @@ export class ReviewController {
   }
 
   @Post('submit.do')
-  async submit(@Body() request: Omit<ReviewRecord, 'reviewStatus'>) {
+  async submit(@Body() request: ReviewSubmission) {
     return ok(await this.reviewService.submit(request));
   }
 }

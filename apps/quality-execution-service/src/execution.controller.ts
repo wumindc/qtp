@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import { ExecutionService } from './execution.service';
 
@@ -17,7 +17,7 @@ export class ExecutionController {
 
   @Post('run-list.do')
   async runList(@Body() request: { page: { currentPage: number; linesPerPage: number }; data: Record<string, unknown> }) {
-    return ok(await this.executionService.runList(request.data ?? {}, request.page));
+    return ok(await this.executionService.runList(this.readRequiredObject(request.data, '缺少执行记录查询条件'), request.page));
   }
 
   @Post('result-list.do')
@@ -62,5 +62,10 @@ export class ExecutionController {
   @Post('cancel.do')
   async cancel(@Body() request: { runCode: string }) {
     return ok(await this.executionService.cancel(request.runCode));
+  }
+
+  private readRequiredObject<TRecord extends object>(value: unknown, message: string): TRecord {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
   }
 }

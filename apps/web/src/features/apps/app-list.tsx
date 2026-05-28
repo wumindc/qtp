@@ -40,6 +40,7 @@ import { PopoverConfirm } from '@/components/ui/popover-confirm';
 import { loadApps, saveApp, deleteApp, changeAppStatus } from './api/app-api';
 import { AppFormDialog } from './app-form-dialog';
 import { AppIcon } from './app-icon';
+import { assertAppViewData, type AppWithViewData } from './app-view-contract';
 import type { App } from './types';
 
 /* ── 通过率颜色 ── */
@@ -51,7 +52,16 @@ function passRateColor(rate?: number) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const msg = (error as Record<string, unknown>).message;
+    if (typeof msg === 'string' && msg.trim()) return msg;
+  }
+  return fallback;
+}
+
+function formatProtocolEndpoint(app: AppWithViewData) {
+  return `${app.protocol.method} ${app.protocol.url.trim() ? app.protocol.url : '未配置接口'}`;
 }
 
 /* ── 单张应用卡片 ── */
@@ -61,7 +71,7 @@ function AppCard({
   onDelete,
   onToggleStatus,
 }: {
-  app: App;
+  app: AppWithViewData;
   onEdit: (app: App) => void;
   onDelete: (appCode: string) => void;
   onToggleStatus: (appCode: string, status: App['status']) => void;
@@ -143,7 +153,7 @@ function AppCard({
       {/* ── 接口地址 ── */}
       <div className="mb-4">
         <p className="text-xs text-muted-foreground truncate font-mono bg-muted/50 px-2 py-1 rounded">
-          {app.protocol?.method ?? 'POST'} {app.protocol?.url || '未配置接口'}
+          {formatProtocolEndpoint(app)}
         </p>
       </div>
 
@@ -152,22 +162,22 @@ function AppCard({
         <div className="text-center">
           <div className="flex items-center justify-center gap-1 mb-0.5">
             <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-lg font-bold text-foreground">{app.stats?.caseCount ?? 0}</span>
+            <span className="text-lg font-bold text-foreground">{app.stats.caseCount}</span>
           </div>
           <p className="text-xs text-muted-foreground">用例</p>
         </div>
         <div className="text-center">
           <div className="flex items-center justify-center gap-1 mb-0.5">
             <Play className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-lg font-bold text-foreground">{app.stats?.planCount ?? 0}</span>
+            <span className="text-lg font-bold text-foreground">{app.stats.planCount}</span>
           </div>
           <p className="text-xs text-muted-foreground">计划</p>
         </div>
         <div className="text-center">
           <div className="flex items-center justify-center gap-1 mb-0.5">
             <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className={cn('text-lg font-bold', passRateColor(app.stats?.lastPassRate))}>
-              {app.stats?.lastPassRate !== undefined ? `${app.stats.lastPassRate}%` : '-'}
+            <span className={cn('text-lg font-bold', passRateColor(app.stats.lastPassRate))}>
+              {app.stats.lastPassRate !== undefined ? `${app.stats.lastPassRate}%` : '-'}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">通过率</p>
@@ -179,7 +189,7 @@ function AppCard({
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Clock className="h-3.5 w-3.5" />
           <span>
-            {app.stats?.lastRunAt
+            {app.stats.lastRunAt
               ? `最近执行 ${new Date(app.stats.lastRunAt).toLocaleDateString('zh-CN')}`
               : '尚未执行'}
           </span>
@@ -192,22 +202,28 @@ function AppCard({
 
 /* ══ 主页面 ══ */
 export function AppListPage() {
-  const [apps, setApps] = useState<App[]>([]);
+  const [apps, setApps] = useState<AppWithViewData[]>([]);
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<App | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
       const data = await loadApps();
-      setApps(data);
-    } catch {
-      toast.error('应用列表加载失败');
+      if (signal?.aborted) return;
+      setApps(data.map((app) => assertAppViewData(app, '应用列表')));
+    } catch (error: unknown) {
+      if (signal?.aborted) return;
+      setApps([]);
+      // 使用固定 id 防止 React StrictMode 下 effect 执行两次导致重复弹出
+      toast.error(getErrorMessage(error, '应用列表加载失败'), { id: 'app-list-load-error' });
     }
   }, []);
 
   useEffect(() => {
-    void refresh();
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => controller.abort();
   }, [refresh]);
 
   const filtered = apps.filter(
@@ -227,7 +243,7 @@ export function AppListPage() {
     setDialogOpen(true);
   };
 
-  const handleSubmit = async (data: Omit<App, 'appCode' | 'createdAt' | 'stats'>) => {
+  const handleSubmit = async (data: Omit<App, 'appCode' | 'createdAt' | 'stats' | 'icon'>) => {
     try {
       await saveApp(data, editingApp?.appCode);
       toast.success(editingApp ? '应用更新成功' : '应用创建成功');

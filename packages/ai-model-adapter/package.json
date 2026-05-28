@@ -8,6 +8,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@ai-quality-platform/ai-invocation-contract": "workspace:*"
+  },
   "devDependencies": {
     "vitest": "^4.0.14"
   }

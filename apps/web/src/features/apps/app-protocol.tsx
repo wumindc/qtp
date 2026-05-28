@@ -19,11 +19,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { KeyRound, Send, CheckCircle2, XCircle, Save } from 'lucide-react';
 import { toast } from 'sonner';
-import { loadApp, loadAppProtocol, saveAppProtocol } from './api/app-api';
+import { getErrorMessage, isAbortError } from '@/lib/error';
+import { loadApp, loadAppProtocol, saveAppProtocol, testAppProtocol } from './api/app-api';
 import type { App, AppProtocol } from './types';
-import { JSONPath } from 'jsonpath-plus';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { buildProtocolTestContext, renderProtocolTemplate } from './protocol-template';
 
 export function AppProtocolPage({ appCode }: { appCode: string }) {
   const [app, setApp] = useState<App | null>(null);
@@ -84,133 +83,20 @@ export function AppProtocolPage({ appCode }: { appCode: string }) {
     abortControllerRef.current = new AbortController();
 
     try {
-      const testContext = buildProtocolTestContext(testQuery);
-      let parsedHeaders: Record<string, string> = {};
-      try {
-        parsedHeaders = JSON.parse(renderProtocolTemplate(protocol.headers || '{}', testContext));
-      } catch (e) {
-        toast.error('请求头 JSON 格式错误');
-        setTesting(false);
-        return;
-      }
-
-      let parsedBody: any = {};
-      try {
-        const bodyStr = renderProtocolTemplate(protocol.body || '{}', testContext);
-        parsedBody = JSON.parse(bodyStr || '{}');
-      } catch (e) {
-        toast.error('请求体 JSON 格式错误');
-        setTesting(false);
-        return;
-      }
-
-      const res = await fetch('/api/proxy', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          url: protocol.url,
-          method: protocol.method,
-          headers: parsedHeaders,
-          body: parsedBody,
-        }),
-        signal: abortControllerRef.current.signal,
-      });
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        setTestResult({ success: false, response: `HTTP ${res.status}: ${errorText}`, latency: Date.now() - startTime });
-        setTesting(false);
-        return;
-      }
-
-      const contentType = res.headers.get('Content-Type') || '';
-      if (contentType.includes('text/event-stream')) {
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let fullResponse = '';
-        let fullExtracted = '';
-        let buffer = '';
-
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value, { stream: true });
-            fullResponse += chunk;
-            buffer += chunk;
-            
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.startsWith('data:')) {
-                const dataStr = line.substring(5).trim();
-                if (dataStr === '[DONE]') continue;
-                try {
-                  const jsonObj = JSON.parse(dataStr);
-                  if (protocol.answerPath) {
-                    let extractedValue: any = undefined;
-                    try {
-                      // 尝试使用 jsonpath-plus
-                      const result = typeof JSONPath === 'function' ? JSONPath({ path: protocol.answerPath, json: jsonObj }) : undefined;
-                      if (result && result.length > 0) {
-                        extractedValue = result[0];
-                      }
-                    } catch (e) {
-                      console.error('JSONPath error:', e);
-                    }
-
-                    // 降级处理：如果 jsonpath 失败或不可用，执行简单路径提取
-                    if (extractedValue === undefined) {
-                      try {
-                        let current = jsonObj;
-                        const parts = protocol.answerPath.replace(/^\$\./, '').split(/[.\[\]]+/).filter(Boolean);
-                        for (const part of parts) {
-                          if (current == null) break;
-                          current = current[part];
-                        }
-                        if (current !== undefined && current !== jsonObj) {
-                          extractedValue = current;
-                        }
-                      } catch (err) {}
-                    }
-
-                    if (extractedValue != null) {
-                      fullExtracted += typeof extractedValue === 'string' ? extractedValue : JSON.stringify(extractedValue);
-                    }
-                  }
-                } catch (e) {
-                  console.error('Failed to parse or extract:', dataStr, e);
-                }
-              }
-            }
-            setTestResult({ success: true, response: fullResponse, extracted: fullExtracted, latency: Date.now() - startTime });
-          }
-        }
-      } else {
-        const text = await res.text();
-        let extracted = text;
-        try {
-          const jsonObj = JSON.parse(text);
-          if (protocol.answerPath) {
-            const result = JSONPath({ path: protocol.answerPath, json: jsonObj });
-            if (result && result.length > 0 && result[0] != null) {
-              extracted = typeof result[0] === 'string' ? result[0] : JSON.stringify(result[0]);
-            }
-          }
-        } catch (e) {}
-        setTestResult({ success: true, response: text, extracted, latency: Date.now() - startTime });
-      }
-
-      toast.success('请求完成');
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+      const result = await testAppProtocol(appCode, protocol, testQuery, { signal: abortControllerRef.current.signal });
+      const rawText = result.rawResponseText || JSON.stringify(result.rawResponse, null, 2);
+      const extracted = result.parsedAnswer === undefined || result.parsedAnswer === null
+        ? ''
+        : typeof result.parsedAnswer === 'string'
+          ? result.parsedAnswer
+          : JSON.stringify(result.parsedAnswer);
+      setTestResult({ success: result.success, response: rawText, extracted, latency: result.elapsedMs || Date.now() - startTime });
+      toast[result.success ? 'success' : 'error'](result.message);
+    } catch (error: unknown) {
+      if (isAbortError(error)) {
         toast.info('测试已取消');
       } else {
-        setTestResult({ success: false, response: `请求异常: ${error.message}`, latency: Date.now() - startTime });
+        setTestResult({ success: false, response: `请求异常: ${getErrorMessage(error, '接口测试请求失败')}`, latency: Date.now() - startTime });
         toast.error('请求异常');
       }
     } finally {

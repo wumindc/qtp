@@ -17,7 +17,7 @@ async function checkHealth() {
     if (!response.ok || data.status !== 'UP') {
       failures.push(`gateway: unexpected aggregate payload from ${healthUrl}`);
     }
-    for (const name of ['gateway', 'platform', 'execution']) {
+    for (const name of ['gateway', 'platform', 'execution', 'aiInvocation']) {
       if (services[name]?.status === 'UP') {
         console.log(`${name}: UP`);
       } else {

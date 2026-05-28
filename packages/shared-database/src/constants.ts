@@ -1,0 +1,1 @@
+export const SYSTEM_PRESET_APP_CODE = 'SYSTEM_PRESET';

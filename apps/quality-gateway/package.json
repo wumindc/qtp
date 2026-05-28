@@ -10,6 +10,7 @@
     "start:dev": "tsx watch src/main.ts"
   },
   "dependencies": {
+    "@ai-quality-platform/shared-auth": "workspace:*",
     "@ai-quality-platform/shared-config": "workspace:*",
     "@ai-quality-platform/shared-http": "workspace:*",
     "@nestjs/common": "^11.1.9",

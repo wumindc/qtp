@@ -1,86 +1,16 @@
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
+import { hashPassword } from '@ai-quality-platform/shared-auth';
 
 export interface SeedUser {
   username: string;
   displayName: string;
-  initialPassword: string;
+  passwordHash: string;
   roleCode: string;
-}
-
-export interface SeedCaseCategory {
-  id: string;
-  appCode?: string;
-  name: string;
-  description: string;
-  sortOrder?: number;
-}
-
-export interface SeedApp {
-  appCode: string;
-  appName: string;
-  appType: string;
-  businessDomain: string;
-  invokeUrl: string;
-}
-
-export interface SeedCase {
-  id: string;
-  caseName?: string;
-  appCode: string;
-  caseScope?: 'APP' | 'SYSTEM_PRESET';
-  categoryId: string;
-  sourcePresetId?: string;
-  riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
-  query: string;
-  expectedBehavior: string;
-  caseCode?: string;
-  categoryCode?: string;
-}
-
-export interface SeedPlan {
-  planCode: string;
-  planName: string;
-  appCode: string;
-}
-
-export interface SeedRun {
-  runCode: string;
-  planCode: string;
-  appCode: string;
-  status: 'COMPLETED';
-}
-
-export interface SeedReport {
-  reportCode: string;
-  runCode: string;
-  reportName: string;
 }
 
 export interface InitialSeedData {
   users: SeedUser[];
-  categories: SeedCaseCategory[];
-  apps: SeedApp[];
-  presetCases: SeedCase[];
-  cases: SeedCase[];
-  plans: SeedPlan[];
-  runs: SeedRun[];
-  reports: SeedReport[];
 }
-
-export interface PrismaSeedOperation {
-  model: 'user' | 'evalCaseCategory' | 'aiApp' | 'evalCase' | 'evalPlan' | 'evalRun' | 'evalReport';
-  records: SeedRecord[];
-}
-
-type SeedRecord = {
-  username?: string;
-  id?: string;
-  appCode?: string | null;
-  caseName?: string;
-  planCode?: string;
-  runCode?: string;
-  reportCode?: string;
-} & object;
 
 type PrismaUpsertDelegate = {
   upsert(input: { where: object; create: object; update: object }): Promise<unknown>;
@@ -96,52 +26,31 @@ type PrismaClientConstructor = new (options?: { adapter?: unknown }) => SeedPris
 export const DEFAULT_ADMIN: SeedUser = {
   username: 'admin',
   displayName: '系统管理员',
-  initialPassword: 'admin123456',
+  passwordHash: '',
   roleCode: 'ADMIN',
 };
-
-export const SYSTEM_PRESET_APP_CODE = 'SYSTEM_PRESET';
 
 /**
  * @author codex
  * Builds only platform bootstrap data; all business records must be created through services and stored in MySQL.
  */
-export function buildInitialSeedData(): InitialSeedData {
+export function buildInitialSeedData(env: Record<string, string | undefined> = process.env): InitialSeedData {
   return {
-    users: [DEFAULT_ADMIN],
-    categories: [],
-    apps: [],
-    presetCases: [],
-    cases: [],
-    plans: [],
-    runs: [],
-    reports: [],
+    users: [buildBootstrapAdmin(env)],
   };
 }
 
-/**
- * @author codex
- * Converts bootstrap data into ordered Prisma upsert payload groups.
- */
-export function toPrismaSeedOperations(seedData: InitialSeedData): PrismaSeedOperation[] {
-  return [
-    {
-      model: 'user',
-      records: seedData.users.map((user) => ({
-        username: user.username,
-        displayName: user.displayName,
-        passwordHash: user.initialPassword,
-        roleCode: user.roleCode,
-        enabled: true,
-      })),
-    },
-    { model: 'evalCaseCategory', records: [] },
-    { model: 'aiApp', records: [] },
-    { model: 'evalCase', records: [] },
-    { model: 'evalPlan', records: [] },
-    { model: 'evalRun', records: [] },
-    { model: 'evalReport', records: [] },
-  ];
+function buildBootstrapAdmin(env: Record<string, string | undefined>): SeedUser {
+  const password = env.QTP_ADMIN_INITIAL_PASSWORD?.trim();
+  if (!password) {
+    throw new Error('QTP_ADMIN_INITIAL_PASSWORD must be configured before seeding the bootstrap administrator');
+  }
+  return {
+    username: env.QTP_ADMIN_USERNAME?.trim() || DEFAULT_ADMIN.username,
+    displayName: env.QTP_ADMIN_DISPLAY_NAME?.trim() || DEFAULT_ADMIN.displayName,
+    passwordHash: hashPassword(password),
+    roleCode: env.QTP_ADMIN_ROLE_CODE?.trim() || DEFAULT_ADMIN.roleCode,
+  };
 }
 
 /**
@@ -156,15 +65,19 @@ async function runSeed() {
   const seedData = buildInitialSeedData();
 
   try {
-    for (const operation of toPrismaSeedOperations(seedData)) {
-      if (operation.model !== 'user') continue;
-      for (const record of operation.records) {
-        await prisma.user.upsert({
-          where: { username: record.username },
-          create: record,
-          update: record,
-        });
-      }
+    for (const user of seedData.users) {
+      const record = {
+        username: user.username,
+        displayName: user.displayName,
+        passwordHash: user.passwordHash,
+        roleCode: user.roleCode,
+        enabled: true,
+      };
+      await prisma.user.upsert({
+        where: { username: record.username },
+        create: record,
+        update: record,
+      });
     }
   } finally {
     await prisma.$disconnect();
@@ -206,8 +119,8 @@ export async function createRuntimePrismaClient<T>(): Promise<T> {
 export function buildDefaultDatabaseUrl() {
   const host = process.env.MYSQL_HOST ?? '127.0.0.1';
   const port = process.env.MYSQL_PORT ?? '3306';
-  const user = encodeURIComponent(process.env.MYSQL_USER ?? 'root');
-  const password = encodeURIComponent(process.env.MYSQL_PASSWORD ?? 'root');
+  const user = encodeURIComponent(process.env.MYSQL_USER ?? 'qtp_app');
+  const password = encodeURIComponent(process.env.MYSQL_PASSWORD ?? 'qtp_dev_password');
   const database = process.env.MYSQL_DATABASE ?? 'ai_quality_platform';
   return `mysql://${user}:${password}@${host}:${port}/${database}`;
 }

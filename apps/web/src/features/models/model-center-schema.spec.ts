@@ -8,8 +8,26 @@ const provider: ModelProviderRecord = {
   name: 'DeepSeek 生产环境',
   type: 'DEEPSEEK',
   baseUrl: 'https://api.deepseek.com',
-  apiKey: 'sk-test',
+  apiKey: '',
+  apiKeyConfigured: true,
   status: '启用',
+};
+
+const validLlmForm = {
+  name: 'DeepSeek Chat',
+  provider: 'deepseek-prod',
+  modelId: 'deepseek-chat',
+  modelType: 'LLM' as const,
+  contextWindow: '128k',
+  maxOutputTokens: '4k',
+  stream: 'true',
+  jsonMode: 'false',
+  toolCalling: 'false',
+  thinkingEnabled: 'true',
+  dimensions: '',
+  normalInputPrice: '0.8',
+  cachedInputPrice: '0.2',
+  outputPrice: '2',
 };
 
 describe('model-center-schema', () => {
@@ -22,25 +40,7 @@ describe('model-center-schema', () => {
 
   it('builds the model payload without user-facing model codes', () => {
     expect(
-      buildModelPayload(
-        {
-          name: 'DeepSeek Chat',
-          provider: 'deepseek-prod',
-          modelId: 'deepseek-chat',
-          modelType: 'LLM',
-          contextWindow: '128k',
-          maxOutputTokens: '4k',
-          stream: 'true',
-          jsonMode: 'false',
-          toolCalling: 'false',
-          thinkingEnabled: 'true',
-          dimensions: '',
-          normalInputPrice: '0.8',
-          cachedInputPrice: '0.2',
-          outputPrice: '2',
-        },
-        provider,
-      ),
+      buildModelPayload(validLlmForm, provider),
     ).toEqual({
       modelName: 'DeepSeek Chat',
       providerCode: 'deepseek-prod',
@@ -72,6 +72,31 @@ describe('model-center-schema', () => {
         },
       },
     });
+  });
+
+  it('rejects invalid LLM token limits instead of silently defaulting them', () => {
+    expect(() => buildModelPayload({ ...validLlmForm, maxOutputTokens: 'many' }, provider)).toThrow('最大输出 Token 不是合法正整数');
+    expect(() => buildModelPayload({ ...validLlmForm, contextWindow: 'wide' }, provider)).toThrow('上下文窗口不是合法正整数');
+  });
+
+  it('rejects invalid embedding dimensions instead of dropping them from the payload', () => {
+    expect(() =>
+      buildModelPayload(
+        {
+          ...validLlmForm,
+          modelType: 'EMBEDDING',
+          modelId: 'text-embedding-v4',
+          dimensions: 'large',
+        },
+        { ...provider, type: 'QWEN' },
+      ),
+    ).toThrow('向量维度不是合法正整数');
+  });
+
+  it('rejects invalid pricing instead of dropping it from the payload', () => {
+    expect(() => buildModelPayload({ ...validLlmForm, normalInputPrice: 'free' }, provider)).toThrow('普通输入价格必须为空或非负数');
+    expect(() => buildModelPayload({ ...validLlmForm, cachedInputPrice: '-1' }, provider)).toThrow('缓存命中输入价格必须为空或非负数');
+    expect(() => buildModelPayload({ ...validLlmForm, outputPrice: 'expensive' }, provider)).toThrow('输出价格必须为空或非负数');
   });
 
   it('formats provider option labels', () => {

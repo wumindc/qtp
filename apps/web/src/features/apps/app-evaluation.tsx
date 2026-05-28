@@ -20,6 +20,12 @@ import {
   type EvaluationModelOption,
 } from './api/app-evaluation-api';
 
+function normalizeEvaluationConcurrency(value: string) {
+  const nextValue = Number(value);
+  if (!Number.isFinite(nextValue)) return 1;
+  return Math.max(1, Math.min(10, nextValue));
+}
+
 export function AppEvaluationPage({ appCode }: { appCode: string }) {
   const [config, setConfig] = useState<AppEvaluationConfig | null>(null);
   const [models, setModels] = useState<EvaluationModelOption[]>([]);
@@ -39,10 +45,10 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
       ]);
       setConfig(configData);
       setModels(modelData);
-      setModelId(configData.modelId || modelData[0]?.id || '');
+      setModelId(configData.modelId);
       setPromptOverrideEnabled(configData.promptOverrideEnabled);
       setCustomPrompt(configData.customPrompt);
-      setEvaluationConcurrency(configData.evaluationConcurrency || 3);
+      setEvaluationConcurrency(configData.evaluationConcurrency);
     } catch {
       toast.error('加载评估配置失败');
     } finally {
@@ -75,7 +81,7 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
       setConfig(saved);
       setPromptOverrideEnabled(saved.promptOverrideEnabled);
       setCustomPrompt(saved.customPrompt);
-      setEvaluationConcurrency(saved.evaluationConcurrency || 3);
+      setEvaluationConcurrency(saved.evaluationConcurrency);
       toast.success('评估配置已保存');
     } catch {
       toast.error('保存评估配置失败');
@@ -147,7 +153,9 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-              暂无可用 LLM 评估模型，请先到模型中心启用模型。
+              {models.length === 0
+                ? '暂无可用 LLM 评估模型，请先到模型中心启用模型。'
+                : '请选择一个 LLM 评估模型，保存后执行计划才会启动评估。'}
             </div>
           )}
 
@@ -163,7 +171,7 @@ export function AppEvaluationPage({ appCode }: { appCode: string }) {
               min={1}
               max={10}
               value={evaluationConcurrency}
-              onChange={(event) => setEvaluationConcurrency(Math.max(1, Math.min(10, Number(event.target.value || 3))))}
+              onChange={(event) => setEvaluationConcurrency(normalizeEvaluationConcurrency(event.target.value))}
             />
             <p className="text-xs text-muted-foreground">
               接口阶段全部结束后，评估阶段按该并发数调用裁判模型。

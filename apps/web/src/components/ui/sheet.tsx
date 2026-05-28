@@ -9,11 +9,9 @@ import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 export const Sheet = DialogPrimitive.Root;
-export const SheetTrigger = DialogPrimitive.Trigger;
-export const SheetClose = DialogPrimitive.Close;
-export const SheetPortal = DialogPrimitive.Portal;
+const SheetPortal = DialogPrimitive.Portal;
 
-export const SheetOverlay = React.forwardRef<
+const SheetOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (

@@ -1,17 +1,14 @@
 import {
   createRuntimePrismaClient,
   SYSTEM_PRESET_APP_CODE,
-  type SeedCaseCategory,
-  type SeedCase,
 } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
+import { randomBytes } from 'node:crypto';
 import type { CaseExcelRow } from './excel.service';
 
 export interface CaseQuery {
   appCode?: string;
   categoryId?: string;
-  category?: string;
-  categoryCode?: string;
   keyword?: string;
   caseScope?: 'APP' | 'SYSTEM_PRESET';
 }
@@ -21,39 +18,51 @@ export interface PageQuery {
   linesPerPage: number;
 }
 
-type CaseRiskLevel = NonNullable<SeedCase['riskLevel']>;
-
-export interface CaseRecord extends Omit<SeedCase, 'caseName' | 'riskLevel'> {
+export interface CaseRecord {
   id: string;
+  appCode: string;
+  caseScope: 'APP' | 'SYSTEM_PRESET';
   categoryId: string;
   caseCode: string;
-  caseName: string;
-  categoryCode: string;
-  riskLevel: CaseRiskLevel;
+  query: string;
+  expectedBehavior: string;
   enabled: boolean;
-  manualReviewRequired: boolean;
-  sourcePresetId?: string;
-  sourcePresetCode?: string;
   isSubscribedPreset?: boolean;
 }
 
-export type CreateCaseRequest = Omit<SeedCase, 'id' | 'categoryId' | 'caseName' | 'riskLevel'> &
-  Partial<Pick<SeedCase, 'id' | 'categoryId' | 'caseCode' | 'categoryCode' | 'caseName' | 'riskLevel'>>;
-export type UpdateCaseRequest = Partial<Omit<CaseRecord, 'id' | 'caseCode' | 'categoryCode'>>;
+export interface CreateCaseRequest {
+  appCode: string;
+  categoryId: string;
+  query: string;
+  expectedBehavior: string;
+  enabled?: boolean;
+}
 
-export interface CaseCategoryRecord extends SeedCaseCategory {
+export interface UpdateCaseRequest {
+  categoryId?: string;
+  query?: string;
+  expectedBehavior?: string;
+  enabled?: boolean;
+}
+
+export interface CaseCategoryRecord {
   id: string;
-  code: string;
   appCode?: string;
+  name: string;
+  description: string;
   enabled: boolean;
   sortOrder: number;
 }
 
-export type CreateCaseCategoryRequest = Omit<SeedCaseCategory, 'id'> &
-  Partial<Pick<SeedCaseCategory, 'id'>> & {
-    enabled?: boolean;
-  };
-export type UpdateCaseCategoryRequest = Partial<Omit<CaseCategoryRecord, 'id' | 'code'>>;
+export interface CreateCaseCategoryRequest {
+  id?: string;
+  appCode?: string;
+  name: string;
+  description: string;
+  sortOrder?: number;
+  enabled?: boolean;
+}
+export type UpdateCaseCategoryRequest = Partial<Omit<CaseCategoryRecord, 'id'>>;
 
 export interface CaseCategoryQuery {
   appCode?: string;
@@ -61,37 +70,6 @@ export interface CaseCategoryQuery {
   keyword?: string;
   enabled?: boolean;
   subscribedByApp?: string;
-}
-
-export interface CaseSuiteRecord {
-  suiteCode: string;
-  suiteName: string;
-  appCode: string;
-  description?: string;
-  caseIds: string[];
-  caseCodes: string[];
-  caseCount: number;
-}
-
-export interface CreateCaseSuiteRequest {
-  suiteCode: string;
-  suiteName: string;
-  appCode: string;
-  description?: string;
-}
-
-export interface SuiteQuery {
-  appCode?: string;
-  keyword?: string;
-}
-
-export interface PresetImportRequest {
-  appCode: string;
-  suiteCode: string;
-  suiteName: string;
-  description?: string;
-  presetCaseIds?: string[];
-  presetCaseCodes: string[];
 }
 
 export interface CaseCsvImportRow {
@@ -128,10 +106,6 @@ type CasePrismaClient = {
     update(input: { where: object; data: object }): Promise<unknown>;
     delete(input: { where: object }): Promise<unknown>;
   };
-  evalCaseSuite: {
-    findMany(input?: { orderBy?: object }): Promise<unknown[]>;
-    upsert(input: { where: object; create: object; update: object }): Promise<unknown>;
-  };
   appPresetCategory: {
     findMany(input?: { where?: object; orderBy?: object }): Promise<unknown[]>;
     create(input: { data: object }): Promise<unknown>;
@@ -150,25 +124,11 @@ type EvalCaseCategoryRow = {
 
 type EvalCaseRow = {
   id?: unknown;
-  caseName?: unknown;
   appCode?: unknown;
   caseScope?: unknown;
   categoryId?: unknown;
-  sourcePresetId?: unknown;
-  riskLevel?: unknown;
   inputJson?: unknown;
   expectedJson?: unknown;
-  manualReviewRequired?: unknown;
-  enabled?: unknown;
-};
-
-type EvalCaseSuiteRow = {
-  suiteCode?: unknown;
-  suiteName?: unknown;
-  appCode?: unknown;
-  description?: unknown;
-  caseIdsJson?: unknown;
-  caseCodesJson?: unknown;
   enabled?: unknown;
 };
 
@@ -177,8 +137,20 @@ type AppPresetCategoryRow = {
   categoryId?: unknown;
 };
 
-class CaseDatabaseWriter {
-  private readonly prismaPromise: Promise<CasePrismaClient | null>;
+export interface CaseDataStore {
+  listCategories(): Promise<CaseCategoryRecord[]>;
+  listCases(): Promise<CaseRecord[]>;
+  listPresetCategorySubscriptions(): Promise<Array<{ appCode: string; categoryId: string }>>;
+  saveCategory(category: CaseCategoryRecord): Promise<CaseCategoryRecord>;
+  deleteCategory(id: string): Promise<void>;
+  saveCase(testCase: CaseRecord): Promise<CaseRecord>;
+  deleteCase(id: string): Promise<void>;
+  savePresetCategorySubscription(appCode: string, categoryId: string): Promise<void>;
+  deletePresetCategorySubscription(appCode: string, categoryId: string): Promise<void>;
+}
+
+class CaseDatabaseWriter implements CaseDataStore {
+  private readonly prismaPromise: Promise<CasePrismaClient>;
 
   constructor() {
     this.prismaPromise = this.createClient();
@@ -186,78 +158,31 @@ class CaseDatabaseWriter {
 
   /**
    * @author codex
-   * Reads category and case definitions from MySQL through Prisma when database access is configured.
+   * Reads category and case definitions from MySQL through Prisma.
    */
-  async listCategories(): Promise<CaseCategoryRecord[] | null> {
+  async listCategories(): Promise<CaseCategoryRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    try {
-      const rows = (await prisma.evalCaseCategory.findMany({ orderBy: { id: 'asc' } })) as EvalCaseCategoryRow[];
-      return rows
-        .filter((row) => row.id !== undefined && typeof row.name === 'string')
-        .map((row, index) => ({
-          id: String(row.id),
-          code: String(row.id),
-          appCode: typeof row.appCode === 'string' ? row.appCode : undefined,
-          name: String(row.name),
-          description: typeof row.description === 'string' ? row.description : '',
-          enabled: row.enabled !== false,
-          sortOrder: typeof row.sortOrder === 'number' ? row.sortOrder : (index + 1) * 10,
-        }));
-    } catch (error) {
-      if (!process.env.VITEST) throw error;
-      return null;
-    }
+    const rows = (await prisma.evalCaseCategory.findMany({ orderBy: { id: 'asc' } })) as EvalCaseCategoryRow[];
+    return rows.map((row) => this.toCategoryRecord(row));
   }
 
-  async listCases(): Promise<CaseRecord[] | null> {
+  async listCases(): Promise<CaseRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    try {
-      const rows = (await prisma.evalCase.findMany({ orderBy: { id: 'asc' } })) as EvalCaseRow[];
-      return rows
-        .filter((row) => row.id !== undefined && typeof row.caseName === 'string')
-        .map((row) => this.toCaseRecord(row));
-    } catch (error) {
-      if (!process.env.VITEST) throw error;
-      return null;
-    }
+    const rows = (await prisma.evalCase.findMany({ orderBy: { id: 'asc' } })) as EvalCaseRow[];
+    return rows.map((row) => this.toCaseRecord(row));
   }
 
-  async listSuites(): Promise<CaseSuiteRecord[] | null> {
+  async listPresetCategorySubscriptions(): Promise<Array<{ appCode: string; categoryId: string }>> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    try {
-      const rows = (await prisma.evalCaseSuite.findMany({ orderBy: { suiteCode: 'asc' } })) as EvalCaseSuiteRow[];
-      return rows
-        .filter((row) => typeof row.suiteCode === 'string' && typeof row.suiteName === 'string')
-        .map((row) => this.toSuiteRecord(row));
-    } catch (error) {
-      if (!process.env.VITEST) throw error;
-      return null;
-    }
-  }
-
-  async listPresetCategorySubscriptions(): Promise<Array<{ appCode: string; categoryId: string }> | null> {
-    const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    try {
-      const rows = (await prisma.appPresetCategory.findMany({ orderBy: { id: 'asc' } })) as AppPresetCategoryRow[];
-      return rows
-        .filter((row) => typeof row.appCode === 'string' && typeof row.categoryId === 'bigint')
-        .map((row) => ({
-          appCode: String(row.appCode),
-          categoryId: String(row.categoryId),
-        }));
-    } catch (error) {
-      if (!process.env.VITEST) throw error;
-      return null;
-    }
+    const rows = (await prisma.appPresetCategory.findMany({ orderBy: { id: 'asc' } })) as AppPresetCategoryRow[];
+    return rows.map((row) => ({
+      appCode: this.readRequiredString(row.appCode, '预置订阅缺少应用编码'),
+      categoryId: this.readRequiredBigIntId(row.categoryId, '预置订阅缺少分类 ID'),
+    }));
   }
 
   async saveCategory(category: CaseCategoryRecord): Promise<CaseCategoryRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return category;
     const payload = {
       appCode: category.appCode ?? null,
       name: category.name,
@@ -276,34 +201,27 @@ class CaseDatabaseWriter {
         data: payload,
       });
     }
-    const savedId = this.asRecord(saved).id;
-    const id = savedId === undefined ? category.id : String(savedId);
-    return { ...category, id, code: id };
+    const id = this.readRequiredBigIntId(this.asRecord(saved).id, '数据库未返回分类 ID');
+    return { ...category, id };
   }
 
   async deleteCategory(id: string) {
     const prisma = await this.prismaPromise;
-    if (!prisma || !this.isDatabaseId(id)) return;
+    if (!this.isDatabaseId(id)) throw new Error(`分类不存在: ${id}`);
     await prisma.evalCaseCategory.delete({ where: { id: BigInt(id) } });
   }
 
   async saveCase(testCase: CaseRecord): Promise<CaseRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return testCase;
+    if (!this.isDatabaseId(testCase.categoryId)) throw new Error(`测试用例分类不可用 ${testCase.categoryId}`);
     const payload = {
-      caseName: testCase.caseName,
       appCode: testCase.appCode,
-      caseScope: testCase.caseScope ?? 'APP',
-      categoryId: this.isDatabaseId(testCase.categoryId) ? BigInt(testCase.categoryId) : 0n,
-      sourcePresetId: this.isDatabaseId(testCase.sourcePresetId) ? BigInt(testCase.sourcePresetId) : null,
-      riskLevel: testCase.riskLevel,
+      caseScope: testCase.caseScope,
+      categoryId: BigInt(testCase.categoryId),
       inputJson: { query: testCase.query },
       expectedJson: { expectedBehavior: testCase.expectedBehavior },
-      minScore: 80,
-      manualReviewRequired: testCase.manualReviewRequired,
       enabled: testCase.enabled,
     };
-    if (payload.categoryId === 0n) return testCase;
     let saved: unknown;
     if (this.isDatabaseId(testCase.id)) {
       saved = await prisma.evalCase.update({
@@ -313,38 +231,19 @@ class CaseDatabaseWriter {
     } else {
       saved = await prisma.evalCase.create({ data: payload });
     }
-    const savedId = this.asRecord(saved).id;
-    const id = savedId === undefined ? testCase.id : String(savedId);
+    const id = this.readRequiredBigIntId(this.asRecord(saved).id, '数据库未返回用例 ID');
     return { ...testCase, id, caseCode: id };
   }
 
   async deleteCase(id: string) {
     const prisma = await this.prismaPromise;
-    if (!prisma || !this.isDatabaseId(id)) return;
+    if (!this.isDatabaseId(id)) throw new Error(`用例不存在: ${id}`);
     await prisma.evalCase.delete({ where: { id: BigInt(id) } });
-  }
-
-  async upsertSuite(suite: CaseSuiteRecord) {
-    const prisma = await this.prismaPromise;
-    if (!prisma) return;
-    const payload = {
-      suiteCode: suite.suiteCode,
-      suiteName: suite.suiteName,
-      appCode: suite.appCode,
-      description: suite.description,
-      caseIdsJson: suite.caseIds,
-      enabled: true,
-    };
-    await prisma.evalCaseSuite.upsert({
-      where: { suiteCode: suite.suiteCode },
-      create: payload,
-      update: payload,
-    });
   }
 
   async savePresetCategorySubscription(appCode: string, categoryId: string) {
     const prisma = await this.prismaPromise;
-    if (!prisma || !this.isDatabaseId(categoryId)) return;
+    if (!this.isDatabaseId(categoryId)) throw new Error(`分类不存在: ${categoryId}`);
     try {
       await prisma.appPresetCategory.create({
         data: {
@@ -352,14 +251,14 @@ class CaseDatabaseWriter {
           categoryId: BigInt(categoryId),
         },
       });
-    } catch {
-      // Ignore unique constraint violation
+    } catch (error) {
+      if (!this.isPrismaKnownErrorCode(error, 'P2002')) throw error;
     }
   }
 
   async deletePresetCategorySubscription(appCode: string, categoryId: string) {
     const prisma = await this.prismaPromise;
-    if (!prisma || !this.isDatabaseId(categoryId)) return;
+    if (!this.isDatabaseId(categoryId)) throw new Error(`分类不存在: ${categoryId}`);
     try {
       await prisma.appPresetCategory.delete({
         where: {
@@ -369,42 +268,40 @@ class CaseDatabaseWriter {
           },
         },
       });
-    } catch {
-      // Ignore not found
+    } catch (error) {
+      if (!this.isPrismaKnownErrorCode(error, 'P2025')) throw error;
     }
   }
 
-  private async createClient(): Promise<CasePrismaClient | null> {
-    if (process.env.VITEST) return null;
-    try {
-      return await createRuntimePrismaClient<CasePrismaClient>();
-    } catch (error) {
-      if (!process.env.VITEST) throw error;
-      return null;
-    }
+  private async createClient(): Promise<CasePrismaClient> {
+    return createRuntimePrismaClient<CasePrismaClient>();
+  }
+
+  private toCategoryRecord(row: EvalCaseCategoryRow): CaseCategoryRecord {
+    const id = this.readRequiredBigIntId(row.id, '分类记录缺少 ID');
+    return {
+      id,
+      appCode: this.readNullableString(row.appCode, '分类记录包含非法应用编码'),
+      name: this.readRequiredString(row.name, '分类记录缺少名称'),
+      description: this.readString(row.description, '分类记录缺少描述'),
+      enabled: this.readBoolean(row.enabled, '分类记录缺少启停状态'),
+      sortOrder: this.readNumber(row.sortOrder, '分类记录缺少排序值'),
+    };
   }
 
   private toCaseRecord(row: EvalCaseRow): CaseRecord {
-    const inputJson = this.asRecord(row.inputJson);
-    const expectedJson = this.asRecord(row.expectedJson);
-    const id = String(row.id);
-    const categoryId = String(row.categoryId ?? '');
-    const caseScope = row.caseScope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP';
+    const inputJson = this.readRecord(row.inputJson, '用例记录缺少输入 JSON');
+    const expectedJson = this.readRecord(row.expectedJson, '用例记录缺少期望 JSON');
+    const id = this.readRequiredBigIntId(row.id, '用例记录缺少 ID');
     return {
       id,
       caseCode: id,
-      caseName: String(row.caseName),
-      appCode: typeof row.appCode === 'string' ? row.appCode : '',
-      caseScope,
-      categoryId,
-      categoryCode: categoryId,
-      sourcePresetId: row.sourcePresetId === null || row.sourcePresetId === undefined ? undefined : String(row.sourcePresetId),
-      riskLevel: this.normalizeRiskLevel(row.riskLevel),
-      query: typeof inputJson.query === 'string' ? inputJson.query : '',
-      expectedBehavior: typeof expectedJson.expectedBehavior === 'string' ? expectedJson.expectedBehavior : '',
-      enabled: row.enabled !== false,
-      manualReviewRequired: row.manualReviewRequired === true,
-      sourcePresetCode: row.sourcePresetId === null || row.sourcePresetId === undefined ? undefined : String(row.sourcePresetId),
+      appCode: this.readRequiredString(row.appCode, '用例记录缺少应用编码'),
+      caseScope: this.readCaseScope(row.caseScope),
+      categoryId: this.readRequiredBigIntId(row.categoryId, '用例记录缺少分类 ID'),
+      query: this.readRequiredString(inputJson.query, '用例记录缺少问题内容'),
+      expectedBehavior: this.readRequiredString(expectedJson.expectedBehavior, '用例记录缺少期望回答'),
+      enabled: this.readBoolean(row.enabled, '用例记录缺少启停状态'),
     };
   }
 
@@ -412,50 +309,60 @@ class CaseDatabaseWriter {
     return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   }
 
-  private normalizeRiskLevel(value: unknown): CaseRiskLevel {
-    return value === 'LOW' || value === 'HIGH' ? value : 'MEDIUM';
+  private readRecord(value: unknown, message: string): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
+    return value as Record<string, unknown>;
   }
 
-  private toSuiteRecord(row: EvalCaseSuiteRow): CaseSuiteRecord {
-    const caseIds = Array.isArray(row.caseIdsJson)
-      ? row.caseIdsJson.filter((caseId): caseId is string => typeof caseId === 'string')
-      : Array.isArray(row.caseCodesJson)
-        ? row.caseCodesJson.filter((caseId): caseId is string => typeof caseId === 'string')
-        : [];
-    const caseCodes = Array.isArray(row.caseCodesJson)
-      ? row.caseCodesJson.filter((caseCode): caseCode is string => typeof caseCode === 'string')
-      : caseIds;
-    return {
-      suiteCode: String(row.suiteCode),
-      suiteName: String(row.suiteName),
-      appCode: typeof row.appCode === 'string' ? row.appCode : '',
-      description: typeof row.description === 'string' ? row.description : undefined,
-      caseIds,
-      caseCodes,
-      caseCount: caseIds.length,
-    };
+  private readRequiredBigIntId(value: unknown, message: string): string {
+    if (typeof value !== 'bigint') throw new Error(message);
+    return value.toString();
+  }
+
+  private readRequiredString(value: unknown, message: string): string {
+    if (typeof value !== 'string' || !value.trim()) throw new Error(message);
+    return value;
+  }
+
+  private readString(value: unknown, message: string): string {
+    if (typeof value !== 'string') throw new Error(message);
+    return value;
+  }
+
+  private readNullableString(value: unknown, message: string): string | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value !== 'string') throw new Error(message);
+    return value;
+  }
+
+  private readBoolean(value: unknown, message: string): boolean {
+    if (typeof value !== 'boolean') throw new Error(message);
+    return value;
+  }
+
+  private readNumber(value: unknown, message: string): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(message);
+    return value;
+  }
+
+  private readCaseScope(value: unknown): 'APP' | 'SYSTEM_PRESET' {
+    if (value === 'APP' || value === 'SYSTEM_PRESET') return value;
+    throw new Error('用例记录包含非法用例范围');
   }
 
   private isDatabaseId(id: string | undefined): id is string {
     return typeof id === 'string' && /^\d+$/.test(id);
   }
+
+  private isPrismaKnownErrorCode(error: unknown, code: string) {
+    return this.asRecord(error).code === code;
+  }
 }
 
 export class CaseService {
-  private readonly database = new CaseDatabaseWriter();
-  private readonly categoriesMap = new Map<string, CaseCategoryRecord>();
-  private readonly cases = new Map<string, CaseRecord>();
-  private readonly presetCases = new Map<string, CaseRecord>();
-  private readonly suites = new Map<string, CaseSuiteRecord>();
-  private readonly subscriptions = new Map<string, Set<string>>();
-
-  constructor() {
-    void this.hydrateFromDatabase();
-  }
-
-  categories() {
-    return Array.from(this.categoriesMap.values()).sort((left, right) => left.sortOrder - right.sortOrder);
-  }
+  constructor(
+    private readonly database: CaseDataStore = new CaseDatabaseWriter(),
+  ) {}
 
   async listCategories(query: CaseCategoryQuery, page?: PageQuery): Promise<PageResult<CaseCategoryRecord>> {
     const normalizedPage = this.normalizePage(page);
@@ -466,7 +373,7 @@ export class CaseService {
 
     let subscribedIds: Set<string> | undefined;
     if (query.subscribedByApp) {
-      subscribedIds = this.subscriptions.get(query.subscribedByApp) ?? new Set<string>();
+      subscribedIds = new Set(await this.listCategorySubscriptions(query.subscribedByApp));
     }
 
     const all = sourceCategories.filter((category) => {
@@ -498,37 +405,35 @@ export class CaseService {
   async createCategory(request: CreateCaseCategoryRequest): Promise<CaseCategoryRecord> {
     this.validateCategory(request);
     const appCode = request.appCode?.trim() || undefined;
-    if (Array.from(this.categoriesMap.values()).some((category) => category.name === request.name && category.appCode === appCode)) {
+    const categories = await this.getCategorySource();
+    if (categories.some((category) => category.name === request.name && category.appCode === appCode)) {
       throw new Error('分类名称已存在');
     }
     const id = request.id ?? this.generateEntityId('category');
     const record: CaseCategoryRecord = {
-      ...request,
       id,
-      code: id,
       appCode,
+      name: request.name.trim(),
+      description: request.description.trim(),
       enabled: request.enabled ?? true,
-      sortOrder: request.sortOrder ?? (this.categoriesMap.size + 1) * 10,
+      sortOrder: request.sortOrder ?? (categories.length + 1) * 10,
     };
-    const saved = await this.database.saveCategory(record);
-    this.categoriesMap.set(saved.id, saved);
-    return saved;
+    return this.database.saveCategory(record);
   }
 
   async updateCategory(id: string, request: UpdateCaseCategoryRequest): Promise<CaseCategoryRecord> {
-    const category = this.categoriesMap.get(id);
+    const category = await this.findCategoryById(id);
     if (!category) throw new Error('分类不存在');
-    const updated = {
-      ...category,
-      ...request,
+    const updated: CaseCategoryRecord = {
       id,
-      code: id,
+      appCode: request.appCode === undefined ? category.appCode : request.appCode?.trim() || undefined,
+      name: request.name ?? category.name,
+      description: request.description ?? category.description,
+      enabled: request.enabled ?? category.enabled,
+      sortOrder: request.sortOrder ?? category.sortOrder,
     };
     this.validateCategory(updated);
-    const saved = await this.database.saveCategory(updated);
-    this.categoriesMap.delete(id);
-    this.categoriesMap.set(saved.id, saved);
-    return saved;
+    return this.database.saveCategory(updated);
   }
 
   async changeCategoryEnabled(id: string, enabled: boolean): Promise<CaseCategoryRecord> {
@@ -536,15 +441,15 @@ export class CaseService {
   }
 
   async deleteCategory(id: string): Promise<CaseCategoryRecord> {
-    if (Array.from(this.cases.values()).some((testCase) => testCase.categoryId === id)) {
+    const cases = await this.database.listCases();
+    if (cases.some((testCase) => testCase.caseScope === 'APP' && testCase.categoryId === id)) {
       throw new Error('分类下仍有关联应用测试用例');
     }
-    if (Array.from(this.presetCases.values()).some((testCase) => testCase.categoryId === id)) {
+    if (cases.some((testCase) => testCase.caseScope === 'SYSTEM_PRESET' && testCase.categoryId === id)) {
       throw new Error('分类下仍有关联系统预置测试用例');
     }
-    const category = this.categoriesMap.get(id);
+    const category = await this.findCategoryById(id);
     if (!category) throw new Error('分类不存在');
-    this.categoriesMap.delete(id);
     await this.database.deleteCategory(id);
     return category;
   }
@@ -555,34 +460,30 @@ export class CaseService {
    */
   async list(query: CaseQuery, page?: PageQuery): Promise<PageResult<CaseRecord>> {
     const normalizedPage = this.normalizePage(page);
-    const categoryId = query.categoryId ?? query.categoryCode ?? query.category;
+    const categoryId = query.categoryId;
     const scope = query.caseScope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP';
     const appCode = query.appCode;
 
-    // 1. Fetch source cases based on scope
     const sourceCases = await this.getCaseSource(scope);
     let all = sourceCases.filter((testCase) => {
       const appMatched = !appCode || testCase.appCode === appCode;
       const categoryMatched = !categoryId || testCase.categoryId === categoryId;
       const keywordMatched =
         !query.keyword ||
-        testCase.caseName.includes(query.keyword) ||
         testCase.query.includes(query.keyword) ||
         testCase.expectedBehavior.includes(query.keyword);
       return appMatched && categoryMatched && keywordMatched;
     });
 
-    // 2. If APP scope and appCode is provided, merge subscribed preset cases
     if (scope === 'APP' && appCode) {
-      const subscribedIds = this.subscriptions.get(appCode);
-      if (subscribedIds && subscribedIds.size > 0) {
+      const subscribedIds = new Set(await this.listCategorySubscriptions(appCode));
+      if (subscribedIds.size > 0) {
         const presetCases = await this.getCaseSource('SYSTEM_PRESET');
         const matchedPresets = presetCases.filter((testCase) => {
           const isSubscribed = subscribedIds.has(testCase.categoryId);
           const categoryMatched = !categoryId || testCase.categoryId === categoryId;
           const keywordMatched =
             !query.keyword ||
-            testCase.caseName.includes(query.keyword) ||
             testCase.query.includes(query.keyword) ||
             testCase.expectedBehavior.includes(query.keyword);
           return isSubscribed && categoryMatched && keywordMatched;
@@ -591,33 +492,8 @@ export class CaseService {
       }
     }
 
-    // Sort to keep order consistent
     all.sort((a, b) => a.id.localeCompare(b.id));
 
-    const start = (normalizedPage.currentPage - 1) * normalizedPage.linesPerPage;
-    return pageResult(
-      all.slice(start, start + normalizedPage.linesPerPage),
-      normalizedPage.currentPage,
-      normalizedPage.linesPerPage,
-      all.length,
-    );
-  }
-
-  /**
-   * @author codex
-   * Lists case suites under an AI application for first-stage case grouping.
-   */
-  async listSuites(query: SuiteQuery, page?: PageQuery): Promise<PageResult<CaseSuiteRecord>> {
-    const normalizedPage = this.normalizePage(page);
-    const sourceSuites = await this.getSuiteSource();
-    const all = sourceSuites.filter((suite) => {
-      const appMatched = !query.appCode || suite.appCode === query.appCode;
-      const keywordMatched =
-        !query.keyword ||
-        suite.suiteCode.includes(query.keyword) ||
-        suite.suiteName.includes(query.keyword);
-      return appMatched && keywordMatched;
-    });
     const start = (normalizedPage.currentPage - 1) * normalizedPage.linesPerPage;
     return pageResult(
       all.slice(start, start + normalizedPage.linesPerPage),
@@ -631,134 +507,85 @@ export class CaseService {
     return this.list({ ...query, appCode: SYSTEM_PRESET_APP_CODE, caseScope: 'SYSTEM_PRESET' }, page);
   }
 
-  createSuite(request: CreateCaseSuiteRequest): CaseSuiteRecord {
-    const existing = this.suites.get(request.suiteCode);
-    if (existing) {
-      const updated = {
-        ...existing,
-        suiteName: request.suiteName || existing.suiteName,
-        appCode: request.appCode || existing.appCode,
-        description: request.description ?? existing.description,
-      };
-      this.suites.set(request.suiteCode, updated);
-      void this.database.upsertSuite(updated);
-      return updated;
-    }
-    const record = {
-      ...request,
-      caseIds: [],
-      caseCodes: [],
-      caseCount: 0,
-    };
-    this.suites.set(record.suiteCode, record);
-    void this.database.upsertSuite(record);
-    return record;
-  }
-
-  bindSuiteCases(suiteCode: string, caseCodes: string[]): CaseSuiteRecord {
-    const suite = this.suites.get(suiteCode);
-    if (!suite) throw new Error('用例集不存在');
-    const uniqueCaseIds = Array.from(new Set(caseCodes));
-    const missingCaseId = uniqueCaseIds.find((caseId) => !this.cases.has(caseId));
-    if (missingCaseId) throw new Error(`用例不存在 ${missingCaseId}`);
-    const updated = {
-      ...suite,
-      caseIds: uniqueCaseIds,
-      caseCodes: uniqueCaseIds,
-      caseCount: uniqueCaseIds.length,
-    };
-    this.suites.set(suiteCode, updated);
-    void this.database.upsertSuite(updated);
-    return updated;
-  }
-
   async create(request: CreateCaseRequest): Promise<CaseRecord> {
-    const record = this.toCaseRecordFromSeed(
+    const record = this.toCaseRecordFromRequest(
+      request,
       {
-        ...request,
-        id: request.id ?? request.caseCode ?? this.generateEntityId('case'),
-        categoryId: request.categoryId ?? request.categoryCode ?? '',
-      },
-      {
+        id: this.generateEntityId('case'),
+        categoryId: request.categoryId,
         caseScope: 'APP' as const,
-        enabled: true,
-        manualReviewRequired: false,
+        enabled: request.enabled ?? true,
       },
     );
-    this.validateCaseCategory(record.categoryId, record.appCode);
-    const saved = await this.database.saveCase(record);
-    this.cases.set(saved.id, saved);
-    return saved;
+    await this.validateCaseCategory(record.categoryId, record.appCode);
+    return this.database.saveCase(record);
   }
 
   async update(id: string, request: UpdateCaseRequest): Promise<CaseRecord> {
-    const testCase = this.cases.get(id);
+    const testCase = await this.findCaseById(id, 'APP');
     if (!testCase) throw new Error('用例不存在');
-    if (request.categoryId) this.validateCaseCategory(request.categoryId, testCase.appCode);
-    const nextRiskLevel = this.normalizeRiskLevel(request.riskLevel ?? testCase.riskLevel);
-    const nextQuery = request.query ?? testCase.query;
-    const nextCaseName = request.caseName ?? (request.query ? this.buildCaseName(request.query) : testCase.caseName);
-    const updated = {
-      ...testCase,
-      ...request,
+    if (request.categoryId) await this.validateCaseCategory(request.categoryId, testCase.appCode);
+    const nextCategoryId = request.categoryId === undefined
+      ? testCase.categoryId
+      : this.readRequiredRequestString(request.categoryId, '缺少分类 ID');
+    const nextQuery = request.query === undefined
+      ? testCase.query
+      : this.readRequiredRequestString(request.query, '缺少问题内容');
+    const nextExpectedBehavior = request.expectedBehavior === undefined
+      ? testCase.expectedBehavior
+      : this.readRequiredRequestString(request.expectedBehavior, '缺少期望回答');
+    const updated: CaseRecord = {
+      appCode: testCase.appCode,
       id,
       caseCode: id,
-      caseName: nextCaseName,
+      categoryId: nextCategoryId,
       query: nextQuery,
-      categoryCode: request.categoryId ?? testCase.categoryId,
-      riskLevel: nextRiskLevel,
-      manualReviewRequired: request.manualReviewRequired ?? testCase.manualReviewRequired,
+      expectedBehavior: nextExpectedBehavior,
+      enabled: request.enabled ?? testCase.enabled,
+      caseScope: testCase.caseScope,
     };
-    const saved = await this.database.saveCase(updated);
-    this.cases.delete(id);
-    this.cases.set(saved.id, saved);
-    return saved;
+    return this.database.saveCase(updated);
   }
 
   async createPresetCase(request: CreateCaseRequest): Promise<CaseRecord> {
-    const record = this.toCaseRecordFromSeed(
+    const record = this.toCaseRecordFromRequest(
+      request,
       {
-        ...request,
-        id: request.id ?? request.caseCode ?? this.generateEntityId('preset_case'),
-        categoryId: request.categoryId ?? request.categoryCode ?? '',
-      },
-      {
+        id: this.generateEntityId('preset_case'),
+        categoryId: request.categoryId,
         appCode: SYSTEM_PRESET_APP_CODE,
         caseScope: 'SYSTEM_PRESET',
-        enabled: true,
-        manualReviewRequired: false,
+        enabled: request.enabled ?? true,
       },
     );
-    this.validateCaseCategory(record.categoryId);
-    const saved = await this.database.saveCase(record);
-    this.presetCases.set(saved.id, saved);
-    return saved;
+    await this.validateCaseCategory(record.categoryId);
+    return this.database.saveCase(record);
   }
 
   async updatePresetCase(id: string, request: UpdateCaseRequest): Promise<CaseRecord> {
-    const testCase = this.presetCases.get(id);
+    const testCase = await this.findCaseById(id, 'SYSTEM_PRESET');
     if (!testCase) throw new Error('预置用例不存在');
-    if (request.categoryId) this.validateCaseCategory(request.categoryId);
-    const nextRiskLevel = this.normalizeRiskLevel(request.riskLevel ?? testCase.riskLevel);
-    const nextQuery = request.query ?? testCase.query;
-    const nextCaseName = request.caseName ?? (request.query ? this.buildCaseName(request.query) : testCase.caseName);
-    const updated = {
-      ...testCase,
-      ...request,
+    if (request.categoryId) await this.validateCaseCategory(request.categoryId);
+    const nextCategoryId = request.categoryId === undefined
+      ? testCase.categoryId
+      : this.readRequiredRequestString(request.categoryId, '缺少分类 ID');
+    const nextQuery = request.query === undefined
+      ? testCase.query
+      : this.readRequiredRequestString(request.query, '缺少问题内容');
+    const nextExpectedBehavior = request.expectedBehavior === undefined
+      ? testCase.expectedBehavior
+      : this.readRequiredRequestString(request.expectedBehavior, '缺少期望回答');
+    const updated: CaseRecord = {
       id,
       caseCode: id,
-      caseName: nextCaseName,
+      categoryId: nextCategoryId,
       query: nextQuery,
+      expectedBehavior: nextExpectedBehavior,
+      enabled: request.enabled ?? testCase.enabled,
       appCode: SYSTEM_PRESET_APP_CODE,
       caseScope: 'SYSTEM_PRESET' as const,
-      categoryCode: request.categoryId ?? testCase.categoryId,
-      riskLevel: nextRiskLevel,
-      manualReviewRequired: request.manualReviewRequired ?? testCase.manualReviewRequired,
     };
-    const saved = await this.database.saveCase(updated);
-    this.presetCases.delete(id);
-    this.presetCases.set(saved.id, saved);
-    return saved;
+    return this.database.saveCase(updated);
   }
 
   async changePresetCaseEnabled(id: string, enabled: boolean): Promise<CaseRecord> {
@@ -766,16 +593,16 @@ export class CaseService {
   }
 
   async deletePresetCase(id: string): Promise<CaseRecord> {
-    const testCase = this.presetCases.get(id);
+    const testCase = await this.findCaseById(id, 'SYSTEM_PRESET');
     if (!testCase) throw new Error('预置用例不存在');
-    this.presetCases.delete(id);
     await this.database.deleteCase(id);
     return testCase;
   }
 
-  async importPresetCategoriesToApp(request: { appCode: string; suiteCode?: string; suiteName?: string; description?: string; categoryIds: string[] }) {
+  async importPresetCategoriesToApp(request: { appCode: string; categoryIds: string[] }) {
     if (!request.appCode) throw new Error('缺少应用编码');
-    const categoryIds = Array.from(new Set(request.categoryIds ?? []));
+    if (!Array.isArray(request.categoryIds)) throw new Error('缺少系统预置分类列表');
+    const categoryIds = Array.from(new Set(request.categoryIds));
     if (categoryIds.length === 0) throw new Error('请选择系统预置分类');
 
     for (const categoryId of categoryIds) {
@@ -788,90 +615,21 @@ export class CaseService {
   }
 
   async subscribePresetCategory(appCode: string, categoryId: string) {
-    if (!this.categoriesMap.has(categoryId)) {
+    if (!(await this.findCategoryById(categoryId))) {
       throw new Error(`分类不存在: ${categoryId}`);
     }
     await this.database.savePresetCategorySubscription(appCode, categoryId);
-    let appSubs = this.subscriptions.get(appCode);
-    if (!appSubs) {
-      appSubs = new Set<string>();
-      this.subscriptions.set(appCode, appSubs);
-    }
-    appSubs.add(categoryId);
   }
 
   async unsubscribePresetCategory(appCode: string, categoryId: string) {
     await this.database.deletePresetCategorySubscription(appCode, categoryId);
-    const appSubs = this.subscriptions.get(appCode);
-    if (appSubs) {
-      appSubs.delete(categoryId);
-    }
   }
 
-  listCategorySubscriptions(appCode: string): string[] {
-    const appSubs = this.subscriptions.get(appCode);
-    return appSubs ? Array.from(appSubs) : [];
-  }
-
-  async importPresetCasesToApp(request: PresetImportRequest) {
-    if (!request.appCode) throw new Error('缺少应用编码');
-    if (!request.suiteCode) throw new Error('缺少用例集编码');
-    const uniquePresetIds = Array.from(new Set(request.presetCaseIds ?? request.presetCaseCodes));
-    if (uniquePresetIds.length === 0) throw new Error('请选择系统预置测试用例');
-
-    const importedCases: CaseRecord[] = [];
-    let createdCount = 0;
-    let reusedCount = 0;
-
-    for (const presetId of uniquePresetIds) {
-      const presetCase = this.presetCases.get(presetId);
-      if (!presetCase) throw new Error(`系统预置测试用例不存在 ${presetId}`);
-      const existingCase = Array.from(this.cases.values()).find(
-        (testCase) => testCase.appCode === request.appCode && testCase.sourcePresetId === presetId,
-      );
-      if (existingCase) {
-        importedCases.push(existingCase);
-        reusedCount += 1;
-        continue;
-      }
-
-      const importedCaseId = this.generateEntityId('case');
-      const importedCase: CaseRecord = {
-        ...presetCase,
-        id: importedCaseId,
-        caseCode: importedCaseId,
-        appCode: request.appCode,
-        caseScope: 'APP',
-        sourcePresetId: presetId,
-        sourcePresetCode: presetId,
-        enabled: true,
-        manualReviewRequired: presetCase.manualReviewRequired,
-      };
-      importedCase.caseCode = importedCase.id;
-      const saved = await this.database.saveCase(importedCase);
-      this.cases.set(saved.id, saved);
-      importedCases.push(saved);
-      createdCount += 1;
-    }
-
-    const suite = this.createSuite({
-      suiteCode: request.suiteCode,
-      suiteName: request.suiteName,
-      appCode: request.appCode,
-      description: request.description,
-    });
-    const boundSuite = this.bindSuiteCases(suite.suiteCode, Array.from(new Set([...suite.caseIds, ...importedCases.map((item) => item.id)])));
-
-    return {
-      suite: boundSuite,
-      cases: importedCases,
-      createdCount,
-      reusedCount,
-      message:
-        createdCount > 0
-          ? `已引用 ${createdCount} 条系统预置测试用例到当前应用`
-          : `所选系统预置测试用例已在当前应用中，无需重复引用`,
-    };
+  async listCategorySubscriptions(appCode: string): Promise<string[]> {
+    const subscriptions = await this.database.listPresetCategorySubscriptions();
+    return subscriptions
+      .filter((subscription) => subscription.appCode === appCode)
+      .map((subscription) => subscription.categoryId);
   }
 
   async changeEnabled(id: string, enabled: boolean): Promise<CaseRecord> {
@@ -879,44 +637,17 @@ export class CaseService {
   }
 
   async delete(id: string): Promise<CaseRecord> {
-    const testCase = this.cases.get(id);
+    const testCase = await this.findCaseById(id, 'APP');
     if (!testCase) throw new Error('用例不存在');
-    this.cases.delete(id);
     await this.database.deleteCase(id);
     return testCase;
-  }
-
-  async importRows(rows: CreateCaseRequest[]) {
-    let created = 0;
-    let updated = 0;
-    const errors: Array<{ row: number; message: string }> = [];
-
-    for (const [index, row] of rows.entries()) {
-      try {
-        this.validateImportRow(row);
-        const existingId = row.id ?? row.caseCode;
-        if (existingId && this.cases.has(existingId)) {
-          await this.update(existingId, {
-            ...row,
-            categoryId: row.categoryId ?? row.categoryCode,
-          });
-          updated += 1;
-        } else {
-          await this.create(row);
-          created += 1;
-        }
-      } catch (error) {
-        errors.push({ row: index + 2, message: error instanceof Error ? error.message : '导入失败' });
-      }
-    }
-
-    return { created, updated, errors };
   }
 
   async importCsvRows(request: CaseCsvImportRequest): Promise<CaseCsvImportResult> {
     const scope = request.scope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP';
     const appCode = request.appCode?.trim();
     if (scope === 'APP' && !appCode) throw new Error('缺少应用编码');
+    if (!Array.isArray(request.rows)) throw new Error('缺少导入行');
 
     let created = 0;
     let updated = 0;
@@ -924,7 +655,7 @@ export class CaseService {
     let skipped = 0;
     const errors: Array<{ row: number; message: string }> = [];
 
-    for (const [index, row] of (request.rows ?? []).entries()) {
+    for (const [index, row] of request.rows.entries()) {
       try {
         const normalized = this.normalizeCsvImportRow(row);
         if (!normalized) {
@@ -989,8 +720,8 @@ export class CaseService {
     ];
   }
 
-  exportRows(): CaseExcelRow[] {
-    return Array.from(this.cases.values()).map((testCase) => ({
+  async exportRows(): Promise<CaseExcelRow[]> {
+    return (await this.getCaseSource('APP')).map((testCase) => ({
       appCode: testCase.appCode,
       categoryId: testCase.categoryId,
       query: testCase.query,
@@ -1002,19 +733,6 @@ export class CaseService {
     return [
       Object.fromEntries(this.excelTemplateHeaders().map((header) => [header, ''])),
     ];
-  }
-
-  private validateImportRow(row: CreateCaseRequest) {
-    const requiredFields: Array<keyof CreateCaseRequest> = [
-      'appCode',
-      'query',
-      'expectedBehavior',
-    ];
-    const missingField = requiredFields.find((field) => !row[field]);
-    if (missingField) throw new Error(`缺少必填字段 ${missingField}`);
-    if (!row.categoryId && !row.categoryCode) throw new Error('缺少必填字段 categoryId');
-    if (row.riskLevel && !['LOW', 'MEDIUM', 'HIGH'].includes(row.riskLevel)) throw new Error('风险等级不合法');
-    this.validateCaseCategory(row.categoryId ?? row.categoryCode ?? '', row.appCode);
   }
 
   private normalizeCsvImportRow(row: CaseCsvImportRow) {
@@ -1053,10 +771,18 @@ export class CaseService {
     });
   }
 
-  private validateCaseCategory(categoryId: string, appCode?: string) {
-    const category = this.categoriesMap.get(categoryId);
+  private async validateCaseCategory(categoryId: string, appCode?: string) {
+    const category = await this.findCategoryById(categoryId);
     if (!category || !category.enabled) throw new Error(`测试用例分类不可用 ${categoryId}`);
     if (category.appCode && category.appCode !== appCode) throw new Error(`测试用例分类不可用 ${categoryId}`);
+  }
+
+  private async findCategoryById(id: string) {
+    return (await this.getCategorySource()).find((category) => category.id === id);
+  }
+
+  private async findCaseById(id: string, scope: 'APP' | 'SYSTEM_PRESET') {
+    return (await this.getCaseSource(scope)).find((testCase) => testCase.id === id);
   }
 
   private validateCategory(category: CreateCaseCategoryRequest | CaseCategoryRecord) {
@@ -1064,100 +790,41 @@ export class CaseService {
     if (!category.description?.trim()) throw new Error('分类描述不能为空');
   }
 
-  private normalizeRiskLevel(value: unknown): CaseRiskLevel {
-    return value === 'LOW' || value === 'HIGH' ? value : 'MEDIUM';
-  }
-
-  private toCaseRecordFromSeed(testCase: CreateCaseRequest, overrides: Partial<CaseRecord> = {}): CaseRecord {
-    const id = String(overrides.id ?? testCase.id ?? testCase.caseCode ?? this.generateEntityId('case'));
-    const categoryId = String(overrides.categoryId ?? testCase.categoryId ?? testCase.categoryCode ?? '');
-    const query = String(overrides.query ?? testCase.query ?? '').trim();
-    const expectedBehavior = String(overrides.expectedBehavior ?? testCase.expectedBehavior ?? '').trim();
-    const riskLevel = this.normalizeRiskLevel(overrides.riskLevel ?? testCase.riskLevel);
+  private toCaseRecordFromRequest(testCase: CreateCaseRequest, overrides: Partial<CaseRecord> = {}): CaseRecord {
+    const id = this.readRequiredRequestString(overrides.id, '缺少用例 ID');
     return {
-      ...testCase,
-      ...overrides,
+      appCode: this.readRequiredRequestString(overrides.appCode ?? testCase.appCode, '缺少应用编码'),
       id,
       caseCode: id,
-      caseName: this.buildCaseName(overrides.caseName ?? testCase.caseName ?? query),
-      categoryId,
-      categoryCode: categoryId,
-      query,
-      expectedBehavior,
-      riskLevel,
+      categoryId: this.readRequiredRequestString(overrides.categoryId ?? testCase.categoryId, '缺少分类 ID'),
+      query: this.readRequiredRequestString(overrides.query ?? testCase.query, '缺少问题内容'),
+      expectedBehavior: this.readRequiredRequestString(overrides.expectedBehavior ?? testCase.expectedBehavior, '缺少期望回答'),
+      caseScope: this.readCaseScope(overrides.caseScope),
       enabled: overrides.enabled ?? true,
-      manualReviewRequired: overrides.manualReviewRequired ?? false,
     };
   }
 
-  /**
-   * @author codex
-   * Derives the legacy storage name from question content while the public case model only exposes category, question, and expected answer.
-   */
-  private buildCaseName(value: unknown) {
-    const text = String(value ?? '').trim();
-    return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+  private readRequiredRequestString(value: unknown, message: string) {
+    if (typeof value !== 'string' || !value.trim()) throw new Error(message);
+    return value.trim();
+  }
+
+  private readCaseScope(value: unknown): 'APP' | 'SYSTEM_PRESET' {
+    if (value === 'APP' || value === 'SYSTEM_PRESET') return value;
+    throw new Error('用例范围不能为空，且必须为 APP 或 SYSTEM_PRESET');
   }
 
   private generateEntityId(prefix: string) {
-    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    return `${prefix}_${randomBytes(12).toString('hex')}`;
   }
 
   private async getCategorySource() {
-    const databaseCategories = await this.database.listCategories();
-    return databaseCategories ?? this.categories();
+    return this.database.listCategories();
   }
 
   private async getCaseSource(scope: 'APP' | 'SYSTEM_PRESET') {
     const databaseCases = await this.database.listCases();
-    if (databaseCases) {
-      return databaseCases.filter((testCase) => (testCase.caseScope ?? 'APP') === scope);
-    }
-    return Array.from((scope === 'SYSTEM_PRESET' ? this.presetCases : this.cases).values());
-  }
-
-  private async getSuiteSource() {
-    const databaseSuites = await this.database.listSuites();
-    return databaseSuites ?? Array.from(this.suites.values());
-  }
-
-  private async hydrateFromDatabase() {
-    const [databaseCategories, databaseCases, databaseSuites] = await Promise.all([
-      this.database.listCategories(),
-      this.database.listCases(),
-      this.database.listSuites(),
-    ]);
-    if (databaseCategories) {
-      this.categoriesMap.clear();
-      databaseCategories.forEach((category) => this.categoriesMap.set(category.id, category));
-    }
-    if (databaseCases) {
-      this.cases.clear();
-      this.presetCases.clear();
-      for (const testCase of databaseCases) {
-        if (testCase.caseScope === 'SYSTEM_PRESET') {
-          this.presetCases.set(testCase.id, testCase);
-        } else {
-          this.cases.set(testCase.id, testCase);
-        }
-      }
-    }
-    if (databaseSuites) {
-      this.suites.clear();
-      databaseSuites.forEach((suite) => this.suites.set(suite.suiteCode, suite));
-    }
-    const dbSubscriptions = await this.database.listPresetCategorySubscriptions();
-    if (dbSubscriptions) {
-      this.subscriptions.clear();
-      for (const sub of dbSubscriptions) {
-        let appSubs = this.subscriptions.get(sub.appCode);
-        if (!appSubs) {
-          appSubs = new Set<string>();
-          this.subscriptions.set(sub.appCode, appSubs);
-        }
-        appSubs.add(sub.categoryId);
-      }
-    }
+    return databaseCases.filter((testCase) => testCase.caseScope === scope);
   }
 
   private normalizePage(page?: PageQuery): PageQuery {

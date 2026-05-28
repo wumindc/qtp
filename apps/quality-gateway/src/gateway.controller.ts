@@ -1,10 +1,12 @@
 import { All, Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
+import { readAuthTokenSecret, readBearerToken, verifyAuthToken } from '@ai-quality-platform/shared-auth';
 import type { PublicApiSegment } from '@ai-quality-platform/shared-config';
 import { buildGatewayTargetUrl } from './gateway-router';
 
 type SupportedMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 type GatewayHttpRequest = {
+  headers?: Record<string, string | string[] | undefined>;
   method?: string;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
@@ -20,7 +22,10 @@ type GatewayHttpResponse = {
 
 @Controller('ai-quality-platform/api')
 export class GatewayController {
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly authTokenSecret = readAuthTokenSecret(),
+  ) {}
 
   /**
    * @author codex
@@ -38,6 +43,7 @@ export class GatewayController {
       service,
       this.normalizePath(path),
       {
+        headers: request.headers,
         method: request.method,
         query: request.query,
         body,
@@ -68,8 +74,8 @@ export class GatewayController {
   ) {
     const response = await this.fetchImpl(this.buildTargetUrl(service, path), {
       method,
-      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
-      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+      headers: method === 'POST' && body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: method === 'POST' && body !== undefined ? JSON.stringify(body) : undefined,
     });
 
     return response.json();
@@ -85,11 +91,22 @@ export class GatewayController {
     request: GatewayHttpRequest,
     response: GatewayHttpResponse,
   ) {
+    if (!this.isPublicPath(service, path) && !this.isAuthorized(request.headers)) {
+      response.status(401);
+      response.json({
+        code: 401,
+        success: false,
+        message: '未登录或登录已过期',
+        data: null,
+      });
+      return undefined;
+    }
+
     const method = this.normalizeMethod(request.method);
     const upstream = await this.fetchImpl(this.buildTargetUrl(service, path, request.query), {
       method,
-      headers: method === 'GET' ? undefined : { 'Content-Type': 'application/json' },
-      body: method === 'GET' ? undefined : JSON.stringify(request.body ?? {}),
+      headers: method !== 'GET' && request.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: method !== 'GET' && request.body !== undefined ? JSON.stringify(request.body) : undefined,
     });
 
     const contentType = upstream.headers.get('Content-Type') ?? '';
@@ -109,6 +126,16 @@ export class GatewayController {
 
   private normalizePath(path: string | string[]): string {
     return Array.isArray(path) ? path.join('/') : path;
+  }
+
+  private isPublicPath(service: PublicApiSegment, path: string) {
+    const normalizedPath = path.replace(/^\/+/u, '');
+    return service === 'system' && (normalizedPath === 'auth/login.do' || normalizedPath === 'auth/logout.do');
+  }
+
+  private isAuthorized(headers: GatewayHttpRequest['headers']) {
+    const token = readBearerToken(headers?.authorization ?? headers?.Authorization);
+    return verifyAuthToken(token, this.authTokenSecret) !== null;
   }
 
   private normalizeMethod(method?: string): SupportedMethod {

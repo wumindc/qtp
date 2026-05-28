@@ -15,7 +15,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
-import { type RunRecord, parseRunStartTime, formatDuration } from './api/plan-execution-api';
+import { type RunRecord, formatDuration } from './api/plan-execution-api';
 
 interface PlanHistorySheetProps {
   open: boolean;
@@ -94,9 +94,7 @@ export function PlanHistorySheet({
                   run.totalCount > 0
                     ? Math.round((run.passCount / run.totalCount) * 100)
                     : 0;
-                const startTime = run.startAt
-                  ? new Date(run.startAt)
-                  : parseRunStartTime(run.runCode);
+                const startTime = run.startAt ? new Date(run.startAt) : null;
                 const isRunning = run.status === 'RUNNING';
 
                 return (

@@ -4,10 +4,15 @@
  */
 import { randomBytes } from 'node:crypto';
 import {
-  buildChatCompletionsPayload,
-  createChatCompletionsProviderAdapter,
+  AiInvocationClient,
+  toInvocationAuditJson,
   type ModelInvocationRequest,
-} from '@ai-quality-platform/ai-model-adapter';
+  type ProviderInvocationKind,
+} from '@ai-quality-platform/ai-invocation-client';
+import {
+  validateApplicationInvokeUrl,
+  normalizeApplicationRequestHeaders,
+} from '@ai-quality-platform/shared-config';
 import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
 import { BadRequestException } from '@nestjs/common';
@@ -68,7 +73,6 @@ export interface ResultRecord {
   resultId: string;
   runCode: string;
   caseCode: string;
-  caseName?: string;
   /** 来自 caseSnapshot，用于前端分类导航 */
   categoryId?: string;
   query?: string;
@@ -95,11 +99,9 @@ export interface ResultRecord {
 
 interface ExecutionCaseRecord {
   id: string;
-  caseName: string;
   appCode: string;
   caseScope?: 'APP' | 'SYSTEM_PRESET';
   categoryId: string;
-  riskLevel: string;
   inputJson: Record<string, unknown>;
   expectedJson: Record<string, unknown>;
   query: string;
@@ -118,10 +120,8 @@ interface ExecutionPlanRecord {
 interface ExecutionAppRecord {
   appCode: string;
   appName: string;
-  requestMethod: 'GET' | 'POST' | 'PUT' | 'PATCH';
+  requestMethod: 'GET' | 'POST';
   invokeUrl: string;
-  authType: 'NONE' | 'API_KEY' | 'BEARER_TOKEN' | 'BASIC';
-  authConfig?: Record<string, unknown>;
   headerTemplate: string;
   bodyTemplate: string;
   streamEnabled: boolean;
@@ -163,7 +163,7 @@ interface JudgeModelRecord {
 interface JudgeProviderRecord {
   providerCode: string;
   providerName: string;
-  providerType: string;
+  providerType: ProviderInvocationKind;
   baseUrl: string;
   apiKey: string;
   enabled: boolean;
@@ -188,10 +188,10 @@ interface JudgeEvaluationResult {
   call: JudgeCallRecord;
 }
 
-class JudgeAdapterError extends Error {
+class JudgeInvocationError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
-    this.name = 'JudgeAdapterError';
+    this.name = 'JudgeInvocationError';
   }
 }
 
@@ -255,7 +255,7 @@ type ExecutionDataStore = {
   findEvaluationConfig?(appCode: string): Promise<EvaluationConfigRecord | null | undefined>;
   findJudgeModel?(modelId: string): Promise<JudgeModelRecord | null | undefined>;
   findJudgeProvider?(providerCode: string): Promise<JudgeProviderRecord | null | undefined>;
-  listSubscriptions?(appCode: string): Promise<Array<{ appCode: string; categoryId: string }> | null>;
+  listSubscriptions(appCode: string): Promise<Array<{ appCode: string; categoryId: string }> | null>;
 };
 
 type BackgroundRunner = (task: () => Promise<void>) => void;
@@ -263,6 +263,7 @@ type BackgroundRunner = (task: () => Promise<void>) => void;
 interface ExecutionServiceDeps {
   database?: ExecutionDataStore;
   fetchImpl?: typeof fetch;
+  aiInvocationClient?: AiInvocationClient;
   backgroundRunner?: BackgroundRunner;
   recoverOnStart?: boolean;
   workerEnabled?: boolean;
@@ -312,10 +313,6 @@ type ExecutionPrismaClient = {
   };
 };
 
-const DEFAULT_HEADER_TEMPLATE = '{\n  "Content-Type": "application/json"\n}';
-const DEFAULT_BODY_TEMPLATE = '{\n  "query": "{{case.query}}"\n}';
-const DEFAULT_ANSWER_PATH = '$.content';
-const DEFAULT_SUCCESS_EXPRESSION = '$.code == 0';
 const DEFAULT_APP_PROTOCOL_TIMEOUT_MS = 30_000;
 const DEFAULT_EXECUTION_CONCURRENCY = 3;
 const MIN_EXECUTION_CONCURRENCY = 1;
@@ -347,33 +344,44 @@ function createOpaqueId(prefix: string): string {
   return `${prefix}-${suffix}`;
 }
 
-function asPlainRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+function readRequiredProtocolString(value: unknown, message: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(message);
+  return value;
 }
 
-function readString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
+function readProtocolString(value: unknown, message: string): string {
+  if (typeof value !== 'string') throw new Error(message);
+  return value;
 }
 
-function readNestedString(source: Record<string, unknown>, path: string[]): string | undefined {
-  let current: unknown = source;
-  for (const key of path) {
-    current = asPlainRecord(current)[key];
-  }
-  return readString(current);
+function readRequiredProtocolBoolean(value: unknown, message: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(message);
+  return value;
 }
 
-function readCaseSnapshotFields(
-  caseSnapshotJson?: Record<string, unknown>,
-  requestJson?: Record<string, unknown>,
-) {
-  const snapshot = caseSnapshotJson ?? {};
+function readAppRequestMethod(value: unknown): ExecutionAppRecord['requestMethod'] {
+  if (value === 'GET' || value === 'POST') return value;
+  throw new Error('当前仅支持 GET/POST 请求方法');
+}
+
+function readRequiredSnapshotString(value: unknown, message: string) {
+  if (typeof value === 'string' && value.trim()) return value;
+  throw new Error(message);
+}
+
+function readCaseSnapshotFields(caseSnapshotJson: Record<string, unknown>) {
   return {
-    caseName: readString(snapshot.caseName),
-    categoryId: readString(snapshot.categoryId),
-    query: readString(snapshot.question) ?? readNestedString(snapshot, ['inputJson', 'query']) ?? readString(requestJson?.query),
-    expectedBehavior: readString(snapshot.expectedAnswer) ?? readNestedString(snapshot, ['expectedJson', 'expectedBehavior']),
+    categoryId: readRequiredSnapshotString(caseSnapshotJson.categoryId, '执行结果快照缺少分类 ID'),
+    query: readRequiredSnapshotString(caseSnapshotJson.question, '执行结果快照缺少问题内容'),
+    expectedBehavior: readRequiredSnapshotString(caseSnapshotJson.expectedAnswer, '执行结果快照缺少期望回答'),
   };
+}
+
+function persistedBigIntId(value: string, fieldName: string): bigint {
+  if (!/^\d+$/u.test(value)) {
+    throw new Error(`${fieldName}不是已持久化数据库 ID`);
+  }
+  return BigInt(value);
 }
 
 class ExecutionDatabase implements ExecutionDataStore {
@@ -381,18 +389,16 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   /**
    * @author codex
-   * Persists execution runs and results in MySQL so history never comes from demo fixtures.
+   * Persists execution runs and results in MySQL so history is always backed by real execution records.
    */
   async listCases(): Promise<ExecutionCaseRecord[] | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.evalCase.findMany({ orderBy: { id: 'asc' } });
     return rows.map((row) => this.toCase(row));
   }
 
   async listSubscriptions(appCode: string): Promise<Array<{ appCode: string; categoryId: string }> | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = (await prisma.appPresetCategory.findMany({ where: { appCode }, orderBy: { id: 'asc' } })) as Array<{ appCode: unknown; categoryId: unknown }>;
     return rows.map((row) => ({
       appCode: String(row.appCode),
@@ -402,56 +408,48 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async findPlan(planCode: string): Promise<ExecutionPlanRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.evalPlan.findUnique({ where: { planCode } });
     return row ? this.toPlan(row) : null;
   }
 
   async findApp(appCode: string): Promise<ExecutionAppRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.aiApp.findUnique({ where: { appCode } });
     return row ? this.toApp(row) : null;
   }
 
   async findEvaluationConfig(appCode: string): Promise<EvaluationConfigRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.appEvaluationConfig.findUnique({ where: { appCode } });
     return row ? this.toEvaluationConfig(row) : null;
   }
 
   async findJudgeModel(modelId: string): Promise<JudgeModelRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.aiModel.findUnique({ where: { id: BigInt(modelId) } });
     return row ? this.toJudgeModel(row) : null;
   }
 
   async findJudgeProvider(providerCode: string): Promise<JudgeProviderRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.aiProvider.findUnique({ where: { providerCode } });
     return row ? this.toJudgeProvider(row) : null;
   }
 
   async listRuns(): Promise<RunRecord[] | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.evalRun.findMany({ orderBy: { id: 'desc' } });
     return rows.map((row) => this.toRun(row));
   }
 
   async findRun(runCode: string): Promise<RunRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.evalRun.findUnique({ where: { runCode } });
     return row ? this.toRun(row) : null;
   }
 
   async createRun(run: RunRecord): Promise<RunRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const startedAt = run.startAt ? new Date(run.startAt) : new Date();
     const finishedAt = run.status === 'RUNNING' ? null : run.endAt ? new Date(run.endAt) : new Date();
     const saved = await prisma.evalRun.create({
@@ -459,30 +457,22 @@ class ExecutionDatabase implements ExecutionDataStore {
         runCode: run.runCode,
         planCode: run.planCode,
         appCode: run.appCode,
-        runName: run.runCode,
-        sequenceNo: run.sequenceNo ?? null,
+        sequenceNo: run.sequenceNo,
         status: run.status,
-        phase: run.phase ?? (run.status === 'RUNNING' ? 'APP_CALLING' : 'COMPLETED'),
+        phase: run.phase,
         totalCount: run.totalCount,
-        appCompletedCount: run.appCompletedCount ?? 0,
-        evalCompletedCount: run.evalCompletedCount ?? 0,
+        appCompletedCount: run.appCompletedCount,
+        evalCompletedCount: run.evalCompletedCount,
         passCount: run.passCount,
         failCount: run.failCount,
         reviewCount: run.reviewCount,
-        warningCount: 0,
-        blockedCount: 0,
         avgScore: run.avgScore,
-        normalInputTokens: run.normalInputTokens ?? 0,
-        cachedInputTokens: run.cachedInputTokens ?? 0,
-        outputTokens: run.outputTokens ?? 0,
-        totalTokens: run.totalTokens ?? 0,
-        normalInputCostAmount: run.normalInputCostAmount ?? null,
-        cachedInputCostAmount: run.cachedInputCostAmount ?? null,
-        outputCostAmount: run.outputCostAmount ?? null,
-        totalCostAmount: run.totalCostAmount ?? null,
-        currency: run.currency ?? null,
-        costStatus: run.costStatus ?? 'NOT_CALCULATED',
-        costCalculatedAt: run.costStatus === 'CALCULATED' ? new Date() : null,
+        normalInputCostAmount: run.normalInputCostAmount,
+        cachedInputCostAmount: run.cachedInputCostAmount,
+        outputCostAmount: run.outputCostAmount,
+        totalCostAmount: run.totalCostAmount,
+        currency: run.currency,
+        costStatus: run.costStatus,
         startedAt,
         finishedAt,
       },
@@ -492,31 +482,29 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async updateRun(run: RunRecord): Promise<RunRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const finishedAt = run.status === 'RUNNING' ? null : run.endAt ? new Date(run.endAt) : new Date();
     const saved = await prisma.evalRun.update({
       where: { runCode: run.runCode },
       data: {
         status: run.status,
-        phase: run.phase ?? (run.status === 'RUNNING' ? 'APP_CALLING' : 'COMPLETED'),
+        phase: run.phase,
         totalCount: run.totalCount,
-        appCompletedCount: run.appCompletedCount ?? 0,
-        evalCompletedCount: run.evalCompletedCount ?? 0,
+        appCompletedCount: run.appCompletedCount,
+        evalCompletedCount: run.evalCompletedCount,
         passCount: run.passCount,
         failCount: run.failCount,
         reviewCount: run.reviewCount,
         avgScore: run.avgScore,
-        normalInputTokens: run.normalInputTokens ?? 0,
-        cachedInputTokens: run.cachedInputTokens ?? 0,
-        outputTokens: run.outputTokens ?? 0,
-        totalTokens: run.totalTokens ?? 0,
-        normalInputCostAmount: run.normalInputCostAmount ?? null,
-        cachedInputCostAmount: run.cachedInputCostAmount ?? null,
-        outputCostAmount: run.outputCostAmount ?? null,
-        totalCostAmount: run.totalCostAmount ?? null,
-        currency: run.currency ?? null,
-        costStatus: run.costStatus ?? 'NOT_CALCULATED',
-        costCalculatedAt: run.costStatus && run.costStatus !== 'NOT_CALCULATED' ? new Date() : null,
+        normalInputTokens: run.normalInputTokens,
+        cachedInputTokens: run.cachedInputTokens,
+        outputTokens: run.outputTokens,
+        totalTokens: run.totalTokens,
+        normalInputCostAmount: run.normalInputCostAmount,
+        cachedInputCostAmount: run.cachedInputCostAmount,
+        outputCostAmount: run.outputCostAmount,
+        totalCostAmount: run.totalCostAmount,
+        currency: run.currency,
+        costStatus: run.costStatus,
         finishedAt,
       },
     });
@@ -525,21 +513,17 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async createResult(result: ResultRecord, testCase: ExecutionCaseRecord): Promise<ResultRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    if (!/^\d+$/.test(testCase.id)) return result;
     const saved = await prisma.evalResult.create({
       data: {
         runCode: result.runCode,
-        caseId: BigInt(testCase.id),
+        caseId: persistedBigIntId(testCase.id, '用例 ID'),
         appCode: testCase.appCode,
-        caseSnapshotJson: result.caseSnapshotJson ?? this.caseSnapshot(testCase),
-        appStatus: result.appStatus ?? 'PENDING',
-        evaluationStatus: result.evaluationStatus ?? 'PENDING',
-        requestJson: result.requestJson ?? {},
+        caseSnapshotJson: this.readRequiredRecord(result.caseSnapshotJson, '执行结果缺少用例快照 JSON'),
+        appStatus: this.readResultPhaseStatus(result.appStatus, '执行结果缺少应用调用阶段状态'),
+        evaluationStatus: this.readResultPhaseStatus(result.evaluationStatus, '执行结果缺少评估阶段状态'),
+        requestJson: this.readRequiredRecord(result.requestJson, '执行结果缺少请求 JSON'),
         responseJson: result.responseJson ?? null,
         finalAnswer: result.finalAnswer,
-        ruleScore: result.finalScore,
-        judgeScore: result.finalScore,
         finalScore: result.finalScore,
         passStatus: result.passStatus,
         failureReason: result.failureReason ?? null,
@@ -555,19 +539,15 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async updateResult(result: ResultRecord, testCase?: ExecutionCaseRecord): Promise<ResultRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    if (!/^\d+$/u.test(result.resultId)) return result;
     const saved = await prisma.evalResult.update({
-      where: { id: BigInt(result.resultId) },
+      where: { id: persistedBigIntId(result.resultId, '执行结果 ID') },
       data: {
-        caseSnapshotJson: result.caseSnapshotJson ?? undefined,
-        appStatus: result.appStatus ?? 'PENDING',
-        evaluationStatus: result.evaluationStatus ?? 'PENDING',
-        requestJson: result.requestJson ?? {},
+        caseSnapshotJson: this.readRequiredRecord(result.caseSnapshotJson, '执行结果缺少用例快照 JSON'),
+        appStatus: this.readResultPhaseStatus(result.appStatus, '执行结果缺少应用调用阶段状态'),
+        evaluationStatus: this.readResultPhaseStatus(result.evaluationStatus, '执行结果缺少评估阶段状态'),
+        requestJson: this.readRequiredRecord(result.requestJson, '执行结果缺少请求 JSON'),
         responseJson: result.responseJson ?? null,
         finalAnswer: result.finalAnswer,
-        ruleScore: result.finalScore,
-        judgeScore: result.finalScore,
         finalScore: result.finalScore,
         passStatus: result.passStatus,
         failureReason: result.failureReason ?? null,
@@ -583,7 +563,6 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async listResults(runCode: string): Promise<ResultRecord[] | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.evalResult.findMany({ where: { runCode }, orderBy: { id: 'asc' } });
     const results = rows.map((row) => this.toResult(row));
     const resultIds = results
@@ -608,14 +587,12 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async createJudgeCall(call: JudgeCallRecord): Promise<JudgeCallRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.evalJudgeCall.create({ data: this.toJudgeCallPayload(call) });
     return this.toJudgeCall(saved);
   }
 
   async updateJudgeCall(call: JudgeCallRecord): Promise<JudgeCallRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.evalJudgeCall.update({
       where: { callCode: call.callCode },
       data: this.toJudgeCallPayload(call),
@@ -625,14 +602,12 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   async listJudgeCalls(runCode: string): Promise<JudgeCallRecord[] | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.evalJudgeCall.findMany({ where: { runCode }, orderBy: { id: 'asc' } });
     return rows.map((row) => this.toJudgeCall(row));
   }
 
   async findJudgeCallByResult(resultId: string): Promise<JudgeCallRecord | null | undefined> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     if (!/^\d+$/u.test(resultId)) return null;
     const row = await prisma.evalJudgeCall.findFirst({ where: { resultId: BigInt(resultId) }, orderBy: { id: 'desc' } });
     return row ? this.toJudgeCall(row) : null;
@@ -642,11 +617,11 @@ class ExecutionDatabase implements ExecutionDataStore {
     return {
       callCode: call.callCode,
       runCode: call.runCode,
-      resultId: /^\d+$/u.test(call.resultId) ? BigInt(call.resultId) : BigInt(0),
+      resultId: persistedBigIntId(call.resultId, '执行结果 ID'),
       appCode: call.appCode,
-      caseId: /^\d+$/u.test(call.caseId) ? BigInt(call.caseId) : BigInt(0),
+      caseId: persistedBigIntId(call.caseId, '用例 ID'),
       providerCode: call.providerCode,
-      modelDbId: /^\d+$/u.test(call.modelDbId) ? BigInt(call.modelDbId) : BigInt(0),
+      modelDbId: persistedBigIntId(call.modelDbId, '模型数据库 ID'),
       modelId: call.modelId,
       protocol: call.protocol,
       promptText: call.promptText,
@@ -672,60 +647,55 @@ class ExecutionDatabase implements ExecutionDataStore {
   }
 
   private async createClient() {
-    if (process.env.VITEST) return null;
     return createRuntimePrismaClient<ExecutionPrismaClient>();
   }
 
   private toCase(row: unknown): ExecutionCaseRecord {
-    const data = this.asRecord(row);
-    const inputJson = this.asRecord(data.inputJson);
-    const expectedJson = this.asRecord(data.expectedJson);
+    const data = this.readRecord(row, '执行用例记录格式不正确');
+    const inputJson = this.readRequiredRecord(data.inputJson, '执行用例记录缺少输入 JSON');
+    const expectedJson = this.readRequiredRecord(data.expectedJson, '执行用例记录缺少期望 JSON');
     return {
-      id: String(data.id),
-      caseName: String(data.caseName ?? ''),
-      appCode: String(data.appCode ?? ''),
-      caseScope: data.caseScope === 'SYSTEM_PRESET' ? 'SYSTEM_PRESET' : 'APP',
-      categoryId: String(data.categoryId ?? ''),
-      riskLevel: String(data.riskLevel ?? 'MEDIUM'),
+      id: this.readRequiredBigIntId(data.id, '执行用例记录缺少数据库 ID'),
+      appCode: this.readRequiredString(data.appCode, '执行用例记录缺少应用编码'),
+      caseScope: this.readCaseScope(data.caseScope),
+      categoryId: this.readRequiredBigIntId(data.categoryId, '执行用例记录缺少分类 ID'),
       inputJson,
       expectedJson,
-      query: typeof inputJson.query === 'string' ? inputJson.query : '',
-      expectedBehavior: typeof expectedJson.expectedBehavior === 'string' ? expectedJson.expectedBehavior : '',
-      enabled: data.enabled !== false,
+      query: this.readRequiredString(inputJson.query, '执行用例记录缺少问题内容'),
+      expectedBehavior: this.readRequiredString(expectedJson.expectedBehavior, '执行用例记录缺少期望回答'),
+      enabled: this.readBoolean(data.enabled, '执行用例记录缺少启停状态'),
     };
   }
 
   private toPlan(row: unknown): ExecutionPlanRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '执行计划记录格式不正确');
     return {
-      planCode: String(data.planCode),
-      planName: String(data.planName),
-      appCode: String(data.appCode),
-      caseFilter: this.asRecord(data.caseFilterJson),
-      status: data.status === 'DISABLED' ? 'DISABLED' : 'ENABLED',
+      planCode: this.readRequiredString(data.planCode, '执行计划记录缺少计划编码'),
+      planName: this.readRequiredString(data.planName, '执行计划记录缺少计划名称'),
+      appCode: this.readRequiredString(data.appCode, '执行计划记录缺少应用编码'),
+      caseFilter: this.readRequiredRecord(data.caseFilterJson, '执行计划记录缺少用例筛选条件'),
+      status: this.readPlanStatus(data.status),
     };
   }
 
   private toApp(row: unknown): ExecutionAppRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '应用协议记录格式不正确');
     const adapterConfig = this.asRecord(data.adapterConfig);
     const response = this.asRecord(adapterConfig.response);
     const templates = this.asRecord(adapterConfig.templates);
     const execution = this.asRecord(adapterConfig.execution);
     return {
-      appCode: String(data.appCode),
-      appName: String(data.appName),
-      requestMethod: this.normalizeMethod(data.requestMethod),
-      invokeUrl: String(data.invokeUrl ?? ''),
-      authType: this.normalizeAuthType(data.authType),
-      authConfig: this.asOptionalRecord(data.authConfig),
-      headerTemplate: String(templates.headerTemplate ?? DEFAULT_HEADER_TEMPLATE),
-      bodyTemplate: String(templates.bodyTemplate ?? DEFAULT_BODY_TEMPLATE),
-      streamEnabled: templates.streamEnabled === true,
+      appCode: this.readRequiredString(data.appCode, '应用协议记录缺少应用编码'),
+      appName: this.readRequiredString(data.appName, '应用协议记录缺少应用名称'),
+      requestMethod: readAppRequestMethod(data.requestMethod),
+      invokeUrl: this.readRequiredString(data.invokeUrl, '应用协议记录缺少调用地址'),
+      headerTemplate: readRequiredProtocolString(templates.headerTemplate, '应用协议缺少请求头模板'),
+      bodyTemplate: readRequiredProtocolString(templates.bodyTemplate, '应用协议缺少请求体模板'),
+      streamEnabled: readRequiredProtocolBoolean(templates.streamEnabled, '应用协议缺少流式响应配置'),
       adapterConfig: {
         response: {
-          answerPath: String(response.answerPath ?? DEFAULT_ANSWER_PATH),
-          successExpression: String(response.successExpression ?? DEFAULT_SUCCESS_EXPRESSION),
+          answerPath: readRequiredProtocolString(response.answerPath, '应用协议缺少答案路径'),
+          successExpression: readProtocolString(response.successExpression, '应用协议缺少成功表达式'),
         },
         execution: {
           appConcurrency: this.normalizeConcurrency(execution.appConcurrency),
@@ -735,78 +705,78 @@ class ExecutionDatabase implements ExecutionDataStore {
   }
 
   private toEvaluationConfig(row: unknown): EvaluationConfigRecord {
-    const data = this.asRecord(row);
-    const customPrompt = typeof data.customPrompt === 'string' ? data.customPrompt : '';
-    const promptOverrideEnabled = data.promptOverrideEnabled === true;
+    const data = this.readRecord(row, '评估配置记录格式不正确');
+    const promptOverrideEnabled = this.readBoolean(data.promptOverrideEnabled, '评估配置记录缺少提示词覆盖开关');
+    const customPrompt = this.readOptionalString(data.customPrompt, '评估配置自定义提示词不是字符串');
     return {
-      appCode: String(data.appCode),
-      modelId: String(data.modelId ?? ''),
+      appCode: this.readRequiredString(data.appCode, '评估配置记录缺少应用编码'),
+      modelId: this.readRequiredBigIntId(data.modelId, '评估配置记录缺少模型 ID'),
       promptOverrideEnabled,
       systemPrompt: DEFAULT_EVALUATION_PROMPT,
       customPrompt,
       effectivePrompt: promptOverrideEnabled && customPrompt ? customPrompt : DEFAULT_EVALUATION_PROMPT,
-      evaluationConcurrency: this.normalizeConcurrency(data.evaluationConcurrency),
+      evaluationConcurrency: this.readConcurrency(data.evaluationConcurrency, '评估配置记录缺少评估并发数'),
     };
   }
 
   private toJudgeModel(row: unknown): JudgeModelRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '评估模型记录格式不正确');
     return {
-      id: String(data.id),
-      modelName: String(data.modelName ?? ''),
-      providerCode: String(data.providerCode ?? ''),
-      modelId: String(data.modelId ?? ''),
-      modelType: data.modelType === 'EMBEDDING' ? 'EMBEDDING' : 'LLM',
-      protocol: String(data.protocol ?? 'OPENAI_CHAT_COMPLETIONS'),
-      parameters: this.asRecord(data.parametersJson),
+      id: this.readRequiredBigIntId(data.id, '评估模型记录缺少数据库 ID'),
+      modelName: this.readRequiredString(data.modelName, '评估模型记录缺少模型名称'),
+      providerCode: this.readRequiredString(data.providerCode, '评估模型记录缺少供应商编码'),
+      modelId: this.readRequiredString(data.modelId, '评估模型记录缺少模型 ID'),
+      modelType: this.readJudgeModelType(data.modelType),
+      protocol: this.readJudgeModelProtocol(data.protocol),
+      parameters: this.readOptionalRecord(data.parameters, '评估模型 parameters 不是 JSON 对象'),
       limits: {
-        pricing: this.normalizePricing(this.asRecord(data.limitsJson).pricing),
+        pricing: this.normalizePricing(this.readOptionalRecord(data.limits, '评估模型 limits 不是 JSON 对象').pricing),
       },
-      enabled: data.enabled !== false,
+      enabled: this.readBoolean(data.enabled, '评估模型记录缺少启停状态'),
     };
   }
 
   private toJudgeProvider(row: unknown): JudgeProviderRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '评估模型供应商记录格式不正确');
     return {
-      providerCode: String(data.providerCode ?? ''),
-      providerName: String(data.providerName ?? ''),
-      providerType: String(data.providerType ?? ''),
-      baseUrl: String(data.baseUrl ?? ''),
-      apiKey: String(data.apiKey ?? ''),
-      enabled: data.enabled !== false,
+      providerCode: this.readRequiredString(data.providerCode, '评估模型供应商记录缺少供应商编码'),
+      providerName: this.readRequiredString(data.providerName, '评估模型供应商记录缺少供应商名称'),
+      providerType: this.readJudgeProviderType(data.providerType),
+      baseUrl: this.readRequiredString(data.baseUrl, '评估模型供应商记录缺少接口地址'),
+      apiKey: this.readRequiredString(data.apiKey, '评估模型供应商记录缺少 API Key'),
+      enabled: this.readBoolean(data.enabled, '评估模型供应商记录缺少启停状态'),
     };
   }
 
   private toRun(row: unknown): RunRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '执行批次记录格式不正确');
     const startAt = this.toIsoString(data.startedAt);
     const endAt = this.toIsoString(data.finishedAt);
     const durationMs = startAt && endAt ? new Date(endAt).getTime() - new Date(startAt).getTime() : undefined;
     return {
-      runCode: String(data.runCode),
-      planCode: String(data.planCode),
-      appCode: String(data.appCode),
+      runCode: this.readRequiredString(data.runCode, '执行批次记录缺少批次编码'),
+      planCode: this.readRequiredString(data.planCode, '执行批次记录缺少计划编码'),
+      appCode: this.readRequiredString(data.appCode, '执行批次记录缺少应用编码'),
       status: this.normalizeRunStatus(data.status),
-      phase: this.normalizeRunPhase(data.phase, this.normalizeRunStatus(data.status)),
+      phase: this.normalizeRunPhase(data.phase),
       sequenceNo: this.optionalNumber(data.sequenceNo),
-      totalCount: Number(data.totalCount ?? 0),
-      appCompletedCount: Number(data.appCompletedCount ?? 0),
-      evalCompletedCount: Number(data.evalCompletedCount ?? 0),
-      passCount: Number(data.passCount ?? 0),
-      failCount: Number(data.failCount ?? 0),
-      reviewCount: Number(data.reviewCount ?? 0),
-      avgScore: Number(data.avgScore?.toString?.() ?? data.avgScore ?? 0),
-      normalInputTokens: Number(data.normalInputTokens ?? 0),
-      cachedInputTokens: Number(data.cachedInputTokens ?? 0),
-      outputTokens: Number(data.outputTokens ?? 0),
-      totalTokens: Number(data.totalTokens ?? 0),
+      totalCount: this.readNonNegativeInteger(data.totalCount, '执行批次记录缺少总数'),
+      appCompletedCount: this.readNonNegativeInteger(data.appCompletedCount, '执行批次记录缺少应用完成数'),
+      evalCompletedCount: this.readNonNegativeInteger(data.evalCompletedCount, '执行批次记录缺少评估完成数'),
+      passCount: this.readNonNegativeInteger(data.passCount, '执行批次记录缺少通过数'),
+      failCount: this.readNonNegativeInteger(data.failCount, '执行批次记录缺少失败数'),
+      reviewCount: this.readNonNegativeInteger(data.reviewCount, '执行批次记录缺少待复核数'),
+      avgScore: this.readNumberLike(data.avgScore, '执行批次记录缺少平均分'),
+      normalInputTokens: this.readNonNegativeInteger(data.normalInputTokens, '执行批次记录缺少普通输入 Token 数'),
+      cachedInputTokens: this.readNonNegativeInteger(data.cachedInputTokens, '执行批次记录缺少缓存命中 Token 数'),
+      outputTokens: this.readNonNegativeInteger(data.outputTokens, '执行批次记录缺少输出 Token 数'),
+      totalTokens: this.readNonNegativeInteger(data.totalTokens, '执行批次记录缺少总 Token 数'),
       normalInputCostAmount: this.optionalDecimalNumber(data.normalInputCostAmount),
       cachedInputCostAmount: this.optionalDecimalNumber(data.cachedInputCostAmount),
       outputCostAmount: this.optionalDecimalNumber(data.outputCostAmount),
       totalCostAmount: this.optionalDecimalNumber(data.totalCostAmount),
       currency: typeof data.currency === 'string' ? data.currency : undefined,
-      costStatus: this.normalizeCostStatus(data.costStatus),
+      costStatus: this.readRunCostStatus(data.costStatus),
       startAt,
       endAt,
       durationMs,
@@ -815,10 +785,11 @@ class ExecutionDatabase implements ExecutionDataStore {
 
   private normalizeRunStatus(value: unknown): RunRecord['status'] {
     if (value === 'RUNNING' || value === 'CANCELLED' || value === 'FAILED') return value;
-    return 'COMPLETED';
+    if (value === 'COMPLETED') return value;
+    throw new Error('执行批次记录状态非法');
   }
 
-  private normalizeRunPhase(value: unknown, status: RunRecord['status']): RunPhase {
+  private normalizeRunPhase(value: unknown): RunPhase {
     if (
       value === 'PENDING' ||
       value === 'APP_CALLING' ||
@@ -828,13 +799,17 @@ class ExecutionDatabase implements ExecutionDataStore {
       value === 'FAILED' ||
       value === 'CANCELLED'
     ) return value;
-    if (status === 'RUNNING') return 'APP_CALLING';
-    return status === 'CANCELLED' ? 'CANCELLED' : status === 'FAILED' ? 'FAILED' : 'COMPLETED';
+    throw new Error('执行批次记录阶段非法');
   }
 
   private normalizeResultPhaseStatus(value: unknown): ResultPhaseStatus {
-    if (value === 'RUNNING' || value === 'PASSED' || value === 'FAILED' || value === 'SKIPPED') return value;
-    return 'PENDING';
+    return this.readResultPhaseStatus(value, '执行结果阶段状态非法');
+  }
+
+  private readResultPhaseStatus(value: unknown, message: string): ResultPhaseStatus {
+    const allowedStatuses: ResultPhaseStatus[] = ['PENDING', 'RUNNING', 'PASSED', 'FAILED', 'SKIPPED'];
+    if (allowedStatuses.includes(value as ResultPhaseStatus)) return value as ResultPhaseStatus;
+    throw new Error(message);
   }
 
   private normalizeManualResult(value: unknown): ResultRecord['manualResult'] {
@@ -843,14 +818,16 @@ class ExecutionDatabase implements ExecutionDataStore {
     return undefined;
   }
 
-  private normalizeCostStatus(value: unknown): RunRecord['costStatus'] {
+  private readRunCostStatus(value: unknown): RunRecord['costStatus'] {
     if (value === 'CALCULATED' || value === 'NO_USAGE' || value === 'SKIPPED_NO_PRICE' || value === 'PARTIAL') return value;
-    return 'NOT_CALCULATED';
+    if (value === 'NOT_CALCULATED') return value;
+    throw new Error('执行批次记录计费状态非法');
   }
 
   private normalizeJudgeCostStatus(value: unknown): JudgeCost['costStatus'] {
-    if (value === 'CALCULATED' || value === 'NO_USAGE') return value;
-    return 'SKIPPED_NO_PRICE';
+    const allowedStatuses: JudgeCost['costStatus'][] = ['CALCULATED', 'NO_USAGE', 'SKIPPED_NO_PRICE'];
+    if (allowedStatuses.includes(value as JudgeCost['costStatus'])) return value as JudgeCost['costStatus'];
+    throw new Error('评估调用计费状态非法');
   }
 
   private normalizeConcurrency(value: unknown) {
@@ -883,44 +860,159 @@ class ExecutionDatabase implements ExecutionDataStore {
     return Number.isFinite(numberValue) ? numberValue : null;
   }
 
+  private readRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readRequiredString(value: unknown, message: string): string {
+    if (typeof value === 'string' && value.trim()) return value;
+    throw new Error(message);
+  }
+
+  private readString(value: unknown, message: string): string {
+    if (typeof value === 'string') return value;
+    throw new Error(message);
+  }
+
+  private readOptionalString(value: unknown, message: string): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    throw new Error(message);
+  }
+
+  private readRequiredBigIntId(value: unknown, message: string): string {
+    if (typeof value === 'bigint' && value > 0n) return String(value);
+    throw new Error(message);
+  }
+
+  private readBoolean(value: unknown, message: string): boolean {
+    if (typeof value === 'boolean') return value;
+    throw new Error(message);
+  }
+
+  private readNonNegativeInteger(value: unknown, message: string): number {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+    throw new Error(message);
+  }
+
+  private readNumberLike(value: unknown, message: string): number {
+    const parsed = Number(typeof value === 'object' && value && 'toString' in value ? value.toString() : value);
+    if (Number.isFinite(parsed)) return parsed;
+    throw new Error(message);
+  }
+
+  private readOptionalRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value === null || value === undefined) return {};
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readOptionalNullableRecord(value: unknown, message: string): Record<string, unknown> | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readRequiredRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readConcurrency(value: unknown, message: string): number {
+    if (
+      typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= MIN_EXECUTION_CONCURRENCY &&
+      value <= MAX_EXECUTION_CONCURRENCY
+    ) return value;
+    throw new Error(message);
+  }
+
+  private readJudgeModelType(value: unknown): JudgeModelRecord['modelType'] {
+    if (value === 'LLM' || value === 'EMBEDDING') return value;
+    throw new Error('评估模型记录模型类型非法');
+  }
+
+  private readJudgeModelProtocol(value: unknown): string {
+    if (
+      value === 'OPENAI_CHAT_COMPLETIONS' ||
+      value === 'OPENAI_EMBEDDINGS' ||
+      value === 'DASHSCOPE_COMPATIBLE_CHAT' ||
+      value === 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' ||
+      value === 'DEEPSEEK_CHAT_COMPLETIONS'
+    ) return value;
+    throw new Error('评估模型记录协议非法');
+  }
+
+  private readJudgeProviderType(value: unknown): ProviderInvocationKind {
+    if (value === 'OPENAI_COMPATIBLE' || value === 'QWEN' || value === 'DEEPSEEK') return value;
+    throw new Error('评估模型供应商类型非法');
+  }
+
+  private readCaseScope(value: unknown): ExecutionCaseRecord['caseScope'] {
+    if (value === 'APP' || value === 'SYSTEM_PRESET') return value;
+    throw new Error('执行用例记录作用域非法');
+  }
+
+  private readPlanStatus(value: unknown): ExecutionPlanRecord['status'] {
+    if (value === 'ENABLED' || value === 'DISABLED') return value;
+    throw new Error('执行计划记录状态非法');
+  }
+
+  private readPassStatus(value: unknown): ResultRecord['passStatus'] {
+    if (value === 'PASS' || value === 'FAIL' || value === 'REVIEW') return value;
+    throw new Error('执行结果通过状态非法');
+  }
+
+  private readJudgeCallStatus(value: unknown): JudgeCallRecord['status'] {
+    if (value === 'SUCCEEDED' || value === 'FAILED') return value;
+    throw new Error('评估调用状态非法');
+  }
+
+  private readOptionalNonNegativeInteger(value: unknown, message: string): number | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+    throw new Error(message);
+  }
+
   private toJudgeCall(row: unknown): JudgeCallRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '评估调用记录格式不正确');
     return {
-      callCode: String(data.callCode),
-      runCode: String(data.runCode),
-      resultId: String(data.resultId),
-      appCode: String(data.appCode),
-      caseId: String(data.caseId),
-      providerCode: String(data.providerCode),
-      modelDbId: String(data.modelDbId),
-      modelId: String(data.modelId),
-      protocol: String(data.protocol),
-      promptText: String(data.promptText ?? ''),
-      requestJson: this.asRecord(data.requestJson),
-      responseJson: this.asOptionalRecord(data.responseJson),
+      callCode: this.readRequiredString(data.callCode, '评估调用记录缺少调用编码'),
+      runCode: this.readRequiredString(data.runCode, '评估调用记录缺少批次编码'),
+      resultId: this.readRequiredBigIntId(data.resultId, '评估调用记录缺少结果 ID'),
+      appCode: this.readRequiredString(data.appCode, '评估调用记录缺少应用编码'),
+      caseId: this.readRequiredBigIntId(data.caseId, '评估调用记录缺少用例 ID'),
+      providerCode: this.readRequiredString(data.providerCode, '评估调用记录缺少供应商编码'),
+      modelDbId: this.readRequiredBigIntId(data.modelDbId, '评估调用记录缺少模型数据库 ID'),
+      modelId: this.readRequiredString(data.modelId, '评估调用记录缺少模型 ID'),
+      protocol: this.readJudgeModelProtocol(data.protocol),
+      promptText: this.readRequiredString(data.promptText, '评估调用记录缺少提示词'),
+      requestJson: this.readRequiredRecord(data.requestJson, '评估调用记录缺少请求 JSON'),
+      responseJson: this.readOptionalNullableRecord(data.responseJson, '评估调用响应 JSON 格式不正确'),
       rawResponseText: typeof data.rawResponseText === 'string' ? data.rawResponseText : undefined,
-      rawUsageJson: this.asOptionalRecord(data.rawUsageJson),
-      normalInputTokens: this.optionalNumber(data.normalInputTokens),
-      cachedInputTokens: this.optionalNumber(data.cachedInputTokens),
-      outputTokens: this.optionalNumber(data.outputTokens),
-      totalTokens: this.optionalNumber(data.totalTokens),
+      rawUsageJson: this.readOptionalNullableRecord(data.rawUsageJson, '评估调用 usage JSON 格式不正确'),
+      normalInputTokens: this.readOptionalNonNegativeInteger(data.normalInputTokens, '评估调用普通输入 Token 数非法'),
+      cachedInputTokens: this.readOptionalNonNegativeInteger(data.cachedInputTokens, '评估调用缓存命中 Token 数非法'),
+      outputTokens: this.readOptionalNonNegativeInteger(data.outputTokens, '评估调用输出 Token 数非法'),
+      totalTokens: this.readOptionalNonNegativeInteger(data.totalTokens, '评估调用总 Token 数非法'),
       normalInputCostAmount: this.optionalDecimalNumber(data.normalInputCostAmount),
       cachedInputCostAmount: this.optionalDecimalNumber(data.cachedInputCostAmount),
       outputCostAmount: this.optionalDecimalNumber(data.outputCostAmount),
       totalCostAmount: this.optionalDecimalNumber(data.totalCostAmount),
       currency: typeof data.currency === 'string' ? data.currency : undefined,
       costStatus: this.normalizeJudgeCostStatus(data.costStatus),
-      status: data.status === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+      status: this.readJudgeCallStatus(data.status),
       errorCode: typeof data.errorCode === 'string' ? data.errorCode : undefined,
       errorMessage: typeof data.errorMessage === 'string' ? data.errorMessage : undefined,
-      elapsedMs: this.optionalNumber(data.elapsedMs),
+      elapsedMs: this.readOptionalNonNegativeInteger(data.elapsedMs, '评估调用耗时非法'),
     };
   }
 
   private caseSnapshot(testCase: ExecutionCaseRecord): Record<string, unknown> {
     return {
       caseId: testCase.id,
-      caseName: testCase.caseName,
       categoryId: testCase.categoryId,
       question: testCase.query,
       expectedAnswer: testCase.expectedBehavior,
@@ -940,16 +1032,15 @@ class ExecutionDatabase implements ExecutionDataStore {
   }
 
   private toResult(row: unknown): ResultRecord {
-    const data = this.asRecord(row);
-    const caseSnapshotJson = this.asRecord(data.caseSnapshotJson);
-    const requestJson = this.asRecord(data.requestJson);
-    const responseJson = this.asRecord(data.responseJson);
-    const snapshotFields = readCaseSnapshotFields(caseSnapshotJson, requestJson);
+    const data = this.readRecord(row, '执行结果记录格式不正确');
+    const caseSnapshotJson = this.readRequiredRecord(data.caseSnapshotJson, '执行结果记录缺少用例快照 JSON');
+    const requestJson = this.readRequiredRecord(data.requestJson, '执行结果记录缺少请求 JSON');
+    const responseJson = this.readOptionalNullableRecord(data.responseJson, '执行结果响应 JSON 格式不正确');
+    const snapshotFields = readCaseSnapshotFields(caseSnapshotJson);
     return {
-      resultId: String(data.id ?? data.resultId),
-      runCode: String(data.runCode),
-      caseCode: String(data.caseId ?? data.caseCode),
-      caseName: snapshotFields.caseName,
+      resultId: this.readRequiredBigIntId(data.id, '执行结果记录缺少数据库 ID'),
+      runCode: this.readRequiredString(data.runCode, '执行结果记录缺少批次编码'),
+      caseCode: this.readRequiredBigIntId(data.caseId, '执行结果记录缺少用例 ID'),
       categoryId: snapshotFields.categoryId,
       query: snapshotFields.query,
       expectedBehavior: snapshotFields.expectedBehavior,
@@ -958,14 +1049,14 @@ class ExecutionDatabase implements ExecutionDataStore {
       evaluationStatus: this.normalizeResultPhaseStatus(data.evaluationStatus),
       requestJson,
       responseJson,
-      finalAnswer: String(data.finalAnswer ?? ''),
-      finalScore: Number(data.finalScore?.toString?.() ?? data.finalScore ?? 0),
-      passStatus: data.passStatus === 'FAIL' || data.passStatus === 'REVIEW' ? data.passStatus : 'PASS',
+      finalAnswer: this.readString(data.finalAnswer, '执行结果记录缺少最终回答'),
+      finalScore: this.readNumberLike(data.finalScore, '执行结果记录缺少最终得分'),
+      passStatus: this.readPassStatus(data.passStatus),
       failureReason: typeof data.failureReason === 'string' ? data.failureReason : undefined,
       problemType: typeof data.problemType === 'string' ? data.problemType : undefined,
-      elapsedMs: data.elapsedMs === null || data.elapsedMs === undefined ? undefined : Number(data.elapsedMs),
-      appElapsedMs: data.appElapsedMs === null || data.appElapsedMs === undefined ? undefined : Number(data.appElapsedMs),
-      judgeElapsedMs: data.judgeElapsedMs === null || data.judgeElapsedMs === undefined ? undefined : Number(data.judgeElapsedMs),
+      elapsedMs: this.readOptionalNonNegativeInteger(data.elapsedMs, '执行结果总耗时非法'),
+      appElapsedMs: this.readOptionalNonNegativeInteger(data.appElapsedMs, '执行结果应用调用耗时非法'),
+      judgeElapsedMs: this.readOptionalNonNegativeInteger(data.judgeElapsedMs, '执行结果评估耗时非法'),
       errorCode: typeof data.errorCode === 'string' ? data.errorCode : undefined,
     };
   }
@@ -975,7 +1066,7 @@ class ExecutionDatabase implements ExecutionDataStore {
     return {
       resultId: String(data.resultId),
       manualResult: this.normalizeManualResult(data.manualResult),
-      reviewStatus: data.reviewStatus === 'REVIEWED' ? 'REVIEWED' : 'PENDING',
+      reviewStatus: 'REVIEWED',
       reviewComment: typeof data.reviewComment === 'string' ? data.reviewComment : undefined,
     };
   }
@@ -989,31 +1080,16 @@ class ExecutionDatabase implements ExecutionDataStore {
     return Object.keys(record).length > 0 ? record : undefined;
   }
 
-  private normalizeMethod(value: unknown): ExecutionAppRecord['requestMethod'] {
-    return value === 'GET' || value === 'PUT' || value === 'PATCH' ? value : 'POST';
-  }
-
-  private normalizeAuthType(value: unknown): ExecutionAppRecord['authType'] {
-    return value === 'API_KEY' || value === 'BEARER_TOKEN' || value === 'BASIC' ? value : 'NONE';
-  }
 }
 
 export class ExecutionService {
   private readonly database: ExecutionDataStore;
   private readonly fetchImpl: typeof fetch;
-  private readonly runs = new Map<string, RunRecord>();
-  private readonly results = new Map<string, ResultRecord[]>();
-  private readonly cases = new Map<string, ExecutionCaseRecord>();
-  private readonly plans = new Map<string, ExecutionPlanRecord>();
-  private readonly apps = new Map<string, ExecutionAppRecord>();
-  private readonly evaluationConfigs = new Map<string, EvaluationConfigRecord>();
-  private readonly judgeModels = new Map<string, JudgeModelRecord>();
-  private readonly judgeProviders = new Map<string, JudgeProviderRecord>();
+  private readonly aiInvocationClient: AiInvocationClient;
   private readonly backgroundRunner: BackgroundRunner;
   private readonly workerEnabled: boolean;
   private readonly activeRunCodes = new Set<string>();
   private readonly runCaseSnapshots = new Map<string, ExecutionCaseRecord[]>();
-  private readonly judgeCalls = new Map<string, JudgeCallRecord[]>();
   private readonly runOrders = new Map<string, number>();
   private nextRunOrder = 0;
   private lastWorkerHeartbeatAt?: string;
@@ -1025,11 +1101,14 @@ export class ExecutionService {
   constructor(deps: ExecutionServiceDeps = {}) {
     this.database = deps.database ?? new ExecutionDatabase();
     this.fetchImpl = deps.fetchImpl ?? fetch;
+    this.aiInvocationClient = deps.aiInvocationClient ?? new AiInvocationClient({ fetchImpl: this.fetchImpl });
     this.backgroundRunner = deps.backgroundRunner ?? ((task) => {
-      void task().catch(() => undefined);
+      void task().catch((error) => {
+        this.lastWorkerError = this.describeExecutionError(error);
+      });
     });
     this.workerEnabled = deps.workerEnabled ?? true;
-    const recoverOnStart = deps.recoverOnStart ?? (!process.env.VITEST && this.workerEnabled);
+    const recoverOnStart = deps.recoverOnStart ?? (deps.database === undefined && this.workerEnabled);
     if (recoverOnStart) this.backgroundRunner(() => this.recoverRunningRuns());
   }
 
@@ -1038,7 +1117,7 @@ export class ExecutionService {
    * Starts an execution run from the saved plan, current application protocol, and database cases.
    */
   async start(request: { planCode: string; appCode: string; caseCodes?: string[] }): Promise<RunRecord> {
-    const plan = await this.getPlan(request.planCode, request.appCode);
+    const plan = await this.getPlan(request.planCode);
     await this.getJudgeContext(request.appCode);
     const cases = await this.resolveCases(request, plan);
     if (cases.length > 0) await this.getApp(request.appCode);
@@ -1066,16 +1145,13 @@ export class ExecutionService {
       endAt: cases.length === 0 ? startedAt : undefined,
       durationMs: cases.length === 0 ? 0 : undefined,
     };
-    const savedRun = await this.database.createRun(run);
-    const nextRun = savedRun ?? run;
-    this.runs.set(nextRun.runCode, nextRun);
+    const nextRun = this.requirePersisted(await this.database.createRun(run), '执行批次保存失败');
     this.rememberRunOrder(nextRun.runCode);
     const placeholders = await Promise.all(cases.map(async (testCase, index) => {
       const pendingResult = this.pendingResult(nextRun.runCode, testCase, index);
-      const savedResult = await this.database.createResult(pendingResult, testCase);
-      return this.enrichResult(savedResult ?? pendingResult);
+      const savedResult = this.requirePersisted(await this.database.createResult(pendingResult, testCase), '执行结果保存失败');
+      return this.enrichResult(savedResult);
     }));
-    this.results.set(nextRun.runCode, placeholders);
     if (cases.length > 0) {
       this.runCaseSnapshots.set(nextRun.runCode, cases);
       this.scheduleRun(nextRun.runCode);
@@ -1106,7 +1182,7 @@ export class ExecutionService {
 
   async runDetail(runCode: string): Promise<RunRecord> {
     const run = await this.getRun(runCode);
-    const plan = await this.getPlan(run.planCode, run.appCode);
+    const plan = await this.getPlan(run.planCode);
     const sequencedRun = await this.attachRunSequence(run);
     return { ...sequencedRun, planName: plan.planName };
   }
@@ -1134,8 +1210,7 @@ export class ExecutionService {
   }
 
   async judgeCallDetail(resultId: string): Promise<JudgeCallRecord> {
-    const memoryCall = Array.from(this.judgeCalls.values()).flat().find((call) => call.resultId === resultId);
-    const call = memoryCall ?? await this.database.findJudgeCallByResult?.(resultId);
+    const call = await this.database.findJudgeCallByResult?.(resultId);
     if (!call) throw new Error('评估调用审计不存在');
     return call;
   }
@@ -1145,7 +1220,7 @@ export class ExecutionService {
    * Reports worker recovery and activity state for service health diagnostics.
    */
   async getWorkerHealth(): Promise<WorkerHealth> {
-    const runs = await this.getRunSource().catch(() => []);
+    const runs = await this.getRunSource();
     return {
       enabled: this.workerEnabled,
       activeRunCount: this.activeRunCodes.size,
@@ -1180,12 +1255,11 @@ export class ExecutionService {
         costStatus: cost.costStatus,
       };
       const saved = await this.database.updateJudgeCall?.(nextCall);
-      return saved ?? nextCall;
+      return this.requirePersisted(saved, '评估调用审计更新失败');
     }));
-    this.judgeCalls.set(runCode, recalculatedCalls);
     const results = await this.getResultSource(runCode);
     const savedRun = await this.persistRun(this.summarizeRun(run, results, run.status, run.phase, await this.calculateRunCostSummary(runCode)));
-    const plan = await this.getPlan(savedRun.planCode, savedRun.appCode);
+    const plan = await this.getPlan(savedRun.planCode);
     const sequencedRun = await this.attachRunSequence(savedRun);
     return { ...sequencedRun, planName: plan.planName };
   }
@@ -1193,12 +1267,12 @@ export class ExecutionService {
   async rerun(runCode: string): Promise<RunRecord> {
     const run = await this.getRun(runCode);
     if (run.status === 'RUNNING' || this.activeRunCodes.has(runCode)) {
-      const plan = await this.getPlan(run.planCode, run.appCode);
+      const plan = await this.getPlan(run.planCode);
       const sequencedRun = await this.attachRunSequence(run);
       return { ...sequencedRun, planName: plan.planName };
     }
 
-    const plan = await this.getPlan(run.planCode, run.appCode);
+    const plan = await this.getPlan(run.planCode);
     const existingResults = await this.getResultSource(runCode);
     const cases = existingResults.length > 0
       ? existingResults.map((result) => this.caseFromResultSnapshot(run, result))
@@ -1214,8 +1288,6 @@ export class ExecutionService {
       const nextResult = this.resetResultForRerun(runCode, testCase, index, previousResult);
       return this.persistResultUpdate(nextResult, testCase);
     }));
-    this.results.set(runCode, resetResults);
-    this.judgeCalls.set(runCode, []);
     const startedAt = new Date().toISOString();
     const nextRun = await this.persistRun({
       ...run,
@@ -1249,31 +1321,23 @@ export class ExecutionService {
   }
 
   /**
-   * 仅重新发起 AI 评估，不重新调用业务接口。
-   * 适用于：未达标用例希望重跑评估、执行失败用例已有业务返回值时重跑评估。
-   * @author Antigravity/Claude-Sonnet-4.6
+   * @author codex
+   * Re-runs judge evaluation for persisted results without calling the tested app again.
    */
   async reEvaluate(resultIds: string[]): Promise<ResultRecord[]> {
     if (resultIds.length === 0) throw new BadRequestException('resultIds 不能为空');
 
-    // 找到这些 result 所在的 run
-    const allResults = Array.from(this.results.values()).flat();
-    const targetResults = allResults.filter((r) => resultIds.includes(r.resultId));
-
-    // 内存中找不到的，尝试通过已知 run 从持久层加载
-    const foundIds = new Set(targetResults.map((r) => r.resultId));
-    const missingIds = resultIds.filter((id) => !foundIds.has(id));
-    if (missingIds.length > 0) {
-      const allRuns = await this.getRunSource();
-      for (const run of allRuns) {
-        if (missingIds.length === 0) break;
-        const runResults = await this.getResultSource(run.runCode);
-        for (const r of runResults) {
-          const idx = missingIds.indexOf(r.resultId);
-          if (idx >= 0) {
-            targetResults.push(r);
-            missingIds.splice(idx, 1);
-          }
+    const missingIds = [...resultIds];
+    const targetResults: ResultRecord[] = [];
+    const allRuns = await this.getRunSource();
+    for (const run of allRuns) {
+      if (missingIds.length === 0) break;
+      const runResults = await this.getResultSource(run.runCode);
+      for (const result of runResults) {
+        const index = missingIds.indexOf(result.resultId);
+        if (index >= 0) {
+          targetResults.push(result);
+          missingIds.splice(index, 1);
         }
       }
     }
@@ -1285,30 +1349,14 @@ export class ExecutionService {
 
     const updatedResults: ResultRecord[] = [];
     for (const result of targetResults) {
-      // 从 caseSnapshot 重建 testCase，用于评估调用
-      const snapshot = result.caseSnapshotJson ?? {};
-      const snapshotFields = readCaseSnapshotFields(snapshot, result.requestJson);
-      const testCase: ExecutionCaseRecord = {
-        id: result.caseCode,
-        caseName: snapshotFields.caseName ?? result.caseName ?? '',
-        appCode: run.appCode,
-        categoryId: String(snapshot.categoryId ?? ''),
-        riskLevel: '',
-        inputJson: asPlainRecord(snapshot.inputJson),
-        expectedJson: asPlainRecord(snapshot.expectedJson),
-        query: snapshotFields.query ?? result.query ?? '',
-        expectedBehavior: snapshotFields.expectedBehavior ?? result.expectedBehavior ?? '',
-        enabled: true,
-      };
+      const testCase = this.caseFromResultSnapshot(run, result);
       const evaluated = await this.evaluateResultWithJudge(run, testCase, result, judgeContext);
       const saved = await this.persistResultUpdate(evaluated, testCase);
       updatedResults.push(saved);
-      // 同步内存缓存
       const runResults = await this.getResultSource(runCode);
       this.replaceResult(runResults, saved);
     }
 
-    // 重新汇总 run 统计
     const allRunResults = await this.getResultSource(runCode);
     await this.persistRun(this.summarizeRun(run, allRunResults, run.status, run.phase));
 
@@ -1351,14 +1399,16 @@ export class ExecutionService {
 
   private async processRunJob(runCode: string) {
     let run: RunRecord | undefined;
+    let currentResults: ResultRecord[] = [];
     try {
       this.touchWorkerHeartbeat();
       run = await this.getRun(runCode);
       if (run.status !== 'RUNNING') return;
 
-      const plan = await this.getPlan(run.planCode, run.appCode);
+      const plan = await this.getPlan(run.planCode);
       const cases = this.runCaseSnapshots.get(run.runCode) ?? (await this.resolveCases({ appCode: run.appCode }, plan));
       const results = await this.ensureRunResults(run, cases);
+      currentResults = results;
       this.touchWorkerHeartbeat();
 
       if (run.phase !== 'EVALUATING' && run.phase !== 'COSTING') {
@@ -1387,15 +1437,9 @@ export class ExecutionService {
 
       const costSummary = await this.calculateRunCostSummary(run.runCode);
       await this.persistRun(this.summarizeRun(run, results, 'COMPLETED', 'COMPLETED', costSummary));
-    } catch {
+    } catch (error) {
       if (!run) return;
-      let currentResults: ResultRecord[] = [];
-      try {
-        currentResults = await this.getResultSource(run.runCode);
-      } catch {
-        currentResults = this.results.get(run.runCode) ?? [];
-      }
-      this.lastWorkerError = '执行任务处理失败';
+      this.lastWorkerError = this.describeExecutionError(error);
       await this.persistRun(this.summarizeRun(run, currentResults, 'FAILED'));
     } finally {
       this.activeRunCodes.delete(runCode);
@@ -1409,14 +1453,12 @@ export class ExecutionService {
 
   private async ensureRunResults(run: RunRecord, cases: ExecutionCaseRecord[]) {
     const results = await this.getResultSource(run.runCode);
-    const shouldCreateMissing = this.runCaseSnapshots.has(run.runCode);
     for (const [index, testCase] of cases.entries()) {
       if (this.findResult(results, testCase.id)) continue;
       const pendingResult = this.pendingResult(run.runCode, testCase, index);
-      const savedResult = shouldCreateMissing ? await this.database.createResult(pendingResult, testCase) : null;
-      results.push(this.enrichResult(savedResult ?? pendingResult));
+      const savedResult = this.requirePersisted(await this.database.createResult(pendingResult, testCase), '执行结果保存失败');
+      results.push(this.enrichResult(savedResult));
     }
-    this.results.set(run.runCode, [...results]);
     return results;
   }
 
@@ -1425,7 +1467,6 @@ export class ExecutionService {
       resultId: `${runCode}_RESULT_${index + 1}`,
       runCode,
       caseCode: testCase.id,
-      caseName: testCase.caseName,
       query: testCase.query,
       expectedBehavior: testCase.expectedBehavior,
       caseSnapshotJson: this.caseSnapshot(testCase),
@@ -1446,12 +1487,11 @@ export class ExecutionService {
     const index = results.findIndex((result) => result.resultId === nextResult.resultId || result.caseCode === nextResult.caseCode);
     if (index >= 0) results[index] = nextResult;
     else results.push(nextResult);
-    this.results.set(nextResult.runCode, [...results]);
   }
 
   private async persistResultUpdate(result: ResultRecord, testCase: ExecutionCaseRecord) {
     const saved = await this.database.updateResult?.(result, testCase);
-    return this.enrichResult(saved ?? result);
+    return this.enrichResult(this.requirePersisted(saved, '执行结果更新失败'));
   }
 
   private async executeAppCall(
@@ -1469,21 +1509,53 @@ export class ExecutionService {
     }
 
     const startedAt = Date.now();
+    let requestMethod: ExecutionAppRecord['requestMethod'];
+    try {
+      requestMethod = readAppRequestMethod(app.requestMethod);
+    } catch (error) {
+      return {
+        ...this.failedResult(
+          runCode,
+          testCase,
+          index,
+          'APP_PROTOCOL_INVALID',
+          error instanceof Error ? error.message : '应用协议配置非法',
+          Date.now() - startedAt,
+        ),
+        resultId: currentResult.resultId,
+      };
+    }
+
+    const invokeUrlValidation = validateApplicationInvokeUrl(app.invokeUrl);
+    if (!invokeUrlValidation.allowed) {
+      return {
+        ...this.failedResult(
+          runCode,
+          testCase,
+          index,
+          'APP_INVOKE_URL_BLOCKED',
+          `被测应用调用地址不允许访问：${invokeUrlValidation.reason ?? '不符合当前运行环境策略'}`,
+          Date.now() - startedAt,
+        ),
+        resultId: currentResult.resultId,
+      };
+    }
+
     try {
       const resolvedHeaders = this.renderTemplate(app.headerTemplate, this.caseTemplateData(testCase));
       const resolvedBody = this.renderTemplate(app.bodyTemplate, this.caseTemplateData(testCase));
-      const requestHeaders = this.applyAuthHeaders(this.parseJsonObject(resolvedHeaders), app);
-      const requestJson = app.requestMethod === 'GET' ? {} : this.parseJsonObject(resolvedBody);
+      const requestHeaders = normalizeApplicationRequestHeaders(this.parseRequestJsonObject(resolvedHeaders, '请求头模板'));
+      const requestJson = requestMethod === 'GET' ? {} : this.parseRequestJsonObject(resolvedBody, '请求体模板');
       const upstream = await this.fetchWithTimeout(app.invokeUrl, {
-        method: app.requestMethod,
+        method: requestMethod,
         headers: requestHeaders,
-        body: app.requestMethod === 'GET' ? undefined : resolvedBody,
+        body: requestMethod === 'GET' ? undefined : resolvedBody,
       });
       const rawText = await upstream.text();
       const responseJson = this.parseResponse(rawText, app.streamEnabled);
       const finalAnswer = String(this.readJsonPath(responseJson, app.adapterConfig.response.answerPath) ?? '');
       const assertionPassed = this.evaluateSuccessExpression(responseJson, app.adapterConfig.response.successExpression);
-      const protocolPassed = upstream.ok && (assertionPassed === true || (assertionPassed === undefined && finalAnswer.trim().length > 0));
+      const protocolPassed = upstream.ok && assertionPassed === true;
       if (!protocolPassed) {
         return {
           ...currentResult,
@@ -1609,14 +1681,11 @@ export class ExecutionService {
   }
 
   private isAppCompleted(result: ResultRecord) {
-    if (this.isTerminalResultStatus(result.appStatus)) return true;
-    return result.appStatus === undefined && result.evaluationStatus === undefined && (Boolean(result.finalAnswer) || result.passStatus !== 'REVIEW');
+    return this.isTerminalResultStatus(result.appStatus);
   }
 
   private isCountableResult(result: ResultRecord) {
-    if (this.isTerminalResultStatus(result.evaluationStatus)) return true;
-    if (result.appStatus === undefined && result.evaluationStatus === undefined) return true;
-    return false;
+    return this.isTerminalResultStatus(result.evaluationStatus);
   }
 
   private resolveAppConcurrency(app: ExecutionAppRecord | undefined) {
@@ -1647,21 +1716,11 @@ export class ExecutionService {
 
   private async persistJudgeCall(call: JudgeCallRecord) {
     const saved = await this.database.createJudgeCall?.(call);
-    const nextCall = saved ?? call;
-    const calls = this.judgeCalls.get(nextCall.runCode) ?? [];
-    const existingIndex = calls.findIndex((item) => item.callCode === nextCall.callCode || item.resultId === nextCall.resultId);
-    if (existingIndex >= 0) calls[existingIndex] = nextCall;
-    else calls.push(nextCall);
-    this.judgeCalls.set(nextCall.runCode, calls);
-    return nextCall;
+    return this.requirePersisted(saved, '评估调用审计保存失败');
   }
 
   private async getJudgeCallSource(runCode: string) {
-    const memoryCalls = this.judgeCalls.get(runCode);
-    if (memoryCalls !== undefined) return memoryCalls;
-    const databaseCalls = await this.database.listJudgeCalls?.(runCode);
-    if (databaseCalls) this.judgeCalls.set(runCode, databaseCalls);
-    return databaseCalls ?? [];
+    return this.requirePersisted(await this.database.listJudgeCalls?.(runCode), '评估调用审计读取失败');
   }
 
   private resetResultForRerun(
@@ -1681,20 +1740,23 @@ export class ExecutionService {
   }
 
   private caseFromResultSnapshot(run: RunRecord, result: ResultRecord): ExecutionCaseRecord {
-    const snapshot = asPlainRecord(result.caseSnapshotJson);
-    const snapshotFields = readCaseSnapshotFields(snapshot, result.requestJson);
+    const snapshot = this.readRequiredSnapshotRecord(result.caseSnapshotJson, '执行结果快照缺少用例快照');
+    const snapshotFields = readCaseSnapshotFields(snapshot);
     return {
       id: result.caseCode,
-      caseName: snapshotFields.caseName ?? result.caseName ?? result.caseCode,
       appCode: run.appCode,
-      categoryId: String(snapshot.categoryId ?? result.categoryId ?? ''),
-      riskLevel: String(snapshot.riskLevel ?? ''),
-      inputJson: asPlainRecord(snapshot.inputJson),
-      expectedJson: asPlainRecord(snapshot.expectedJson),
-      query: snapshotFields.query ?? result.query ?? '',
-      expectedBehavior: snapshotFields.expectedBehavior ?? result.expectedBehavior ?? '',
+      categoryId: snapshotFields.categoryId,
+      inputJson: this.readRequiredSnapshotRecord(snapshot.inputJson, '执行结果快照缺少请求输入'),
+      expectedJson: this.readRequiredSnapshotRecord(snapshot.expectedJson, '执行结果快照缺少期望信息'),
+      query: snapshotFields.query,
+      expectedBehavior: snapshotFields.expectedBehavior,
       enabled: true,
     };
+  }
+
+  private readRequiredSnapshotRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 
   private async calculateRunCostSummary(runCode: string): Promise<Partial<RunRecord>> {
@@ -1750,7 +1812,6 @@ export class ExecutionService {
   private caseSnapshot(testCase: ExecutionCaseRecord): Record<string, unknown> {
     return {
       caseId: testCase.id,
-      caseName: testCase.caseName,
       categoryId: testCase.categoryId,
       question: testCase.query,
       expectedAnswer: testCase.expectedBehavior,
@@ -1760,14 +1821,13 @@ export class ExecutionService {
   }
 
   private async resolveCases(request: { appCode: string; caseCodes?: string[] }, plan: ExecutionPlanRecord) {
-    const caseFilter = plan.caseFilter ?? {};
+    const caseFilter = this.readRequiredRecord(plan.caseFilter, '执行计划缺少用例筛选条件');
     const categoryCodes = this.stringArray(caseFilter.categoryCodes);
-    const riskLevels = this.stringArray(caseFilter.riskLevels);
     const selectedCaseCodes = this.stringArray(caseFilter.selectedCaseCodes);
     const requestCaseCodes = this.stringArray(request.caseCodes);
     const requestedSet = new Set([...selectedCaseCodes, ...requestCaseCodes]);
 
-    const subscriptions = await this.database.listSubscriptions?.(request.appCode) ?? [];
+    const subscriptions = await this.getSubscriptionSource(request.appCode);
     const subscribedCategoryIds = new Set(subscriptions.map(s => s.categoryId));
 
     return (await this.getCaseSource()).filter((testCase) => {
@@ -1775,10 +1835,14 @@ export class ExecutionService {
       const appMatched = testCase.appCode === request.appCode || isSubscribedPreset;
       const enabledMatched = testCase.enabled;
       const categoryMatched = categoryCodes.length === 0 || categoryCodes.includes(testCase.categoryId);
-      const riskMatched = riskLevels.length === 0 || riskLevels.includes(testCase.riskLevel);
       const selectedMatched = requestedSet.size === 0 || requestedSet.has(testCase.id);
-      return appMatched && enabledMatched && categoryMatched && riskMatched && selectedMatched;
+      return appMatched && enabledMatched && categoryMatched && selectedMatched;
     });
+  }
+
+  private readRequiredRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 
   private failedResult(runCode: string, testCase: ExecutionCaseRecord, index: number, errorCode: string, failureReason: string, elapsedMs = 0): ResultRecord {
@@ -1786,7 +1850,6 @@ export class ExecutionService {
       resultId: `${runCode}_RESULT_${index + 1}`,
       runCode,
       caseCode: testCase.id,
-      caseName: testCase.caseName,
       query: testCase.query,
       expectedBehavior: testCase.expectedBehavior,
       caseSnapshotJson: this.caseSnapshot(testCase),
@@ -1841,7 +1904,7 @@ export class ExecutionService {
   ): Promise<JudgeEvaluationResult> {
     const judgeTimeoutMs = this.resolveJudgeTimeoutMs(judgeContext.model.parameters, finalAnswer);
     const invocationRequest = this.buildJudgeInvocationRequest(judgeContext, testCase, finalAnswer, judgeTimeoutMs);
-    const requestJson = buildChatCompletionsPayload(invocationRequest);
+    const requestJson = toInvocationAuditJson(invocationRequest);
     const startedAt = Date.now();
     const baseCall = (): Omit<JudgeCallRecord, 'status' | 'costStatus'> => ({
       callCode: createOpaqueId('judge'),
@@ -1857,25 +1920,26 @@ export class ExecutionService {
       requestJson,
     });
     try {
-      const adapter = createChatCompletionsProviderAdapter({
-        baseUrl: judgeContext.provider.baseUrl,
-        apiKey: judgeContext.provider.apiKey,
-        fetchImpl: this.fetchImpl,
+      const invocationResult = await this.aiInvocationClient.invokeChat({
+        connection: {
+          baseUrl: judgeContext.provider.baseUrl,
+          apiKey: judgeContext.provider.apiKey,
+        },
+        request: invocationRequest,
       });
-      const adapterResult = await adapter.invoke(invocationRequest);
-      if (adapterResult.status !== 'SUCCEEDED') {
-        throw new JudgeAdapterError(adapterResult.errorCode ?? 'JUDGE_EVALUATION_FAILED', adapterResult.errorMessage ?? '评估模型调用失败');
+      if (invocationResult.status !== 'SUCCEEDED') {
+        throw new JudgeInvocationError(invocationResult.errorCode ?? 'JUDGE_EVALUATION_FAILED', invocationResult.errorMessage ?? '评估模型调用失败');
       }
-      const payload = adapterResult.responseJson ?? {};
-      const content = adapterResult.content ?? this.extractJudgeMessageContent(payload);
-      const usage = normalizeJudgeUsage(adapterResult.usage?.rawUsage ?? payload.usage);
+      const payload = invocationResult.responseJson ?? {};
+      const content = invocationResult.content ?? this.extractJudgeMessageContent(payload);
+      const usage = normalizeJudgeUsage(invocationResult.usage?.rawUsage ?? payload.usage);
       const cost = calculateJudgeCost(usage, judgeContext.model.limits?.pricing);
       return {
         score: this.parseJudgeResult(content),
         call: {
           ...baseCall(),
           responseJson: payload,
-          rawResponseText: adapterResult.rawResponseText,
+          rawResponseText: invocationResult.rawResponseText,
           rawUsageJson: usage.rawUsage,
           normalInputTokens: usage.normalInputTokens,
           cachedInputTokens: usage.cachedInputTokens,
@@ -1888,12 +1952,12 @@ export class ExecutionService {
           currency: cost.currency,
           costStatus: cost.costStatus,
           status: 'SUCCEEDED',
-          elapsedMs: adapterResult.elapsedMs,
+          elapsedMs: invocationResult.elapsedMs,
         },
       };
     } catch (error) {
       const failureReason = this.describeJudgeFailure(error, judgeTimeoutMs);
-      const errorCode = error instanceof JudgeAdapterError ? error.code : 'JUDGE_EVALUATION_FAILED';
+      const errorCode = error instanceof JudgeInvocationError ? error.code : 'JUDGE_EVALUATION_FAILED';
       return {
         score: {
           finalScore: 0,
@@ -1924,6 +1988,7 @@ export class ExecutionService {
     return {
       traceId: `${testCase.id}:${Date.now()}`,
       providerCode: judgeContext.provider.providerCode,
+      providerKind: this.toInvocationProviderKind(judgeContext.provider.providerType),
       modelId: judgeContext.model.modelId,
       protocol: judgeContext.model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT' ? 'DASHSCOPE_COMPATIBLE_CHAT' : 'OPENAI_COMPATIBLE',
       messages: [
@@ -1944,10 +2009,30 @@ export class ExecutionService {
       maxTokens: this.resolveJudgeMaxOutputTokens(parameters),
       responseFormat: parameters.jsonMode === true ? 'json_object' : 'text',
       topP: typeof parameters.topP === 'number' ? parameters.topP : undefined,
-      enableThinking: judgeContext.provider.providerType === 'QWEN' || judgeContext.model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT' ? false : undefined,
-      reasoningEffort: parameters.reasoningEffort,
+      enableThinking: this.shouldDisableJudgeThinking(judgeContext) ? false : undefined,
+      reasoningEffort: this.readReasoningEffort(parameters.reasoningEffort),
       timeoutMs,
     };
+  }
+
+  private toInvocationProviderKind(providerType: string): ProviderInvocationKind | undefined {
+    if (providerType === 'OPENAI_COMPATIBLE' || providerType === 'QWEN' || providerType === 'DEEPSEEK') return providerType;
+    return undefined;
+  }
+
+  /**
+   * @author codex
+   * Keeps untyped model JSON from becoming raw provider reasoning payloads.
+   */
+  private readReasoningEffort(value: unknown): ModelInvocationRequest['reasoningEffort'] {
+    if (value === 'low' || value === 'medium' || value === 'high' || value === 'max') return value;
+    return undefined;
+  }
+
+  private shouldDisableJudgeThinking(judgeContext: JudgeContext) {
+    return judgeContext.provider.providerType === 'QWEN' ||
+      judgeContext.provider.providerType === 'DEEPSEEK' ||
+      judgeContext.model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT';
   }
 
   /**
@@ -1979,7 +2064,7 @@ export class ExecutionService {
   }
 
   private describeJudgeFailure(error: unknown, timeoutMs: number) {
-    if (error instanceof JudgeAdapterError) {
+    if (error instanceof JudgeInvocationError) {
       if (error.code === 'PROVIDER_TIMEOUT') {
         return `评估模型调用超时：已等待 ${Math.round(timeoutMs / 1000)} 秒，评估模型未返回结果`;
       }
@@ -2014,79 +2099,66 @@ export class ExecutionService {
 
   private parseJudgeResult(content: string): EvaluationScore {
     const jsonText = content.match(/\{[\s\S]*\}/u)?.[0] ?? content;
-    const parsed = this.parseJsonObject(jsonText);
-    const passStatus = this.normalizeJudgeStatus(parsed.passStatus);
-    const score = Number(parsed.score ?? parsed.finalScore ?? 0);
-    const reason = typeof parsed.reason === 'string'
-      ? parsed.reason
-      : typeof parsed.failureReason === 'string'
-        ? parsed.failureReason
-        : '评估模型未返回评分理由';
+    const parsed = this.parseRequiredJsonObject(jsonText, '评估模型返回的评分');
+    const passStatus = this.readJudgeStatus(parsed.passStatus);
+    const score = this.readJudgeScore(parsed.score);
+    const reason = this.readJudgeReason(parsed.reason);
     return {
-      finalScore: Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0,
+      finalScore: Math.max(0, Math.min(100, Math.round(score))),
       passStatus,
       failureReason: reason,
       problemType: typeof parsed.problemType === 'string' ? parsed.problemType : undefined,
     };
   }
 
-  private normalizeJudgeStatus(value: unknown): EvaluationScore['passStatus'] {
-    return value === 'PASS' || value === 'REVIEW' ? value : 'FAIL';
+  /**
+   * @author codex
+   * Requires the judge model to return the current scoring contract instead of silently scoring malformed JSON.
+   */
+  private readJudgeStatus(value: unknown): EvaluationScore['passStatus'] {
+    if (value === 'PASS' || value === 'FAIL' || value === 'REVIEW') return value;
+    throw new Error('评估模型返回的评分缺少有效 passStatus');
+  }
+
+  private readJudgeScore(value: unknown): number {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    throw new Error('评估模型返回的评分缺少有效 score');
+  }
+
+  private readJudgeReason(value: unknown): string {
+    if (typeof value === 'string' && value.trim()) return value;
+    throw new Error('评估模型返回的评分缺少有效 reason');
   }
 
   private async getCaseSource() {
-    const databaseCases = await this.database.listCases();
-    if (databaseCases) {
-      const normalizedCases = databaseCases.map((testCase) => this.normalizeCaseRecord(testCase));
-      this.cases.clear();
-      normalizedCases.forEach((testCase) => this.cases.set(testCase.id, testCase));
-      return normalizedCases;
+    const databaseCases = this.requirePersisted(await this.database.listCases(), '执行用例读取失败');
+    return databaseCases;
+  }
+
+  private async getSubscriptionSource(appCode: string) {
+    if (typeof this.database.listSubscriptions !== 'function') {
+      throw new Error('执行数据源缺少预置分类订阅读取能力');
     }
-    return Array.from(this.cases.values());
+    return this.requirePersisted(await this.database.listSubscriptions(appCode), '预置分类订阅读取失败');
   }
 
   private async getRunSource() {
-    const databaseRuns = await this.database.listRuns();
-    if (databaseRuns) {
-      this.runs.clear();
-      [...databaseRuns].reverse().forEach((run) => this.rememberRunOrder(run.runCode));
-      databaseRuns.forEach((run) => this.runs.set(run.runCode, run));
-      return databaseRuns;
-    }
-    const memoryRuns = Array.from(this.runs.values());
-    memoryRuns.forEach((run) => this.rememberRunOrder(run.runCode));
-    return memoryRuns;
+    const databaseRuns = this.requirePersisted(await this.database.listRuns(), '执行批次读取失败');
+    [...databaseRuns].reverse().forEach((run) => this.rememberRunOrder(run.runCode));
+    return databaseRuns;
   }
 
   private async getResultSource(runCode: string) {
-    const databaseResults = await this.database.listResults(runCode);
-    const sourceResults = databaseResults ?? this.results.get(runCode) ?? [];
-    if (databaseResults) this.results.set(runCode, databaseResults);
-    return sourceResults.map((result) => this.enrichResult(result));
+    const databaseResults = this.requirePersisted(await this.database.listResults(runCode), '执行结果读取失败');
+    return databaseResults.map((result) => this.enrichResult(result));
   }
 
-  private async getPlan(planCode: string, appCode: string) {
-    const databasePlan = await this.database.findPlan?.(planCode);
-    const plan = databasePlan !== undefined ? databasePlan : this.plans.get(planCode);
-    if (plan) {
-      this.plans.set(plan.planCode, plan);
-      return plan;
-    }
-    return {
-      planCode,
-      planName: planCode,
-      appCode,
-      caseFilter: {},
-      status: 'ENABLED' as const,
-    };
+  private async getPlan(planCode: string) {
+    return this.requirePersisted(await this.database.findPlan?.(planCode), '执行计划不存在');
   }
 
   private async getApp(appCode: string) {
-    const databaseApp = await this.database.findApp?.(appCode);
-    const app = databaseApp !== undefined ? databaseApp : this.apps.get(appCode);
-    if (!app) throw new Error('应用协议不存在');
-    this.apps.set(app.appCode, app);
-    return app;
+    return this.requirePersisted(await this.database.findApp?.(appCode), '应用协议不存在');
   }
 
   private async getJudgeContext(appCode: string): Promise<JudgeContext> {
@@ -2106,31 +2178,20 @@ export class ExecutionService {
   }
 
   private async getEvaluationConfig(appCode: string) {
-    const databaseConfig = await this.database.findEvaluationConfig?.(appCode);
-    const config = databaseConfig !== undefined ? databaseConfig : this.evaluationConfigs.get(appCode);
-    if (config) this.evaluationConfigs.set(appCode, config);
-    return config ?? null;
+    return await this.database.findEvaluationConfig?.(appCode) ?? null;
   }
 
   private async getJudgeModel(modelId: string) {
-    const databaseModel = await this.database.findJudgeModel?.(modelId);
-    const model = databaseModel !== undefined ? databaseModel : this.judgeModels.get(modelId);
-    if (model) this.judgeModels.set(model.id, model);
-    return model ?? null;
+    return await this.database.findJudgeModel?.(modelId) ?? null;
   }
 
   private async getJudgeProvider(providerCode: string) {
-    const databaseProvider = await this.database.findJudgeProvider?.(providerCode);
-    const provider = databaseProvider !== undefined ? databaseProvider : this.judgeProviders.get(providerCode);
-    if (provider) this.judgeProviders.set(provider.providerCode, provider);
-    return provider ?? null;
+    return await this.database.findJudgeProvider?.(providerCode) ?? null;
   }
 
   private async getRun(runCode: string) {
-    const databaseRun = await this.database.findRun(runCode);
-    const run = databaseRun ?? this.runs.get(runCode);
+    const run = await this.database.findRun(runCode);
     if (!run) throw new Error('执行批次不存在');
-    this.runs.set(run.runCode, run);
     this.rememberRunOrder(run.runCode);
     return run;
   }
@@ -2165,9 +2226,7 @@ export class ExecutionService {
   private readRunTime(run: RunRecord): number {
     const timeText = run.startAt ?? run.endAt;
     const time = timeText ? new Date(timeText).getTime() : Number.NaN;
-    if (Number.isFinite(time)) return time;
-    const legacyTime = Number(run.runCode.split('_RUN_')[1] ?? 0);
-    return Number.isFinite(legacyTime) ? legacyTime : 0;
+    return Number.isFinite(time) ? time : 0;
   }
 
   private rememberRunOrder(runCode: string) {
@@ -2194,42 +2253,31 @@ export class ExecutionService {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const runCode = createOpaqueId('run');
       const existingRun = await this.database.findRun(runCode);
-      if (!existingRun && !this.runs.has(runCode)) return runCode;
+      if (!existingRun) return runCode;
     }
     throw new Error('执行批次编码生成失败，请重试');
   }
 
   private async persistRun(run: RunRecord) {
     const saved = await this.database.updateRun(run);
-    const next = saved ?? run;
-    this.runs.set(next.runCode, next);
+    const next = this.requirePersisted(saved, '执行批次更新失败');
     this.rememberRunOrder(next.runCode);
     return next;
   }
 
-  private enrichResult(result: ResultRecord): ResultRecord {
-    const snapshotFields = readCaseSnapshotFields(result.caseSnapshotJson, result.requestJson);
-    return {
-      ...result,
-      caseName: result.caseName ?? snapshotFields.caseName,
-      categoryId: result.categoryId ?? snapshotFields.categoryId,
-      query: result.query ?? snapshotFields.query,
-      expectedBehavior: result.expectedBehavior ?? snapshotFields.expectedBehavior,
-    };
+  private requirePersisted<T>(value: T | null | undefined, message: string): T {
+    if (!value) throw new Error(message);
+    return value;
   }
 
-  private normalizeCaseRecord(testCase: ExecutionCaseRecord): ExecutionCaseRecord {
-    const inputJson = testCase.inputJson ?? {};
-    const expectedJson = testCase.expectedJson ?? {};
-    const query = testCase.query || (typeof inputJson.query === 'string' ? inputJson.query : '');
-    const expectedBehavior = testCase.expectedBehavior || (typeof expectedJson.expectedBehavior === 'string' ? expectedJson.expectedBehavior : '');
+  private enrichResult(result: ResultRecord): ResultRecord {
+    const snapshot = this.readRequiredRecord(result.caseSnapshotJson, '执行结果快照缺少用例快照');
+    const snapshotFields = readCaseSnapshotFields(snapshot);
     return {
-      ...testCase,
-      inputJson,
-      expectedJson,
-      query,
-      expectedBehavior,
-      enabled: testCase.enabled !== false,
+      ...result,
+      categoryId: snapshotFields.categoryId,
+      query: snapshotFields.query,
+      expectedBehavior: snapshotFields.expectedBehavior,
     };
   }
 
@@ -2237,13 +2285,8 @@ export class ExecutionService {
     return {
       case: {
         id: testCase.id,
-        name: testCase.caseName,
-        query: testCase.query,
-        expectedBehavior: testCase.expectedBehavior,
         input: testCase.inputJson,
       },
-      query: testCase.query,
-      expectedBehavior: testCase.expectedBehavior,
     };
   }
 
@@ -2252,25 +2295,6 @@ export class ExecutionService {
       const path = rawPath.trim();
       return String(this.readObjectPath(data, path) ?? '');
     });
-  }
-
-  private applyAuthHeaders(headers: Record<string, unknown>, app: ExecutionAppRecord): Record<string, string> {
-    const normalizedHeaders = Object.entries(headers).reduce<Record<string, string>>(
-      (current, [key, value]) => ({ ...current, [key]: String(value) }),
-      {},
-    );
-    const authConfig = app.authConfig ?? {};
-    if (app.authType === 'BEARER_TOKEN' && typeof authConfig.token === 'string') {
-      return { ...normalizedHeaders, Authorization: `Bearer ${authConfig.token}` };
-    }
-    if (app.authType === 'API_KEY' && typeof authConfig.headerName === 'string' && typeof authConfig.apiKey === 'string') {
-      return { ...normalizedHeaders, [authConfig.headerName]: authConfig.apiKey };
-    }
-    if (app.authType === 'BASIC' && typeof authConfig.username === 'string' && typeof authConfig.password === 'string') {
-      const encoded = Buffer.from(`${authConfig.username}:${authConfig.password}`).toString('base64');
-      return { ...normalizedHeaders, Authorization: `Basic ${encoded}` };
-    }
-    return normalizedHeaders;
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit, timeoutMs = DEFAULT_APP_PROTOCOL_TIMEOUT_MS) {
@@ -2289,8 +2313,7 @@ export class ExecutionService {
   private parseResponse(text: string, streamEnabled: boolean): Record<string, unknown> {
     const eventStreamResponse = this.parseServerSentEvents(text);
     if (eventStreamResponse) return eventStreamResponse;
-    if (!streamEnabled) return this.parseJsonObject(text, { rawText: text });
-    return this.parseJsonObject(text, { rawText: text });
+    return this.parseRequiredJsonObject(text, '应用响应');
   }
 
   private parseServerSentEvents(text: string): Record<string, unknown> | null {
@@ -2301,7 +2324,7 @@ export class ExecutionService {
       .filter((line) => line && line !== '[DONE]');
     if (chunks.length === 0) return null;
 
-    const parsedChunks = chunks.map((chunk) => this.parseJsonObject(chunk, { content: chunk }));
+    const parsedChunks = chunks.map((chunk) => this.parseRequiredJsonObject(chunk, '流式响应事件'));
     const merged = Object.assign({}, ...parsedChunks);
     const content = parsedChunks
       .map((chunk) => {
@@ -2318,13 +2341,29 @@ export class ExecutionService {
     };
   }
 
-  private parseJsonObject(text: string, fallback: Record<string, unknown> = {}) {
+  private parseRequiredJsonObject(text: string, label: string): Record<string, unknown> {
     try {
       const parsed = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${label}不是合法 JSON 对象`);
+      }
       return parsed as Record<string, unknown>;
-    } catch {
-      return fallback;
+    } catch (error) {
+      if (error instanceof Error && error.message === `${label}不是合法 JSON 对象`) throw error;
+      throw new Error(`${label}不是合法 JSON 对象`);
+    }
+  }
+
+  private parseRequestJsonObject(text: string, label: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${label}不是合法 JSON 对象`);
+      }
+      return parsed as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof Error && error.message === `${label}不是合法 JSON 对象`) throw error;
+      throw new Error(`${label}不是合法 JSON 对象`);
     }
   }
 
@@ -2340,14 +2379,14 @@ export class ExecutionService {
     }, data);
   }
 
-  private evaluateSuccessExpression(data: Record<string, unknown>, expression: string): boolean | undefined {
+  private evaluateSuccessExpression(data: Record<string, unknown>, expression: string): boolean {
     const normalized = expression.trim();
     if (!normalized) return true;
     const [path, expectedRaw] = normalized.split('==').map((item) => item.trim());
-    if (!path || expectedRaw === undefined) return true;
+    if (!path || expectedRaw === undefined) return false;
     const expected = expectedRaw.replace(/^['"]|['"]$/g, '');
     const actual = this.readJsonPath(data, path);
-    if (actual === undefined || actual === null) return undefined;
+    if (actual === undefined || actual === null) return false;
     return String(actual) === expected;
   }
 

@@ -24,11 +24,8 @@ model AiApp {
   appCode        String   @unique @db.VarChar(100)
   appName        String   @db.VarChar(200)
   appType        String   @db.VarChar(50)
-  businessDomain String   @db.VarChar(100)
   invokeUrl      String   @db.VarChar(500)
   requestMethod  String   @default("POST") @db.VarChar(20)
-  authType       String   @default("NONE") @db.VarChar(50)
-  authConfig     Json?
   adapterConfig  Json?
   owner          String?  @db.VarChar(100)
   status         String   @default("ENABLED") @db.VarChar(50)
@@ -59,9 +56,9 @@ model AiModel {
   modelId          String   @db.VarChar(200)
   modelType        String   @db.VarChar(50)
   protocol         String   @db.VarChar(80)
-  parametersJson   Json?
-  capabilitiesJson Json?
-  limitsJson       Json?
+  parameters       Json
+  capabilities     Json
+  limits           Json
   enabled          Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -102,43 +99,19 @@ model EvalCaseCategory {
 
 model EvalCase {
   id                   BigInt   @id @default(autoincrement())
-  caseName             String   @db.VarChar(200)
   appCode              String   @db.VarChar(100)
   caseScope            String   @default("APP") @db.VarChar(50)
   categoryId           BigInt
-  sourcePresetId       BigInt?
-  riskLevel            String   @db.VarChar(50)
   inputJson            Json
   expectedJson         Json
-  referenceAnswer      String?  @db.Text
-  minScore             Int      @default(80)
-  manualReviewRequired Boolean  @default(false)
-  tags                 String?  @db.VarChar(500)
   enabled              Boolean  @default(true)
-  version              Int      @default(1)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   @@index([appCode])
   @@index([caseScope])
   @@index([categoryId])
-  @@index([sourcePresetId])
   @@map("eval_case")
-}
-
-model EvalCaseSuite {
-  id            BigInt   @id @default(autoincrement())
-  suiteCode     String   @unique @db.VarChar(100)
-  suiteName     String   @db.VarChar(200)
-  appCode       String   @db.VarChar(100)
-  description   String?  @db.VarChar(500)
-  caseIdsJson   Json
-  enabled       Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([appCode])
-  @@map("eval_case_suite")
 }
 
 model EvalPlan {
@@ -148,7 +121,6 @@ model EvalPlan {
   appCode        String   @db.VarChar(100)
   caseFilterJson Json
   status         String   @default("ENABLED") @db.VarChar(50)
-  createdBy      String?  @db.VarChar(100)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -161,7 +133,6 @@ model EvalRun {
   runCode               String    @unique @db.VarChar(100)
   planCode              String    @db.VarChar(100)
   appCode               String    @db.VarChar(100)
-  runName               String    @db.VarChar(200)
   sequenceNo            Int?
   status                String    @db.VarChar(50)
   phase                 String    @default("PENDING") @db.VarChar(50)
@@ -171,8 +142,6 @@ model EvalRun {
   passCount             Int       @default(0)
   failCount             Int       @default(0)
   reviewCount           Int       @default(0)
-  warningCount          Int       @default(0)
-  blockedCount          Int       @default(0)
   avgScore              Decimal?  @db.Decimal(5, 2)
   normalInputTokens     Int       @default(0)
   cachedInputTokens     Int       @default(0)
@@ -184,10 +153,8 @@ model EvalRun {
   totalCostAmount       Decimal?  @db.Decimal(18, 6)
   currency              String?   @db.VarChar(20)
   costStatus            String    @default("NOT_CALCULATED") @db.VarChar(50)
-  costCalculatedAt      DateTime?
   startedAt             DateTime?
   finishedAt            DateTime?
-  createdBy             String?   @db.VarChar(100)
   createdAt             DateTime  @default(now())
 
   @@index([planCode])
@@ -207,13 +174,10 @@ model EvalResult {
   requestJson      Json
   responseJson     Json?
   finalAnswer      String?  @db.Text
-  ruleScore        Decimal? @db.Decimal(5, 2)
-  judgeScore       Decimal? @db.Decimal(5, 2)
   finalScore       Decimal? @db.Decimal(5, 2)
   passStatus       String   @db.VarChar(50)
   failureReason    String?  @db.Text
   problemType      String?  @db.VarChar(100)
-  traceId          String?  @db.VarChar(100)
   elapsedMs        Int?
   appElapsedMs     Int?
   judgeElapsedMs   Int?
@@ -269,33 +233,12 @@ model EvalJudgeCall {
 model EvalReview {
   id            BigInt    @id @default(autoincrement())
   resultId      BigInt
-  reviewStatus  String    @db.VarChar(50)
   manualResult  String?   @db.VarChar(50)
-  problemType   String?   @db.VarChar(100)
   reviewComment String?   @db.Text
-  nextAction    String?   @db.VarChar(100)
-  reviewer      String?   @db.VarChar(100)
-  reviewedAt    DateTime?
   createdAt     DateTime  @default(now())
 
   @@index([resultId])
   @@map("eval_review")
-}
-
-model EvalReport {
-  id                  BigInt   @id @default(autoincrement())
-  reportCode          String   @unique @db.VarChar(100)
-  runCode             String   @db.VarChar(100)
-  reportName          String   @db.VarChar(200)
-  summaryJson         Json
-  categoryStatsJson   Json
-  riskStatsJson       Json
-  typicalFailuresJson Json
-  suggestion          String?  @db.Text
-  generatedAt         DateTime @default(now())
-
-  @@index([runCode])
-  @@map("eval_report")
 }
 
 model AppPresetCategory {

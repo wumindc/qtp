@@ -1,4 +1,4 @@
-import { normalizeModelUsage, type NormalizedModelUsage } from '@ai-quality-platform/ai-model-adapter';
+import { normalizeInvocationUsage, type NormalizedModelUsage } from '@ai-quality-platform/ai-invocation-client';
 
 /**
  * @author codex
@@ -10,4 +10,4 @@ export type NormalizedJudgeUsage = NormalizedModelUsage;
  * @author codex
  * Normalizes provider-specific judge model usage into billing buckets.
  */
-export const normalizeJudgeUsage = normalizeModelUsage;
+export const normalizeJudgeUsage = normalizeInvocationUsage;

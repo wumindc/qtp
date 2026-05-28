@@ -1,49 +1,41 @@
 /**
  * @author codex
- * Shared model invocation contracts and provider-compatible payload helpers.
+ * Provider-compatible payload helpers for the internal AI invocation boundary.
  */
-export type ModelProtocol = 'OPENAI_COMPATIBLE' | 'QWEN_COMPATIBLE' | 'DASHSCOPE_COMPATIBLE_CHAT';
+import {
+  createFailedEmbeddingInvocationResult,
+  createFailedModelDiscoveryResult,
+  createFailedModelInvocationResult,
+  normalizeModelUsage,
+  type EmbeddingInvocationRequest,
+  type EmbeddingInvocationResult,
+  type ModelDiscoveryRequest,
+  type ModelDiscoveryResult,
+  type ModelInvocationRequest,
+  type ModelInvocationResult,
+  type NormalizedModelUsage,
+} from '@ai-quality-platform/ai-invocation-contract';
 
-export interface ModelInvocationMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
+export {
+  createFailedEmbeddingInvocationResult,
+  createFailedModelDiscoveryResult,
+  createFailedModelInvocationResult,
+  normalizeModelUsage,
+} from '@ai-quality-platform/ai-invocation-contract';
 
-export interface ModelInvocationRequest {
-  traceId: string;
-  providerCode: string;
-  modelId: string;
-  protocol: ModelProtocol;
-  messages: ModelInvocationMessage[];
-  temperature?: number;
-  responseFormat?: 'json_object' | 'text';
-  stream?: boolean;
-  enableThinking?: boolean;
-  timeoutMs?: number;
-  maxTokens?: number;
-  topP?: number;
-  reasoningEffort?: unknown;
-}
-
-export interface NormalizedModelUsage {
-  rawUsage: Record<string, unknown>;
-  normalInputTokens: number | null;
-  cachedInputTokens: number | null;
-  outputTokens: number | null;
-  totalTokens: number | null;
-  usageStatus: 'AVAILABLE' | 'NO_USAGE' | 'UNSUPPORTED';
-}
-
-export interface ModelInvocationResult {
-  status: 'SUCCEEDED' | 'FAILED';
-  content?: string;
-  responseJson?: Record<string, unknown>;
-  rawResponseText?: string;
-  usage?: NormalizedModelUsage;
-  elapsedMs: number;
-  errorCode?: string;
-  errorMessage?: string;
-}
+export type {
+  EmbeddingInvocationRequest,
+  EmbeddingInvocationResult,
+  EmbeddingModelProtocol,
+  ModelDiscoveryRequest,
+  ModelDiscoveryResult,
+  ModelInvocationMessage,
+  ModelInvocationRequest,
+  ModelInvocationResult,
+  ModelProtocol,
+  NormalizedModelUsage,
+  ProviderInvocationKind,
+} from '@ai-quality-platform/ai-invocation-contract';
 
 export interface ModelTokenPricing {
   currency?: string;
@@ -73,6 +65,18 @@ export interface ChatCompletionsProviderAdapterOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface EmbeddingsProviderAdapterOptions {
+  baseUrl: string;
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+}
+
+export interface ModelDiscoveryProviderAdapterOptions {
+  baseUrl: string;
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+}
+
 /**
  * @author codex
  * Builds an OpenAI-compatible chat completions payload with provider extensions kept explicit.
@@ -87,63 +91,26 @@ export function buildChatCompletionsPayload(request: ModelInvocationRequest): Re
   if (typeof request.maxTokens === 'number') body.max_tokens = request.maxTokens;
   if (request.responseFormat === 'json_object') body.response_format = { type: 'json_object' };
   if (typeof request.topP === 'number') body.top_p = request.topP;
-  if (request.enableThinking !== undefined) body.enable_thinking = request.enableThinking;
-  if (request.reasoningEffort) body.reasoning_effort = request.reasoningEffort;
+  if (request.enableThinking !== undefined) {
+    if (request.providerKind === 'DEEPSEEK') body.thinking = { type: request.enableThinking ? 'enabled' : 'disabled' };
+    else body.enable_thinking = request.enableThinking;
+  }
+  if (isReasoningEffort(request.reasoningEffort)) body.reasoning_effort = request.reasoningEffort;
   return body;
 }
 
 /**
  * @author codex
- * Normalizes provider-specific token usage into billing buckets.
+ * Builds an OpenAI-compatible embeddings payload.
  */
-export function normalizeModelUsage(usage: unknown): NormalizedModelUsage {
-  const rawUsage = asRecord(usage);
-  if (Object.keys(rawUsage).length === 0) {
-    return emptyUsage('NO_USAGE');
-  }
-
-  const promptDetails = asRecord(rawUsage.prompt_tokens_details);
-  const directCachedTokens = readNumber(promptDetails.cached_tokens);
-  const anthropicCachedTokens = readNumber(rawUsage.cache_read_input_tokens);
-  const cachedInputTokens = directCachedTokens ?? anthropicCachedTokens ?? 0;
-  const inputTokens = readNumber(rawUsage.input_tokens) ?? readNumber(rawUsage.prompt_tokens);
-  const outputTokens = readNumber(rawUsage.output_tokens) ?? readNumber(rawUsage.completion_tokens);
-  const totalTokens = readNumber(rawUsage.total_tokens) ?? sumKnown(inputTokens, outputTokens, cachedInputTokens);
-
-  if (inputTokens === null && outputTokens === null && totalTokens === null) {
-    return { ...emptyUsage('UNSUPPORTED'), rawUsage };
-  }
-
-  const cachedIncludedInInput = directCachedTokens !== null;
-  const normalInputTokens = inputTokens === null
-    ? null
-    : Math.max(0, inputTokens - (cachedIncludedInInput ? cachedInputTokens : 0));
-
-  return {
-    rawUsage,
-    normalInputTokens,
-    cachedInputTokens,
-    outputTokens,
-    totalTokens,
-    usageStatus: 'AVAILABLE',
+export function buildEmbeddingsPayload(request: EmbeddingInvocationRequest): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: request.modelId,
+    input: request.input,
   };
-}
-
-/**
- * @author codex
- * Builds a normalized failure result for callers that need a stable adapter shape.
- */
-export function createFailedModelInvocationResult(
-  errorCode: string,
-  errorMessage: string,
-  elapsedMs: number,
-): ModelInvocationResult {
-  return {
-    status: 'FAILED',
-    elapsedMs,
-    errorCode,
-    errorMessage,
-  };
+  if (typeof request.dimensions === 'number') body.dimensions = request.dimensions;
+  if (request.encodingFormat) body.encoding_format = request.encodingFormat;
+  return body;
 }
 
 /**
@@ -205,6 +172,103 @@ export function createChatCompletionsProviderAdapter(options: ChatCompletionsPro
 
 /**
  * @author codex
+ * Creates a provider adapter for OpenAI-compatible embeddings endpoints.
+ */
+export function createEmbeddingsProviderAdapter(options: EmbeddingsProviderAdapterOptions) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return {
+    async invoke(request: EmbeddingInvocationRequest): Promise<EmbeddingInvocationResult> {
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const timeout = request.timeoutMs
+        ? setTimeout(() => controller.abort(), request.timeoutMs)
+        : undefined;
+      try {
+        const response = await fetchImpl(buildEmbeddingsUrl(options.baseUrl), {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${options.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(buildEmbeddingsPayload(request)),
+          signal: controller.signal,
+        });
+        const rawResponseText = await response.text();
+        if (!response.ok) {
+          return createFailedEmbeddingInvocationResult(
+            classifyHttpProviderError(response.status),
+            `模型供应商返回 HTTP ${response.status}`,
+            Date.now() - startedAt,
+          );
+        }
+        const responseJson = parseJson(rawResponseText);
+        return {
+          status: 'SUCCEEDED',
+          responseJson,
+          rawResponseText,
+          elapsedMs: Date.now() - startedAt,
+        };
+      } catch (error) {
+        return createFailedEmbeddingInvocationResult(
+          classifyThrownProviderError(error),
+          describeProviderError(error),
+          Date.now() - startedAt,
+        );
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    },
+  };
+}
+
+/**
+ * @author codex
+ * Creates a provider adapter for OpenAI-compatible model discovery endpoints.
+ */
+export function createModelDiscoveryProviderAdapter(options: ModelDiscoveryProviderAdapterOptions) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return {
+    async listModels(request: ModelDiscoveryRequest): Promise<ModelDiscoveryResult> {
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const timeout = request.timeoutMs
+        ? setTimeout(() => controller.abort(), request.timeoutMs)
+        : undefined;
+      try {
+        const response = await fetchImpl(buildModelsUrl(options.baseUrl), {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${options.apiKey}` },
+          signal: controller.signal,
+        });
+        const rawResponseText = await response.text();
+        if (!response.ok) {
+          return createFailedModelDiscoveryResult(
+            classifyHttpProviderError(response.status),
+            `模型供应商返回 HTTP ${response.status}`,
+            Date.now() - startedAt,
+          );
+        }
+        return {
+          status: 'SUCCEEDED',
+          responseJson: parseJson(rawResponseText),
+          rawResponseText,
+          elapsedMs: Date.now() - startedAt,
+        };
+      } catch (error) {
+        return createFailedModelDiscoveryResult(
+          classifyThrownProviderError(error),
+          describeProviderError(error),
+          Date.now() - startedAt,
+        );
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    },
+  };
+}
+
+/**
+ * @author codex
  * Calculates token cost with the shared million-token pricing convention.
  */
 export function calculateModelTokenCost(
@@ -243,19 +307,16 @@ export function calculateModelTokenCost(
   };
 }
 
-function emptyUsage(usageStatus: NormalizedModelUsage['usageStatus']): NormalizedModelUsage {
-  return {
-    rawUsage: {},
-    normalInputTokens: null,
-    cachedInputTokens: null,
-    outputTokens: null,
-    totalTokens: null,
-    usageStatus,
-  };
-}
-
 function buildChatCompletionsUrl(baseUrl: string) {
   return `${baseUrl.replace(/\/+$/u, '')}/chat/completions`;
+}
+
+function buildEmbeddingsUrl(baseUrl: string) {
+  return `${baseUrl.replace(/\/+$/u, '')}/embeddings`;
+}
+
+function buildModelsUrl(baseUrl: string) {
+  return `${baseUrl.replace(/\/+$/u, '')}/models`;
 }
 
 function parseJson(rawResponseText: string): Record<string, unknown> {
@@ -341,13 +402,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-function readNumber(value: unknown): number | null {
-  const numberValue = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  if (!Number.isFinite(numberValue)) return null;
-  return Math.max(0, Math.round(numberValue));
-}
-
-function sumKnown(...values: Array<number | null>) {
-  const known = values.filter((value): value is number => value !== null);
-  return known.length === 0 ? null : known.reduce((sum, value) => sum + value, 0);
+function isReasoningEffort(value: unknown): value is ModelInvocationRequest['reasoningEffort'] {
+  return value === 'low' || value === 'medium' || value === 'high' || value === 'max';
 }

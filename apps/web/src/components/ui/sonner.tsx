@@ -1,8 +1,9 @@
 'use client';
 /**
- * Toaster (Sonner) 组件 — 参照 design-deploy
+ * Toaster (Sonner) 组件
  * @author Antigravity/Gemini
  * @author codex
+ * @author Antigravity/Claude-Sonnet-4.6
  */
 import {
   CircleCheckIcon,
@@ -17,6 +18,7 @@ import { Toaster as Sonner, type ToasterProps } from 'sonner';
 const Toaster = ({
   closeButton = false,
   duration = 3500,
+  // top-center 需要 sonner 内部固定宽度才能居中，不覆盖 width/--width
   position = 'top-center',
   style,
   toastOptions,
@@ -34,7 +36,7 @@ const Toaster = ({
       toastOptions={{
         ...toastOptions,
         style: {
-          width: 'max-content',
+          // 只限制最大宽度，不设 width/max-content，避免干扰居中定位
           maxWidth: 'min(420px, calc(100vw - 32px))',
           padding: '10px 12px',
           minHeight: '40px',
@@ -54,7 +56,7 @@ const Toaster = ({
           '--normal-text': 'var(--popover-foreground)',
           '--normal-border': 'var(--border)',
           '--border-radius': 'var(--radius)',
-          '--width': 'max-content',
+          // 不覆盖 --width，让 sonner 使用内部默认值以确保 top-center 正确居中
           ...style,
         } as React.CSSProperties
       }

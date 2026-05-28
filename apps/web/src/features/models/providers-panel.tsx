@@ -1,7 +1,7 @@
 'use client';
 /**
  * 供应商面板 — 模型中心的供应商标签页
- * @author Antigravity/Gemini
+ * @author codex
  */
 import { useState } from 'react';
 import { Plus, Plug, Pencil, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
@@ -136,6 +136,7 @@ export function ProvidersPanel({ providers, onSave, onToggleStatus, onDelete, on
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         initialForm={editingProvider ? buildInitialForm(editingProvider) : undefined}
+        apiKeyRequired={!editingProvider}
         onSave={(form) => onSave(form, editingProvider?.code)}
         title={editingProvider ? '编辑供应商' : '新增供应商'}
       />

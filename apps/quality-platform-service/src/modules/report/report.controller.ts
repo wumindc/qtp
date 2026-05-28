@@ -1,6 +1,10 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+/**
+ * @author codex
+ * @author Antigravity/Claude-Sonnet-4.6
+ */
+import { Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
-import { ReportService, type GenerateReportRequest } from './report.service';
+import { ReportService } from './report.service';
 
 @Controller('ai-quality-platform/report')
 export class ReportController {
@@ -9,29 +13,10 @@ export class ReportController {
   /**
    * @author codex
    * Returns dashboard metrics for the frontend workbench.
+   * 注意：统一使用 POST 与项目其他接口保持一致。
    */
-  @Get('dashboard.do')
+  @Post('dashboard.do')
   async dashboard() {
     return ok(await this.reportService.dashboard());
-  }
-
-  @Post('list.do')
-  async list(@Body() request: { page: { currentPage: number; linesPerPage: number }; data?: Record<string, string> }) {
-    return ok(await this.reportService.list(request.data ?? {}, request.page));
-  }
-
-  @Get('detail/:reportCode.do')
-  async detail(@Param('reportCode') reportCode: string) {
-    return ok(await this.reportService.detail(reportCode));
-  }
-
-  @Post('export.do')
-  async export(@Body() request: { reportCode: string }) {
-    return ok(await this.reportService.exportReport(request.reportCode));
-  }
-
-  @Post('generate.do')
-  async generate(@Body() request: GenerateReportRequest) {
-    return ok(await this.reportService.generate(request));
   }
 }

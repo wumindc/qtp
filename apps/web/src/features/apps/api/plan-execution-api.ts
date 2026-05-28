@@ -3,7 +3,7 @@
  * @author Antigravity/Claude-Sonnet-4.6
  * @author codex
  */
-import { postGateway } from '@/lib/api/gateway-client';
+import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
 
 export interface PlanRecord {
   planCode: string;
@@ -64,7 +64,6 @@ export interface ResultRecord {
   resultId: string;
   runCode: string;
   caseCode: string;
-  caseName?: string;
   /** 来自 caseSnapshot，用于前端分类导航 */
   categoryId?: string;
   query?: string;
@@ -116,12 +115,9 @@ export interface JudgeCallDetail {
 
 export interface ResultReviewRecord {
   resultId: string;
-  reviewStatus: 'PENDING' | 'REVIEWED';
+  reviewStatus: 'REVIEWED';
   manualResult?: 'PASS' | 'FAIL' | null;
-  problemType?: string;
   reviewComment?: string;
-  nextAction?: string;
-  reviewer?: string;
 }
 
 // ── 计划 API ──
@@ -131,8 +127,7 @@ export async function listPlans(appCode: string): Promise<PlanRecord[]> {
     page: { currentPage: 1, linesPerPage: 100 },
     data: { appCode },
   }, { cache: 'no-store' });
-  const data = res as Record<string, unknown>;
-  return (data?.list ?? []) as PlanRecord[];
+  return readGatewayList<PlanRecord>(res);
 }
 
 export async function createPlan(payload: {
@@ -177,37 +172,25 @@ export async function listRuns(appCode: string): Promise<RunRecord[]> {
     page: { currentPage: 1, linesPerPage: 100 },
     data: { appCode },
   }, { cache: 'no-store' });
-  const data = res as Record<string, unknown>;
-  return (data?.list ?? []) as RunRecord[];
-}
-
-/**
- * 按 planCode 查询该计划的执行历史（前端过滤兼容）
- */
-export async function listRunsByPlan(planCode: string, appCode: string): Promise<RunRecord[]> {
-  const all = await listRuns(appCode);
-  return all.filter((r) => r.planCode === planCode);
+  return readGatewayList<RunRecord>(res);
 }
 
 /**
  * 查询单次执行的最新状态（用于轮询）
  */
 export async function getRunStatus(runCode: string): Promise<RunRecord | null> {
-  try {
-    const res = await postGateway<unknown>('execution', '/execution/run-detail.do', {
-      runCode,
-    }, { cache: 'no-store' });
-    return (res as RunRecord) ?? null;
-  } catch {
-    return null;
-  }
+  const res = await postGateway<unknown>('execution', '/execution/run-detail.do', {
+    runCode,
+  }, { cache: 'no-store' });
+  return (res as RunRecord) ?? null;
 }
 
 export async function listRunVersions(runCode: string): Promise<RunVersionRecord[]> {
   const res = await postGateway<unknown>('execution', '/execution/run-versions.do', {
     runCode,
   }, { cache: 'no-store' });
-  return (Array.isArray(res) ? res : []) as RunVersionRecord[];
+  if (!Array.isArray(res)) throw new Error('执行版本响应必须是数组');
+  return res as RunVersionRecord[];
 }
 
 export async function listResults(runCode: string): Promise<ResultRecord[]> {
@@ -215,8 +198,7 @@ export async function listResults(runCode: string): Promise<ResultRecord[]> {
     runCode,
     page: { currentPage: 1, linesPerPage: 200 },
   }, { cache: 'no-store' });
-  const data = res as Record<string, unknown>;
-  return (data?.list ?? []) as ResultRecord[];
+  return readGatewayList<ResultRecord>(res);
 }
 
 export async function loadJudgeCallDetail(resultId: string): Promise<JudgeCallDetail> {
@@ -231,11 +213,11 @@ export async function submitResultReview(payload: {
   resultId: string;
   manualResult: 'PASS' | 'FAIL' | null;
   reviewComment?: string;
-  problemType?: string;
 }): Promise<ResultReviewRecord> {
   return postGateway<ResultReviewRecord>('review', '/review/submit.do', {
-    ...payload,
-    reviewer: '管理员',
+    resultId: payload.resultId,
+    manualResult: payload.manualResult,
+    reviewComment: payload.reviewComment,
   });
 }
 
@@ -245,15 +227,8 @@ export async function submitResultReview(payload: {
  */
 export async function reEvaluateResults(resultIds: string[]): Promise<ResultRecord[]> {
   const res = await postGateway<unknown>('execution', '/execution/re-evaluate.do', { resultIds });
-  return (Array.isArray(res) ? res : []) as ResultRecord[];
-}
-
-/** 从旧版 runCode 末尾时间戳解析执行时间（仅兼容历史数据） */
-export function parseRunStartTime(runCode: string): Date | null {
-  const ts = runCode.split('_RUN_')[1];
-  if (!ts) return null;
-  const num = Number(ts);
-  return isNaN(num) ? null : new Date(num);
+  if (!Array.isArray(res)) throw new Error('重新评估响应必须是数组');
+  return res as ResultRecord[];
 }
 
 /** 格式化耗时为人类可读 */

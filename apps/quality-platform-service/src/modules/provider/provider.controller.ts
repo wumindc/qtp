@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import {
   ProviderService,
@@ -57,7 +57,7 @@ export class ProviderController {
 
   @Post('model/list.do')
   async modelList(@Body() request: { page: { currentPage: number; linesPerPage: number }; data?: ModelQuery }) {
-    return ok(await this.providerService.modelList(request.data ?? {}, request.page));
+    return ok(await this.providerService.modelList(this.readRequiredObject<ModelQuery>(request.data, '缺少模型查询条件'), request.page));
   }
 
   @Post('model/create.do')
@@ -88,5 +88,10 @@ export class ProviderController {
   @Post('model/delete.do')
   async deleteModel(@Body() request: { id: string }) {
     return ok(await this.providerService.deleteModel(request.id));
+  }
+
+  private readRequiredObject<TRecord extends object>(value: unknown, message: string): TRecord {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
   }
 }

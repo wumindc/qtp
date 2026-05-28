@@ -19,9 +19,13 @@ vi.mock('next/navigation', () => ({
   }),
 }));
 
-vi.mock('@/lib/api/gateway-client', () => ({
-  postGateway: vi.fn(),
-}));
+vi.mock('@/lib/api/gateway-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api/gateway-client')>();
+  return {
+    ...actual,
+    postGateway: vi.fn(),
+  };
+});
 
 vi.mock('./api/plan-execution-api', () => ({
   listPlans: vi.fn(),
@@ -30,10 +34,6 @@ vi.mock('./api/plan-execution-api', () => ({
   updatePlan: vi.fn(),
   deletePlan: vi.fn(),
   startPlan: vi.fn(),
-  parseRunStartTime: vi.fn((runCode: string) => {
-    const ts = Number(runCode.split('_RUN_')[1] ?? 0);
-    return Number.isFinite(ts) && ts > 0 ? new Date(ts) : null;
-  }),
   formatDuration: vi.fn((ms: number) => `${ms}ms`),
 }));
 
@@ -83,13 +83,25 @@ describe('AppPlansPage', () => {
 
     expect(await screen.findByText('JOB01')).toBeInTheDocument();
     expect(screen.getByText('共 1 个计划')).toBeInTheDocument();
-    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledWith('加载用例分类失败: case service down');
     expect(screen.getByText('从未执行 · 点击「立即执行」触发首次测试')).toBeInTheDocument();
+  });
+
+  it('does not turn plan loading failures into an empty plan list', async () => {
+    listPlansMock.mockRejectedValue(new Error('plan service down'));
+    listRunsMock.mockResolvedValue([]);
+    postGatewayMock.mockResolvedValue({ list: [] });
+
+    render(<AppPlansPage appCode="c" />);
+
+    expect(await screen.findByText('执行计划加载失败')).toBeInTheDocument();
+    expect(screen.getByText('plan service down')).toBeInTheDocument();
+    expect(screen.queryByText('暂无执行计划')).not.toBeInTheDocument();
   });
 
   it('inserts the server running run immediately and shows real progress from completed case count', async () => {
     const completedRun = {
-      runCode: 'plan-c-1_RUN_1779780000000',
+      runCode: 'run-completed001',
       planCode: 'plan-c-1',
       appCode: 'c',
       status: 'COMPLETED' as const,
@@ -104,7 +116,7 @@ describe('AppPlansPage', () => {
       durationMs: 60000,
     };
     const runningRun = {
-      runCode: 'plan-c-1_RUN_1779781000000',
+      runCode: 'run-running001',
       planCode: 'plan-c-1',
       appCode: 'c',
       status: 'RUNNING' as const,
@@ -328,7 +340,7 @@ describe('AppPlansPage', () => {
     ]);
     listRunsMock.mockResolvedValue([
       {
-        runCode: 'plan-c-1_RUN_1779780000000',
+        runCode: 'run-selected001',
         planCode: 'plan-c-1',
         appCode: 'c',
         status: 'COMPLETED',
@@ -347,7 +359,7 @@ describe('AppPlansPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /最近一次/u }));
 
     expect(navigationMock.push).toHaveBeenCalledWith(
-      '/ai-quality-platform/apps/c/plans/runs/plan-c-1_RUN_1779780000000',
+      '/ai-quality-platform/apps/c/plans/runs/run-selected001',
     );
   });
 });

@@ -46,8 +46,6 @@ describe('Toaster', () => {
     expect(toaster).toHaveAttribute('data-close-button', 'false');
     expect(toaster).toHaveAttribute('data-position', 'top-center');
     expect(toaster).toHaveAttribute('data-duration', '3500');
-    expect(toaster).toHaveAttribute('data-width', 'max-content');
-    expect(toaster).toHaveAttribute('data-toast-width', 'max-content');
     expect(toaster).toHaveAttribute('data-toast-max-width', 'min(420px, calc(100vw - 32px))');
     expect(toaster).toHaveAttribute('data-toast-padding', '10px 12px');
   });

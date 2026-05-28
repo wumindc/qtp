@@ -10,14 +10,14 @@
     "start:dev": "tsx watch src/main.ts"
   },
   "dependencies": {
+    "@ai-quality-platform/ai-invocation-client": "workspace:*",
+    "@ai-quality-platform/shared-auth": "workspace:*",
     "@ai-quality-platform/shared-config": "workspace:*",
     "@ai-quality-platform/shared-database": "workspace:*",
     "@ai-quality-platform/shared-http": "workspace:*",
     "@nestjs/common": "^11.1.9",
     "@nestjs/core": "^11.1.9",
     "@nestjs/platform-express": "^11.1.9",
-    "@prisma/adapter-mariadb": "^7.8.0",
-    "@prisma/client": "^7.1.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "xlsx": "^0.18.5"

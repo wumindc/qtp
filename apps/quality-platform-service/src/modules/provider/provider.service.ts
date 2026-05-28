@@ -1,3 +1,8 @@
+import {
+  AiInvocationClient,
+  type ModelProtocol as InvocationModelProtocol,
+  type ProviderInvocationKind,
+} from '@ai-quality-platform/ai-invocation-client';
 import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
 import { BadRequestException } from '@nestjs/common';
@@ -11,6 +16,33 @@ export type ModelProtocol =
   | 'DASHSCOPE_COMPATIBLE_EMBEDDINGS'
   | 'DEEPSEEK_CHAT_COMPLETIONS';
 
+const PROVIDER_TYPES: readonly ProviderType[] = ['OPENAI_COMPATIBLE', 'QWEN', 'DEEPSEEK'];
+const MODEL_TYPES: readonly ModelType[] = ['LLM', 'EMBEDDING'];
+const MODEL_PROTOCOLS: readonly ModelProtocol[] = [
+  'OPENAI_CHAT_COMPLETIONS',
+  'OPENAI_EMBEDDINGS',
+  'DASHSCOPE_COMPATIBLE_CHAT',
+  'DASHSCOPE_COMPATIBLE_EMBEDDINGS',
+  'DEEPSEEK_CHAT_COMPLETIONS',
+];
+
+function readEnum<TValue extends string>(value: unknown, allowed: readonly TValue[], message: string): TValue {
+  if (allowed.includes(value as TValue)) return value as TValue;
+  throw new Error(message);
+}
+
+function readProviderType(value: unknown): ProviderType {
+  return readEnum(value, PROVIDER_TYPES, '不支持的模型供应商类型');
+}
+
+function readModelType(value: unknown): ModelType {
+  return readEnum(value, MODEL_TYPES, '不支持的模型类型');
+}
+
+function readModelProtocol(value: unknown): ModelProtocol {
+  return readEnum(value, MODEL_PROTOCOLS, '不支持的模型协议');
+}
+
 export interface ProviderRecord {
   providerCode: string;
   providerName: string;
@@ -18,6 +50,11 @@ export interface ProviderRecord {
   baseUrl: string;
   apiKey: string;
   enabled: boolean;
+}
+
+export interface ProviderPublicRecord extends Omit<ProviderRecord, 'apiKey'> {
+  apiKey: '';
+  apiKeyConfigured: boolean;
 }
 
 export interface ProviderCreateRequest {
@@ -95,9 +132,9 @@ export interface ModelCreateRequest {
   modelId: string;
   modelType: ModelType;
   protocol?: ModelProtocol;
-  parameters?: ModelParameters;
-  capabilities?: ModelCapabilities;
-  limits?: ModelLimits;
+  parameters: ModelParameters;
+  capabilities: ModelCapabilities;
+  limits: ModelLimits;
 }
 
 export interface ModelConfigTestRequest extends ModelCreateRequest {}
@@ -128,51 +165,58 @@ type ProviderPrismaClient = {
   };
 };
 
-class ProviderDatabase {
+export interface ProviderDataStore {
+  listProviders(): Promise<ProviderRecord[]>;
+  listModels(): Promise<ModelRecord[]>;
+  findProvider(providerCode: string): Promise<ProviderRecord | null>;
+  findModel(id: string): Promise<ModelRecord | null>;
+  createProvider(record: ProviderRecord): Promise<ProviderRecord>;
+  updateProvider(record: ProviderRecord): Promise<ProviderRecord>;
+  deleteProvider(providerCode: string): Promise<ProviderRecord>;
+  createModel(record: ModelRecord): Promise<ModelRecord>;
+  updateModel(record: ModelRecord): Promise<ModelRecord>;
+  deleteModel(id: string): Promise<ModelRecord>;
+}
+
+class ProviderDatabase implements ProviderDataStore {
   private readonly prismaPromise = this.createClient();
 
   /**
    * @author codex
    * Reads provider and model configuration from MySQL; no provider or model is created implicitly.
    */
-  async listProviders(): Promise<ProviderRecord[] | null> {
+  async listProviders(): Promise<ProviderRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.aiProvider.findMany({ orderBy: { id: 'asc' } });
     return rows.map((row) => this.toProvider(row));
   }
 
-  async listModels(): Promise<ModelRecord[] | null> {
+  async listModels(): Promise<ModelRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.aiModel.findMany({ orderBy: { id: 'asc' } });
     return rows.map((row) => this.toModel(row));
   }
 
-  async findProvider(providerCode: string): Promise<ProviderRecord | null | undefined> {
+  async findProvider(providerCode: string): Promise<ProviderRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.aiProvider.findUnique({ where: { providerCode } });
     return row ? this.toProvider(row) : null;
   }
 
-  async findModel(id: string): Promise<ModelRecord | null | undefined> {
+  async findModel(id: string): Promise<ModelRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.aiModel.findUnique({ where: { id: BigInt(id) } });
     return row ? this.toModel(row) : null;
   }
 
-  async createProvider(record: ProviderRecord): Promise<ProviderRecord | null> {
+  async createProvider(record: ProviderRecord): Promise<ProviderRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.aiProvider.create({ data: record });
     return this.toProvider(saved);
   }
 
-  async updateProvider(record: ProviderRecord): Promise<ProviderRecord | null> {
+  async updateProvider(record: ProviderRecord): Promise<ProviderRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.aiProvider.update({
       where: { providerCode: record.providerCode },
       data: record,
@@ -180,23 +224,20 @@ class ProviderDatabase {
     return this.toProvider(saved);
   }
 
-  async deleteProvider(providerCode: string): Promise<ProviderRecord | null> {
+  async deleteProvider(providerCode: string): Promise<ProviderRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const deleted = await prisma.aiProvider.delete({ where: { providerCode } });
     return this.toProvider(deleted);
   }
 
-  async createModel(record: ModelRecord): Promise<ModelRecord | null> {
+  async createModel(record: ModelRecord): Promise<ModelRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.aiModel.create({ data: this.toModelWriteData(record) });
     return this.toModel(saved);
   }
 
-  async updateModel(record: ModelRecord): Promise<ModelRecord | null> {
+  async updateModel(record: ModelRecord): Promise<ModelRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.aiModel.update({
       where: { id: BigInt(record.id) },
       data: this.toModelWriteData(record),
@@ -204,46 +245,43 @@ class ProviderDatabase {
     return this.toModel(saved);
   }
 
-  async deleteModel(id: string): Promise<ModelRecord | null> {
+  async deleteModel(id: string): Promise<ModelRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const deleted = await prisma.aiModel.delete({ where: { id: BigInt(id) } });
     return this.toModel(deleted);
   }
 
   private async createClient() {
-    if (process.env.VITEST) return null;
     return createRuntimePrismaClient<ProviderPrismaClient>();
   }
 
   private toProvider(row: unknown): ProviderRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '模型供应商数据库记录格式不正确');
     return {
-      providerCode: String(data.providerCode),
-      providerName: String(data.providerName),
-      providerType: this.normalizeProviderType(data.providerType),
-      baseUrl: String(data.baseUrl ?? ''),
-      apiKey: String(data.apiKey ?? ''),
-      enabled: data.enabled !== false,
+      providerCode: this.readRequiredString(data.providerCode, '模型供应商记录缺少供应商编码'),
+      providerName: this.readRequiredString(data.providerName, '模型供应商记录缺少供应商名称'),
+      providerType: readProviderType(data.providerType),
+      baseUrl: this.readRequiredString(data.baseUrl, '模型供应商记录缺少接口地址'),
+      apiKey: this.readString(data.apiKey, '模型供应商记录缺少 API Key'),
+      enabled: this.readBoolean(data.enabled, '模型供应商记录缺少启停状态'),
     };
   }
 
   private toModel(row: unknown): ModelRecord {
-    const data = this.asRecord(row);
-    const providerType = this.normalizeProviderType(data.providerType);
-    const modelType = this.normalizeModelType(data.modelType);
-    const protocol = this.normalizeProtocol(data.protocol, providerType, modelType);
+    const data = this.readRecord(row, '模型数据库记录格式不正确');
+    const modelType = readModelType(data.modelType);
+    const protocol = readModelProtocol(data.protocol);
     return {
-      id: String(data.id),
-      modelName: String(data.modelName),
-      providerCode: String(data.providerCode),
-      modelId: String(data.modelId ?? ''),
+      id: this.readRequiredBigIntId(data.id, '模型记录缺少数据库 ID'),
+      modelName: this.readRequiredString(data.modelName, '模型记录缺少模型名称'),
+      providerCode: this.readRequiredString(data.providerCode, '模型记录缺少供应商编码'),
+      modelId: this.readRequiredString(data.modelId, '模型记录缺少模型 ID'),
       modelType,
       protocol,
-      parameters: this.readJsonObject(data.parametersJson),
-      capabilities: this.readJsonObject(data.capabilitiesJson),
-      limits: this.readJsonObject(data.limitsJson),
-      enabled: data.enabled !== false,
+      parameters: this.readRequiredJsonObject<ModelParameters>(data.parameters, '模型记录缺少参数配置', '模型记录 parameters 不是 JSON 对象'),
+      capabilities: this.readRequiredJsonObject<ModelCapabilities>(data.capabilities, '模型记录缺少能力配置', '模型记录 capabilities 不是 JSON 对象'),
+      limits: this.readRequiredJsonObject<ModelLimits>(data.limits, '模型记录缺少限制配置', '模型记录 limits 不是 JSON 对象'),
+      enabled: this.readBoolean(data.enabled, '模型记录缺少启停状态'),
     };
   }
 
@@ -254,50 +292,55 @@ class ProviderDatabase {
       modelId: record.modelId,
       modelType: record.modelType,
       protocol: record.protocol,
-      parametersJson: record.parameters,
-      capabilitiesJson: record.capabilities,
-      limitsJson: record.limits,
+      parameters: record.parameters,
+      capabilities: record.capabilities,
+      limits: record.limits,
       enabled: record.enabled,
     };
   }
 
-  private asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  private readRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 
-  private readJsonObject(value: unknown): Record<string, unknown> {
-    return this.asRecord(value);
+  private readRequiredBigIntId(value: unknown, message: string): string {
+    if (typeof value === 'bigint' && value > 0n) return String(value);
+    throw new Error(message);
   }
 
-  private normalizeProviderType(value: unknown): ProviderType {
-    return value === 'QWEN' || value === 'DEEPSEEK' ? value : 'OPENAI_COMPATIBLE';
+  private readRequiredString(value: unknown, message: string): string {
+    if (typeof value === 'string' && value.trim()) return value;
+    throw new Error(message);
   }
 
-  private normalizeModelType(value: unknown): ModelType {
-    return value === 'EMBEDDING' ? 'EMBEDDING' : 'LLM';
+  private readString(value: unknown, message: string): string {
+    if (typeof value === 'string') return value;
+    throw new Error(message);
   }
 
-  private normalizeProtocol(value: unknown, providerType: ProviderType, modelType: ModelType): ModelProtocol {
-    if (
-      value === 'OPENAI_CHAT_COMPLETIONS' ||
-      value === 'OPENAI_EMBEDDINGS' ||
-      value === 'DASHSCOPE_COMPATIBLE_CHAT' ||
-      value === 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' ||
-      value === 'DEEPSEEK_CHAT_COMPLETIONS'
-    ) {
-      return value;
-    }
-    return ProviderService.resolveProtocol(providerType, modelType);
+  private readBoolean(value: unknown, message: string): boolean {
+    if (typeof value === 'boolean') return value;
+    throw new Error(message);
   }
+
+  private readRequiredJsonObject<TRecord extends object>(value: unknown, missingMessage: string, malformedMessage: string): TRecord {
+    if (value === null || value === undefined) throw new Error(missingMessage);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new Error(malformedMessage);
+  }
+
 }
 
 export class ProviderService {
-  private readonly database = new ProviderDatabase();
-  private readonly providers = new Map<string, ProviderRecord>();
-  private readonly models = new Map<string, ModelRecord>();
-  private nextMemoryModelId = 1;
+  private readonly aiInvocationClient: AiInvocationClient;
 
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    fetchImpl: typeof fetch = fetch,
+    private readonly database: ProviderDataStore = new ProviderDatabase(),
+  ) {
+    this.aiInvocationClient = new AiInvocationClient({ fetchImpl });
+  }
 
   static resolveProtocol(providerType: ProviderType, modelType: ModelType): ModelProtocol {
     if (providerType === 'QWEN') {
@@ -315,17 +358,22 @@ export class ProviderService {
    * @author codex
    * Lists model providers with platform pagination.
    */
-  async list(page: { currentPage: number; linesPerPage: number }): Promise<PageResult<ProviderRecord>> {
+  async list(page: { currentPage: number; linesPerPage: number }): Promise<PageResult<ProviderPublicRecord>> {
     const all = await this.getProviderSource();
     const start = (page.currentPage - 1) * page.linesPerPage;
-    return pageResult(all.slice(start, start + page.linesPerPage), page.currentPage, page.linesPerPage, all.length);
+    return pageResult(
+      all.slice(start, start + page.linesPerPage).map((provider) => this.toPublicProvider(provider)),
+      page.currentPage,
+      page.linesPerPage,
+      all.length,
+    );
   }
 
-  async create(request: ProviderCreateRequest): Promise<ProviderRecord> {
+  async create(request: ProviderCreateRequest): Promise<ProviderPublicRecord> {
     const providerCode = request.providerCode?.trim() || (await this.createProviderCode(request.providerName, request.providerType));
     if (await this.findProvider(providerCode)) throw new Error('供应商已存在');
     if (!this.supportedTypes().includes(request.providerType)) throw new Error('不支持的模型供应商类型');
-    return this.persistProvider({
+    const saved = await this.database.createProvider({
       providerCode,
       providerName: request.providerName.trim(),
       providerType: request.providerType,
@@ -333,32 +381,36 @@ export class ProviderService {
       apiKey: request.apiKey.trim(),
       enabled: request.enabled ?? true,
     });
+    return this.toPublicProvider(saved);
   }
 
-  async update(providerCode: string, request: ProviderUpdateRequest): Promise<ProviderRecord> {
+  async update(providerCode: string, request: ProviderUpdateRequest): Promise<ProviderPublicRecord> {
     const provider = await this.getProvider(providerCode);
     if (request.providerType && !this.supportedTypes().includes(request.providerType)) throw new Error('不支持的模型供应商类型');
-    return this.persistProvider({
-      ...provider,
-      ...request,
+    const nextApiKey = typeof request.apiKey === 'string' && request.apiKey.trim()
+      ? request.apiKey.trim()
+      : provider.apiKey;
+    const saved = await this.database.updateProvider({
       providerCode,
       providerName: request.providerName?.trim() ?? provider.providerName,
+      providerType: request.providerType ?? provider.providerType,
       baseUrl: request.baseUrl?.trim() ?? provider.baseUrl,
-      apiKey: request.apiKey?.trim() ?? provider.apiKey,
+      apiKey: nextApiKey,
+      enabled: request.enabled ?? provider.enabled,
     });
+    return this.toPublicProvider(saved);
   }
 
-  async changeStatus(providerCode: string, enabled: boolean): Promise<ProviderRecord> {
+  async changeStatus(providerCode: string, enabled: boolean): Promise<ProviderPublicRecord> {
     return this.update(providerCode, { enabled });
   }
 
-  async delete(providerCode: string): Promise<ProviderRecord> {
+  async delete(providerCode: string): Promise<ProviderPublicRecord> {
     const provider = await this.getProvider(providerCode);
     const models = await this.getModelSource();
     if (models.some((model) => model.providerCode === providerCode)) throw new Error('该供应商下仍有关联模型，请先迁移或删除模型');
     const deleted = await this.database.deleteProvider(providerCode);
-    this.providers.delete(providerCode);
-    return deleted ?? provider;
+    return this.toPublicProvider(deleted);
   }
 
   async testConnection(providerCode: string) {
@@ -379,25 +431,27 @@ export class ProviderService {
     const baseUrl = request.baseUrl.trim();
     const apiKey = request.apiKey.trim();
     if (!baseUrl || !apiKey) throw new Error('请先填写接口地址和 API Key');
-    const endpoint = this.buildEndpoint(baseUrl, 'models');
+    this.validateProviderBaseUrl(baseUrl);
     try {
-      const response = await this.fetchWithTimeout(endpoint, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const result = await this.aiInvocationClient.listModels({
+        connection: { baseUrl, apiKey },
+        request: {
+          traceId: `provider-test:${Date.now()}`,
+          providerCode: 'transient-provider',
+          timeoutMs: 8000,
+        },
       });
-      if (response.ok) {
-        return { endpoint, status: 'SUCCESS', message: '连接测试通过，供应商端点可访问。' };
+      if (result.status === 'SUCCEEDED') {
+        return { status: 'SUCCESS', message: '连接测试通过，AI 调用服务已完成供应商探测。' };
       }
       return {
-        endpoint,
         status: 'FAILED',
-        message: `连接测试失败：供应商返回 HTTP ${response.status}${await this.readResponseSummary(response)}`,
+        message: `连接测试失败：${result.errorMessage ?? result.errorCode ?? '供应商不可访问'}`,
       };
     } catch (error) {
       return {
-        endpoint,
         status: 'FAILED',
-        message: `连接测试失败：${error instanceof Error ? error.message : '供应商端点不可访问'}`,
+        message: `连接测试失败：${error instanceof Error ? error.message : '供应商不可访问'}`,
       };
     }
   }
@@ -440,9 +494,9 @@ export class ProviderService {
       modelId: request.modelId,
       modelType,
       protocol: request.protocol ?? ProviderService.resolveProtocol(provider.providerType, modelType),
-      parameters: request.parameters ?? {},
-      capabilities: request.capabilities ?? {},
-      limits: request.limits ?? {},
+      parameters: this.readRequiredRequestObject<ModelParameters>(request.parameters, '模型参数配置不能为空'),
+      capabilities: this.readRequiredRequestObject<ModelCapabilities>(request.capabilities, '模型能力配置不能为空'),
+      limits: this.readRequiredRequestObject<ModelLimits>(request.limits, '模型限制配置不能为空'),
       enabled: true,
     });
     return this.testModelConfig(provider, model);
@@ -471,18 +525,18 @@ export class ProviderService {
     const modelType = this.normalizeModelType(request.modelType);
     this.assertProviderSupportsModelType(provider.providerType, modelType);
     const normalized = this.normalizeModelRecord(provider, {
-      id: this.createMemoryModelId(),
+      id: 'pending-model',
       modelName: request.modelName,
       providerCode: provider.providerCode,
       modelId: request.modelId,
       modelType,
       protocol: request.protocol ?? ProviderService.resolveProtocol(provider.providerType, modelType),
-      parameters: request.parameters ?? {},
-      capabilities: request.capabilities ?? {},
-      limits: request.limits ?? {},
+      parameters: this.readRequiredRequestObject<ModelParameters>(request.parameters, '模型参数配置不能为空'),
+      capabilities: this.readRequiredRequestObject<ModelCapabilities>(request.capabilities, '模型能力配置不能为空'),
+      limits: this.readRequiredRequestObject<ModelLimits>(request.limits, '模型限制配置不能为空'),
       enabled: true,
     });
-    return this.persistModel(normalized);
+    return this.database.createModel(normalized);
   }
 
   async updateModel(id: string, request: ModelUpdateRequest): Promise<ModelRecord> {
@@ -490,14 +544,18 @@ export class ProviderService {
     const provider = await this.getProvider(request.providerCode ?? model.providerCode);
     const nextType = this.normalizeModelType(request.modelType ?? model.modelType);
     this.assertProviderSupportsModelType(provider.providerType, nextType);
-    return this.persistModel(
+    return this.database.updateModel(
       this.normalizeModelRecord(provider, {
-        ...model,
-        ...request,
         id,
+        modelName: request.modelName ?? model.modelName,
         providerCode: provider.providerCode,
+        modelId: request.modelId ?? model.modelId,
         modelType: nextType,
         protocol: request.protocol ?? ProviderService.resolveProtocol(provider.providerType, nextType),
+        parameters: request.parameters ?? model.parameters,
+        capabilities: request.capabilities ?? model.capabilities,
+        limits: request.limits ?? model.limits,
+        enabled: request.enabled ?? model.enabled,
       }),
     );
   }
@@ -507,27 +565,42 @@ export class ProviderService {
   }
 
   async deleteModel(id: string): Promise<ModelRecord> {
-    const model = await this.getModel(id);
+    await this.getModel(id);
     const deleted = await this.database.deleteModel(id);
-    this.models.delete(id);
-    return deleted ?? model;
+    return deleted;
   }
 
   private async testModelConfig(provider: ProviderRecord, model: ModelRecord) {
-    const path = model.modelType === 'EMBEDDING' ? 'embeddings' : 'chat/completions';
-    const endpoint = this.buildEndpoint(provider.baseUrl, path);
+    return model.modelType === 'EMBEDDING'
+      ? this.testEmbeddingModelConfig(provider, model)
+      : this.testChatModelConfig(provider, model);
+  }
+
+  private async testChatModelConfig(provider: ProviderRecord, model: ModelRecord) {
     try {
-      const response = await this.fetchWithTimeout(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
-          'Content-Type': 'application/json',
+      const result = await this.aiInvocationClient.invokeChat({
+        connection: {
+          baseUrl: provider.baseUrl,
+          apiKey: provider.apiKey,
         },
-        body: JSON.stringify(model.modelType === 'EMBEDDING' ? this.buildEmbeddingTestBody(model) : this.buildChatTestBody(model)),
+        request: {
+          traceId: `model-test:${model.id}:${Date.now()}`,
+          providerCode: provider.providerCode,
+          providerKind: this.toInvocationProviderKind(provider),
+          modelId: model.modelId,
+          protocol: this.toInvocationProtocol(provider, model),
+          messages: [{ role: 'user', content: 'ping' }],
+          maxTokens: Math.min(model.parameters.maxOutputTokens ?? 16, 64),
+          stream: false,
+          temperature: typeof model.parameters.temperature === 'number' ? model.parameters.temperature : undefined,
+          topP: typeof model.parameters.topP === 'number' ? model.parameters.topP : undefined,
+          enableThinking: this.resolveInvocationThinking(provider, model),
+          reasoningEffort: this.readInvocationReasoningEffort(model.parameters.reasoningEffort),
+          timeoutMs: model.parameters.timeoutMs,
+        },
       });
-      if (response.ok) {
+      if (result.status === 'SUCCEEDED') {
         return {
-          endpoint,
           id: model.id,
           providerCode: provider.providerCode,
           modelId: model.modelId,
@@ -536,89 +609,107 @@ export class ProviderService {
         };
       }
       return {
-        endpoint,
         id: model.id,
         providerCode: provider.providerCode,
         modelId: model.modelId,
         status: 'FAILED',
-        message: `模型测试失败：供应商返回 HTTP ${response.status}${await this.readResponseSummary(response)}`,
+        message: `模型测试失败：${result.errorMessage ?? result.errorCode ?? '供应商未返回有效内容'}`,
       };
     } catch (error) {
       return {
-        endpoint,
         id: model.id,
         providerCode: provider.providerCode,
         modelId: model.modelId,
         status: 'FAILED',
-        message: `模型测试失败：${error instanceof Error ? error.message : '模型端点不可访问'}`,
+        message: `模型测试失败：${error instanceof Error ? error.message : '模型不可访问'}`,
       };
     }
   }
 
-  private buildChatTestBody(model: ModelRecord) {
-    const parameters = model.parameters;
-    const body: Record<string, unknown> = {
-      model: model.modelId,
-      messages: [{ role: 'user', content: 'ping' }],
-      max_tokens: Math.min(parameters.maxOutputTokens ?? 16, 64),
-      stream: false,
-    };
-    if (typeof parameters.temperature === 'number') body.temperature = parameters.temperature;
-    if (typeof parameters.topP === 'number') body.top_p = parameters.topP;
-    if (model.protocol === 'DEEPSEEK_CHAT_COMPLETIONS' && parameters.thinkingEnabled !== undefined) {
-      body.thinking = { type: parameters.thinkingEnabled ? 'enabled' : 'disabled' };
+  private async testEmbeddingModelConfig(provider: ProviderRecord, model: ModelRecord) {
+    try {
+      const result = await this.aiInvocationClient.invokeEmbedding({
+        connection: {
+          baseUrl: provider.baseUrl,
+          apiKey: provider.apiKey,
+        },
+        request: {
+          traceId: `model-test:${model.id}:${Date.now()}`,
+          providerCode: provider.providerCode,
+          modelId: model.modelId,
+          protocol: model.protocol === 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' ? 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' : 'OPENAI_EMBEDDINGS',
+          input: 'ping',
+          dimensions: model.parameters.dimensions,
+          encodingFormat: model.parameters.encodingFormat,
+        },
+      });
+      if (result.status === 'SUCCEEDED') {
+        return {
+          id: model.id,
+          providerCode: provider.providerCode,
+          modelId: model.modelId,
+          status: 'SUCCESS',
+          message: '模型测试调用成功。',
+        };
+      }
+      return {
+        id: model.id,
+        providerCode: provider.providerCode,
+        modelId: model.modelId,
+        status: 'FAILED',
+        message: `模型测试失败：${result.errorMessage ?? result.errorCode ?? '供应商未返回有效内容'}`,
+      };
+    } catch (error) {
+      return {
+        id: model.id,
+        providerCode: provider.providerCode,
+        modelId: model.modelId,
+        status: 'FAILED',
+        message: `模型测试失败：${error instanceof Error ? error.message : '模型不可访问'}`,
+      };
     }
-    if (parameters.reasoningEffort) body.reasoning_effort = parameters.reasoningEffort;
-    return body;
   }
 
-  private buildEmbeddingTestBody(model: ModelRecord) {
-    const parameters = model.parameters;
-    const body: Record<string, unknown> = {
-      model: model.modelId,
-      input: 'ping',
-    };
-    if (typeof parameters.dimensions === 'number' && parameters.dimensions > 0) body.dimensions = parameters.dimensions;
-    if (parameters.encodingFormat) body.encoding_format = parameters.encodingFormat;
-    return body;
+  private toInvocationProtocol(provider: ProviderRecord, model: ModelRecord): InvocationModelProtocol {
+    if (model.protocol === 'DASHSCOPE_COMPATIBLE_CHAT') return 'DASHSCOPE_COMPATIBLE_CHAT';
+    if (provider.providerType === 'QWEN') return 'QWEN_COMPATIBLE';
+    return 'OPENAI_COMPATIBLE';
+  }
+
+  private toInvocationProviderKind(provider: ProviderRecord): ProviderInvocationKind {
+    return provider.providerType;
+  }
+
+  private resolveInvocationThinking(provider: ProviderRecord, model: ModelRecord): boolean | undefined {
+    if ((provider.providerType === 'QWEN' || provider.providerType === 'DEEPSEEK') && model.parameters.thinkingEnabled !== undefined) {
+      return model.parameters.thinkingEnabled;
+    }
+    return undefined;
+  }
+
+  /**
+   * @author codex
+   * Prevents raw provider reasoning payloads from leaking through model parameter JSON.
+   */
+  private readInvocationReasoningEffort(value: unknown): ModelParameters['reasoningEffort'] {
+    if (value === 'low' || value === 'medium' || value === 'high' || value === 'max') return value;
+    return undefined;
   }
 
   private async getProviderSource() {
-    const databaseProviders = await this.database.listProviders();
-    if (databaseProviders) {
-      this.providers.clear();
-      databaseProviders.forEach((provider) => this.providers.set(provider.providerCode, provider));
-      return databaseProviders;
-    }
-    return Array.from(this.providers.values());
+    return this.database.listProviders();
   }
 
   private async getModelSource() {
-    const databaseModels = await this.database.listModels();
-    if (databaseModels) {
-      this.models.clear();
-      databaseModels.forEach((model) => this.models.set(model.id, model));
-      return databaseModels;
-    }
-    return Array.from(this.models.values());
+    return this.database.listModels();
   }
 
   private async findProvider(providerCode: string): Promise<ProviderRecord | null> {
-    const databaseProvider = await this.database.findProvider(providerCode);
-    if (databaseProvider !== undefined) {
-      if (databaseProvider) this.providers.set(databaseProvider.providerCode, databaseProvider);
-      return databaseProvider;
-    }
-    return this.providers.get(providerCode) ?? null;
+    return this.database.findProvider(providerCode);
   }
 
   private async findModel(id: string): Promise<ModelRecord | null> {
-    const databaseModel = await this.database.findModel(id);
-    if (databaseModel !== undefined) {
-      if (databaseModel) this.models.set(databaseModel.id, databaseModel);
-      return databaseModel;
-    }
-    return this.models.get(id) ?? null;
+    return this.database.findModel(id);
   }
 
   private async getProvider(providerCode: string) {
@@ -633,34 +724,38 @@ export class ProviderService {
     return model;
   }
 
-  private async persistProvider(record: ProviderRecord) {
-    const saved = this.providers.has(record.providerCode)
-      ? await this.database.updateProvider(record)
-      : await this.database.createProvider(record);
-    const next = saved ?? record;
-    this.providers.set(next.providerCode, next);
-    return next;
+  private toPublicProvider(provider: ProviderRecord): ProviderPublicRecord {
+    return {
+      providerCode: provider.providerCode,
+      providerName: provider.providerName,
+      providerType: provider.providerType,
+      baseUrl: provider.baseUrl,
+      apiKey: '',
+      apiKeyConfigured: Boolean(provider.apiKey),
+      enabled: provider.enabled,
+    };
   }
 
-  private async persistModel(record: ModelRecord) {
-    const saved = this.models.has(record.id) ? await this.database.updateModel(record) : await this.database.createModel(record);
-    const next = saved ?? record;
-    this.models.set(next.id, next);
-    return next;
+  private readRequiredRequestObject<TRecord extends object>(value: unknown, message: string): TRecord {
+    if (value === null || value === undefined) throw new BadRequestException(message);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
   }
 
   private normalizeModelRecord(provider: ProviderRecord, record: ModelRecord): ModelRecord {
     const modelType = this.normalizeModelType(record.modelType);
     const protocol = record.protocol || ProviderService.resolveProtocol(provider.providerType, modelType);
     return {
-      ...record,
+      id: record.id,
       modelName: record.modelName.trim(),
+      providerCode: record.providerCode,
       modelId: record.modelId.trim(),
       modelType,
       protocol,
       parameters: this.normalizeParameters(provider.providerType, modelType, record.parameters),
-      capabilities: this.normalizeCapabilities(provider.providerType, modelType, record.capabilities),
-      limits: this.normalizeLimits(modelType, record.parameters, record.limits),
+      capabilities: this.normalizeCapabilities(modelType, record.capabilities),
+      limits: this.normalizeLimits(modelType, record.limits),
+      enabled: record.enabled,
     };
   }
 
@@ -668,49 +763,48 @@ export class ProviderService {
     if (modelType === 'EMBEDDING') {
       return {
         dimensions: this.optionalNumber(input.dimensions),
-        batchSize: this.optionalNumber(input.batchSize) ?? 16,
+        batchSize: this.optionalNumber(input.batchSize),
         encodingFormat: input.encodingFormat === 'base64' ? 'base64' : 'float',
-        timeoutMs: this.optionalNumber(input.timeoutMs) ?? 30000,
+        timeoutMs: this.optionalNumber(input.timeoutMs),
       };
     }
-    const defaultTemperature = providerType === 'DEEPSEEK' ? 1 : 0.2;
     return {
-      temperature: this.optionalNumber(input.temperature) ?? defaultTemperature,
-      topP: this.optionalNumber(input.topP) ?? 1,
-      topK: providerType === 'QWEN' ? (this.optionalNumber(input.topK) ?? 0) : undefined,
-      maxOutputTokens: this.optionalNumber(input.maxOutputTokens) ?? 4096,
-      stream: input.stream ?? true,
-      jsonMode: input.jsonMode ?? providerType !== 'DEEPSEEK',
-      toolCalling: input.toolCalling ?? providerType !== 'DEEPSEEK',
-      thinkingEnabled: input.thinkingEnabled ?? (providerType === 'DEEPSEEK' ? true : false),
-      reasoningEffort: input.reasoningEffort ?? (providerType === 'DEEPSEEK' ? 'high' : undefined),
-      timeoutMs: this.optionalNumber(input.timeoutMs) ?? 60000,
+      temperature: this.optionalNumber(input.temperature),
+      topP: this.optionalNumber(input.topP),
+      topK: providerType === 'QWEN' ? this.optionalNumber(input.topK) : undefined,
+      maxOutputTokens: this.optionalNumber(input.maxOutputTokens),
+      stream: input.stream,
+      jsonMode: input.jsonMode,
+      toolCalling: input.toolCalling,
+      thinkingEnabled: input.thinkingEnabled,
+      reasoningEffort: input.reasoningEffort,
+      timeoutMs: this.optionalNumber(input.timeoutMs),
     };
   }
 
-  private normalizeCapabilities(providerType: ProviderType, modelType: ModelType, input: ModelCapabilities): ModelCapabilities {
+  private normalizeCapabilities(modelType: ModelType, input: ModelCapabilities): ModelCapabilities {
     if (modelType === 'EMBEDDING') {
       return { embedding: true };
     }
     return {
-      stream: input.stream ?? true,
-      jsonMode: input.jsonMode ?? providerType !== 'DEEPSEEK',
-      toolCalling: input.toolCalling ?? providerType !== 'DEEPSEEK',
-      reasoning: input.reasoning ?? providerType === 'DEEPSEEK',
+      stream: input.stream,
+      jsonMode: input.jsonMode,
+      toolCalling: input.toolCalling,
+      reasoning: input.reasoning,
     };
   }
 
-  private normalizeLimits(modelType: ModelType, parameters: ModelParameters, input: ModelLimits): ModelLimits {
+  private normalizeLimits(modelType: ModelType, input: ModelLimits): ModelLimits {
     if (modelType === 'EMBEDDING') {
       return {
-        maxInputTokens: this.optionalNumber(input.maxInputTokens) ?? 8192,
-        embeddingDimensions: this.optionalNumber(input.embeddingDimensions) ?? this.optionalNumber(parameters.dimensions),
+        maxInputTokens: this.optionalNumber(input.maxInputTokens),
+        embeddingDimensions: this.optionalNumber(input.embeddingDimensions),
         pricing: this.normalizePricing(input.pricing),
       };
     }
     return {
-      contextWindow: this.optionalNumber(input.contextWindow) ?? 128000,
-      maxOutputTokens: this.optionalNumber(input.maxOutputTokens) ?? this.optionalNumber(parameters.maxOutputTokens) ?? 4096,
+      contextWindow: this.optionalNumber(input.contextWindow),
+      maxOutputTokens: this.optionalNumber(input.maxOutputTokens),
       pricing: this.normalizePricing(input.pricing),
     };
   }
@@ -729,7 +823,7 @@ export class ProviderService {
   }
 
   private normalizeModelType(value: unknown): ModelType {
-    return value === 'EMBEDDING' ? 'EMBEDDING' : 'LLM';
+    return readModelType(value);
   }
 
   private assertProviderSupportsModelType(providerType: ProviderType, modelType: ModelType) {
@@ -755,32 +849,16 @@ export class ProviderService {
     return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   }
 
-  private buildEndpoint(baseUrl: string, path: string) {
+  /**
+   * @author codex
+   * Keeps platform validation to provider URL shape; AI invocation owns provider wire paths.
+   */
+  private validateProviderBaseUrl(baseUrl: string) {
     try {
-      const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
-      return new URL(`${normalizedBaseUrl}/${path}`).toString();
+      new URL(baseUrl);
     } catch {
       throw new Error('接口地址格式不正确');
     }
-  }
-
-  private async fetchWithTimeout(endpoint: string, init: RequestInit) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      return await this.fetchImpl(endpoint, {
-        ...init,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  private async readResponseSummary(response: Response) {
-    const body = await response.text().catch(() => '');
-    const summary = body.replace(/\s+/g, ' ').trim().slice(0, 120);
-    return summary ? `，${summary}` : '';
   }
 
   /**
@@ -802,11 +880,5 @@ export class ProviderService {
       index += 1;
     }
     return nextCode;
-  }
-
-  private createMemoryModelId() {
-    const id = String(this.nextMemoryModelId);
-    this.nextMemoryModelId += 1;
-    return id;
   }
 }

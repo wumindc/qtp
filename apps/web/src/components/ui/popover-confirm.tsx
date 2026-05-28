@@ -15,8 +15,7 @@ export interface PopoverConfirmProps {
   trigger?: ReactNode;
   title?: string;
   description?: string;
-  /** 确认按钮文字（alias: actionLabel）*/
-  confirmLabel?: string;
+  /** 确认按钮文字 */
   actionLabel?: string;
   cancelLabel?: string;
   /** 确认后的回调 */
@@ -30,7 +29,6 @@ export function PopoverConfirm({
   trigger,
   title = '确认删除',
   description = '此操作不可撤销，请谨慎操作。',
-  confirmLabel,
   actionLabel,
   cancelLabel = '取消',
   onConfirm,
@@ -38,7 +36,7 @@ export function PopoverConfirm({
   className,
 }: PopoverConfirmProps) {
   const triggerEl = trigger ?? children;
-  const confirmText = confirmLabel ?? actionLabel ?? '确认删除';
+  const confirmText = actionLabel ?? '确认删除';
 
   return (
     <PopoverPrimitive.Root>

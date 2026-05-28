@@ -36,7 +36,6 @@ import {
   createPlan,
   updatePlan,
   deletePlan,
-  parseRunStartTime,
   formatDuration,
   type PlanRecord,
   type RunRecord,
@@ -74,8 +73,7 @@ function getPassRateColor(rate: number) {
 
 function formatRunTime(run: RunRecord): string {
   if (run.startAt) return new Date(run.startAt).toLocaleString('zh-CN');
-  const t = parseRunStartTime(run.runCode);
-  return t ? t.toLocaleString('zh-CN') : run.runCode;
+  return run.runCode;
 }
 
 function formatRunSequence(run: RunRecord, fallback?: number): string {
@@ -100,7 +98,6 @@ function buildCaseFilter(form: {
   return {
     categoryCodes:
       form.scope === 'CATEGORY' ? Array.from(form.selectedCategories) : [],
-    riskLevels: [],
     selectedCaseCodes: [],
   };
 }
@@ -108,7 +105,7 @@ function buildCaseFilter(form: {
 // ── 子组件：执行中状态区 ──
 
 function RunningStatusArea({ run }: { run: RunRecord }) {
-  const startTime = run.startAt ? new Date(run.startAt) : parseRunStartTime(run.runCode);
+  const startTime = run.startAt ? new Date(run.startAt) : null;
   const elapsed = startTime ? Date.now() - startTime.getTime() : null;
   const phase = run.phase ?? 'APP_CALLING';
   const phaseLabel = phase === 'EVALUATING'
@@ -434,7 +431,7 @@ function PlanCard({
                 title="立即执行"
                 description={`确定立即触发「${plan.planName}」计划执行？`}
                 onConfirm={() => onRun(plan)}
-                confirmLabel="确认执行"
+                actionLabel="确认执行"
               />
               <Button
                 aria-label="编辑计划"
@@ -530,6 +527,7 @@ export function AppPlansPage({ appCode }: { appCode: string }) {
     totalRunsByPlan,
     categories,
     loading,
+    loadError,
     refresh,
     reload,
     upsertRun,
@@ -743,6 +741,13 @@ export function AppPlansPage({ appCode }: { appCode: string }) {
           </div>
         )}
 
+        {!loading && loadError && (
+          <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4">
+            <p className="text-sm font-semibold text-destructive">执行计划加载失败</p>
+            <p className="mt-1 text-xs text-destructive/80">{loadError}</p>
+          </div>
+        )}
+
         {!loading &&
           plans.map((plan) => (
             <PlanCard
@@ -761,7 +766,7 @@ export function AppPlansPage({ appCode }: { appCode: string }) {
             />
           ))}
 
-        {!loading && plans.length === 0 && (
+        {!loading && !loadError && plans.length === 0 && (
           <div className="text-center py-16 text-muted-foreground">
             <Layers3 className="h-10 w-10 mx-auto mb-3 opacity-20" />
             <p className="text-sm">暂无执行计划</p>

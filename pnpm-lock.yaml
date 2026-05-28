@@ -14,15 +14,49 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  apps/quality-ai-invocation-service:
+    dependencies:
+      '@ai-quality-platform/ai-invocation-contract':
+        specifier: workspace:*
+        version: link:../../packages/ai-invocation-contract
+      '@ai-quality-platform/ai-model-adapter':
+        specifier: workspace:*
+        version: link:../../packages/ai-model-adapter
+      '@ai-quality-platform/shared-config':
+        specifier: workspace:*
+        version: link:../../packages/shared-config
+      '@ai-quality-platform/shared-http':
+        specifier: workspace:*
+        version: link:../../packages/shared-http
+      '@nestjs/common':
+        specifier: ^11.1.9
+        version: 11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core':
+        specifier: ^11.1.9
+        version: 11.1.21(@nestjs/common@11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.21)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/platform-express':
+        specifier: ^11.1.9
+        version: 11.1.21(@nestjs/common@11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.21)
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
+      rxjs:
+        specifier: ^7.8.2
+        version: 7.8.2
+    devDependencies:
+      tsx:
+        specifier: ^4.21.0
+        version: 4.22.1
       vitest:
         specifier: ^4.0.14
         version: 4.1.6(@types/node@24.12.4)(jsdom@27.4.0)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
 
   apps/quality-execution-service:
     dependencies:
-      '@ai-quality-platform/ai-model-adapter':
+      '@ai-quality-platform/ai-invocation-client':
         specifier: workspace:*
-        version: link:../../packages/ai-model-adapter
+        version: link:../../packages/ai-invocation-client
       '@ai-quality-platform/shared-config':
         specifier: workspace:*
         version: link:../../packages/shared-config
@@ -57,6 +91,9 @@ importers:
 
   apps/quality-gateway:
     dependencies:
+      '@ai-quality-platform/shared-auth':
+        specifier: workspace:*
+        version: link:../../packages/shared-auth
       '@ai-quality-platform/shared-config':
         specifier: workspace:*
         version: link:../../packages/shared-config
@@ -88,6 +125,12 @@ importers:
 
   apps/quality-platform-service:
     dependencies:
+      '@ai-quality-platform/ai-invocation-client':
+        specifier: workspace:*
+        version: link:../../packages/ai-invocation-client
+      '@ai-quality-platform/shared-auth':
+        specifier: workspace:*
+        version: link:../../packages/shared-auth
       '@ai-quality-platform/shared-config':
         specifier: workspace:*
         version: link:../../packages/shared-config
@@ -106,12 +149,6 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.1.9
         version: 11.1.21(@nestjs/common@11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.21)
-      '@prisma/adapter-mariadb':
-        specifier: ^7.8.0
-        version: 7.8.0
-      '@prisma/client':
-        specifier: ^7.1.0
-        version: 7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@5.9.3))(typescript@5.9.3)
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -164,21 +201,12 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4.3.0
         version: 4.3.0
-      '@tanstack/react-query':
-        specifier: ^5.100.11
-        version: 5.100.11(react@19.2.6)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      geist:
-        specifier: ^1.7.0
-        version: 1.7.0(next@16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6))
-      jsonpath-plus:
-        specifier: ^10.4.0
-        version: 10.4.0
       lucide-react:
         specifier: ^1.16.0
         version: 1.16.0(react@19.2.6)
@@ -226,7 +254,36 @@ importers:
         specifier: ^4.0.14
         version: 4.1.6(@types/node@24.12.4)(jsdom@27.4.0)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
 
+  packages/ai-invocation-client:
+    dependencies:
+      '@ai-quality-platform/ai-invocation-contract':
+        specifier: workspace:*
+        version: link:../ai-invocation-contract
+      '@ai-quality-platform/shared-config':
+        specifier: workspace:*
+        version: link:../shared-config
+    devDependencies:
+      vitest:
+        specifier: ^4.0.14
+        version: 4.1.6(@types/node@24.12.4)(jsdom@27.4.0)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
+
+  packages/ai-invocation-contract:
+    devDependencies:
+      vitest:
+        specifier: ^4.0.14
+        version: 4.1.6(@types/node@24.12.4)(jsdom@27.4.0)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
+
   packages/ai-model-adapter:
+    dependencies:
+      '@ai-quality-platform/ai-invocation-contract':
+        specifier: workspace:*
+        version: link:../ai-invocation-contract
+    devDependencies:
+      vitest:
+        specifier: ^4.0.14
+        version: 4.1.6(@types/node@24.12.4)(jsdom@27.4.0)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
+
+  packages/shared-auth:
     devDependencies:
       vitest:
         specifier: ^4.0.14
@@ -240,15 +297,15 @@ importers:
 
   packages/shared-database:
     dependencies:
+      '@ai-quality-platform/shared-auth':
+        specifier: workspace:*
+        version: link:../shared-auth
       '@prisma/adapter-mariadb':
         specifier: ^7.8.0
         version: 7.8.0
       '@prisma/client':
         specifier: ^7.1.0
         version: 7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@5.9.3))(typescript@5.9.3)
-      mariadb:
-        specifier: ^3.5.2
-        version: 3.5.2
     devDependencies:
       prisma:
         specifier: ^7.1.0
@@ -262,6 +319,12 @@ importers:
 
   packages/shared-http:
     devDependencies:
+      '@nestjs/common':
+        specifier: ^11.1.21
+        version: 11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core':
+        specifier: ^11.1.21
+        version: 11.1.21(@nestjs/common@11.1.21(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.21)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       vitest:
         specifier: ^4.0.14
         version: 4.1.6(@types/node@24.12.4)(jsdom@27.4.0)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.1))
@@ -715,18 +778,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@jsep-plugin/assignment@1.3.0':
-    resolution: {integrity: sha512-VVgV+CXrhbMI3aSusQyclHkenWSAm95WaiKrMxRFam3JSUiIaQjoMIw2sEs/OX4XifnqeQUN4DYbJjlA8EfktQ==}
-    engines: {node: '>= 10.16.0'}
-    peerDependencies:
-      jsep: ^0.4.0||^1.0.0
-
-  '@jsep-plugin/regex@1.0.4':
-    resolution: {integrity: sha512-q7qL4Mgjs1vByCaTnDFcBnV9HS7GVPJX5vyVoCgZHNSC9rjwIlmbXG5sUuorR5ndfHAIlJ8pVStxvjXHbNvtUg==}
-    engines: {node: '>= 10.16.0'}
-    peerDependencies:
-      jsep: ^0.4.0||^1.0.0
 
   '@kurkle/color@0.3.4':
     resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
@@ -1517,14 +1568,6 @@ packages:
   '@tailwindcss/postcss@4.3.0':
     resolution: {integrity: sha512-Jm05Tjx+9yCLGv5qw1c+84Psds8MnyrEQYCB+FFk2lgGiUjlRqdxke4mVTuYrj2xnVZqKim2Apr5ySuQRYAw/w==}
 
-  '@tanstack/query-core@5.100.11':
-    resolution: {integrity: sha512-lmE0994apShXPj8CUxgx4ch5yUJhE9k/+tVwihBvPOyerACWdBocfFg24t8+0RhtlTd7tEgchDkhlCxNssvDxw==}
-
-  '@tanstack/react-query@5.100.11':
-    resolution: {integrity: sha512-J0f9s5x3LE1450nNNfYx+e/n0DMa0uOBdFJUy5r0RvmsXd4nB/n0rbHtHI1vYXhikNFan+wf51p6Tmp4c8ucrg==}
-    peerDependencies:
-      react: ^18 || ^19
-
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
     engines: {node: '>=18'}
@@ -1974,11 +2017,6 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
-  geist@1.7.0:
-    resolution: {integrity: sha512-ZaoiZwkSf0DwwB1ncdLKp+ggAldqxl5L1+SXaNIBGkPAqcu+xjVJLxlf3/S8vLt9UHx1xu5fz3lbzKCj5iOVdQ==}
-    peerDependencies:
-      next: '>=13.2.0'
-
   generate-function@2.3.1:
     resolution: {integrity: sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==}
 
@@ -2099,17 +2137,8 @@ packages:
       canvas:
         optional: true
 
-  jsep@1.4.0:
-    resolution: {integrity: sha512-B7qPcEVE3NVkmSJbaYxvv4cHkVW7DQsZz13pUMrfS8z8Q/BuShN+gcTXrUlPiGqM2/t/EEaI030bpxMqY8gMlw==}
-    engines: {node: '>= 10.16.0'}
-
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
-
-  jsonpath-plus@10.4.0:
-    resolution: {integrity: sha512-T92WWatJXmhBbKsgH/0hl+jxjdXrifi5IKeMY02DWggRxX0UElcbVzPlmgLTbvsPeW1PasQ6xE2Q75stkhGbsA==}
-    engines: {node: '>=18.0.0'}
-    hasBin: true
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -2218,10 +2247,6 @@ packages:
   mariadb@3.4.5:
     resolution: {integrity: sha512-gThTYkhIS5rRqkVr+Y0cIdzr+GRqJ9sA2Q34e0yzmyhMCwyApf3OKAC1jnF23aSlIOqJuyaUFUcj7O1qZslmmQ==}
     engines: {node: '>= 14'}
-
-  mariadb@3.5.2:
-    resolution: {integrity: sha512-9rztrI4nouxAY/82a+RlzzZ5ie2vxu2eYclkBvTy1ATXH1B9cnvZ0O71Pzsy/mlfDb5P3HhOg0JzQKkDRhctyA==}
-    engines: {node: '>= 18'}
 
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
@@ -3220,14 +3245,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@jsep-plugin/assignment@1.3.0(jsep@1.4.0)':
-    dependencies:
-      jsep: 1.4.0
-
-  '@jsep-plugin/regex@1.0.4(jsep@1.4.0)':
-    dependencies:
-      jsep: 1.4.0
-
   '@kurkle/color@0.3.4': {}
 
   '@lukeed/csprng@1.1.0': {}
@@ -3942,13 +3959,6 @@ snapshots:
       postcss: 8.5.14
       tailwindcss: 4.3.0
 
-  '@tanstack/query-core@5.100.11': {}
-
-  '@tanstack/react-query@5.100.11(react@19.2.6)':
-    dependencies:
-      '@tanstack/query-core': 5.100.11
-      react: 19.2.6
-
   '@testing-library/dom@10.4.1':
     dependencies:
       '@babel/code-frame': 7.29.0
@@ -4422,10 +4432,6 @@ snapshots:
 
   function-bind@1.1.2: {}
 
-  geist@1.7.0(next@16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)):
-    dependencies:
-      next: 16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-
   generate-function@2.3.1:
     dependencies:
       is-property: 1.0.2
@@ -4558,15 +4564,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  jsep@1.4.0: {}
-
   json-schema-traverse@1.0.0: {}
-
-  jsonpath-plus@10.4.0:
-    dependencies:
-      '@jsep-plugin/assignment': 1.3.0(jsep@1.4.0)
-      '@jsep-plugin/regex': 1.0.4(jsep@1.4.0)
-      jsep: 1.4.0
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -4643,14 +4641,6 @@ snapshots:
       '@types/node': 24.12.4
       denque: 2.1.0
       iconv-lite: 0.6.3
-      lru-cache: 10.4.3
-
-  mariadb@3.5.2:
-    dependencies:
-      '@types/geojson': 7946.0.16
-      '@types/node': 24.12.4
-      denque: 2.1.0
-      iconv-lite: 0.7.2
       lru-cache: 10.4.3
 
   math-intrinsics@1.1.0: {}

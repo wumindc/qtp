@@ -24,7 +24,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { resolveAppIconConfig } from './app-icon-config';
 import type { App } from './types';
 
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
@@ -128,10 +127,10 @@ const VARIANT_STYLES: Record<string, string> = {
   tile: 'outline outline-1 outline-offset-[-6px] outline-white/50 dark:outline-white/10',
 };
 
-export function AppIcon({ app, className }: { app: Pick<App, 'appCode' | 'appName' | 'icon'>; className?: string }) {
-  const config = resolveAppIconConfig(app);
-  const theme = ICON_THEMES[config.themeKey] ?? ICON_THEMES.violet;
-  const Icon = ICON_COMPONENTS[config.iconKey] ?? Bot;
+export function AppIcon({ app, className }: { app: Pick<App, 'icon'>; className?: string }) {
+  const config = app.icon;
+  const theme = ICON_THEMES[config.themeKey];
+  const Icon = ICON_COMPONENTS[config.iconKey];
 
   return (
     <div

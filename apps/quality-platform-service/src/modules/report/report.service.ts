@@ -1,217 +1,170 @@
 import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
-import { pageResult } from '@ai-quality-platform/shared-http';
-
-export interface ReportListRecord {
-  reportCode: string;
-  runCode: string;
-  reportName: string;
-  appCode: string;
-  passRate: number;
-  generatedAt: string;
-}
-
-export interface GenerateReportRequest {
-  appCode: string;
-  runCode: string;
-  reportName?: string;
-}
 
 type StatisticsPrismaClient = {
   aiApp: { findMany(input?: object): Promise<unknown[]> };
   evalCase: { findMany(input?: object): Promise<unknown[]> };
   evalPlan: { findMany(input?: object): Promise<unknown[]> };
-  evalRun: { findMany(input?: object): Promise<unknown[]>; findUnique(input: { where: { runCode: string } }): Promise<unknown | null> };
+  evalRun: { findMany(input?: object): Promise<unknown[]> };
+  evalResult: { findMany(input?: object): Promise<unknown[]> };
   evalReview: { findMany(input?: object): Promise<unknown[]> };
-  evalReport: {
-    findMany(input?: object): Promise<unknown[]>;
-    findUnique(input: { where: { reportCode: string } }): Promise<unknown | null>;
-    create(input: { data: object }): Promise<unknown>;
-  };
 };
 
-class ReportDatabase {
+export interface DashboardSnapshot {
+  apps: unknown[];
+  cases: unknown[];
+  plans: unknown[];
+  runs: unknown[];
+  results: unknown[];
+  reviews: unknown[];
+}
+
+export interface ReportDataStore {
+  dashboardSnapshot(): Promise<DashboardSnapshot>;
+}
+
+interface DashboardRunRecord {
+  status: string;
+  totalCount: number;
+  passCount: number;
+  failCount: number;
+}
+
+interface DashboardResultRecord {
+  id: string;
+  passStatus: string;
+}
+
+interface DashboardReviewRecord {
+  id: string;
+  resultId: string;
+  manualResult: unknown;
+}
+
+class ReportDatabase implements ReportDataStore {
   private readonly prismaPromise = this.createClient();
 
   /**
    * @author codex
-   * Aggregates reporting data directly from MySQL business tables.
+   * Reads reporting source rows directly from MySQL business tables.
    */
-  async dashboard() {
+  async dashboardSnapshot(): Promise<DashboardSnapshot> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    const [apps, cases, plans, runs, reviews] = await Promise.all([
+    const [apps, cases, plans, runs, results, reviews] = await Promise.all([
       prisma.aiApp.findMany(),
       prisma.evalCase.findMany(),
       prisma.evalPlan.findMany(),
       prisma.evalRun.findMany(),
+      prisma.evalResult.findMany(),
       prisma.evalReview.findMany(),
     ]);
-    const completedRuns = runs.map((run) => this.asRecord(run)).filter((run) => run.status === 'COMPLETED');
-    const avgPassRate =
-      completedRuns.length === 0
-        ? 0
-        : Math.round(
-            completedRuns.reduce((sum, run) => {
-              const total = Number(run.totalCount ?? 0);
-              const pass = Number(run.passCount ?? 0);
-              return sum + (total > 0 ? (pass / total) * 100 : 0);
-            }, 0) / completedRuns.length,
-          );
-    const pendingReviewCount = reviews.map((review) => this.asRecord(review)).filter((review) => review.reviewStatus === 'PENDING').length;
-    const highRiskFailureCount = runs.map((run) => this.asRecord(run)).filter((run) => Number(run.failCount ?? 0) > 0).length;
-    return {
-      appCount: apps.length,
-      caseCount: cases.length,
-      planCount: plans.length,
-      avgPassRate,
-      pendingReviewCount,
-      highRiskFailureCount,
-    };
-  }
-
-  async listReports(): Promise<ReportListRecord[] | null> {
-    const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    const [reports, runs] = await Promise.all([
-      prisma.evalReport.findMany({ orderBy: { id: 'desc' } }),
-      prisma.evalRun.findMany(),
-    ]);
-    const runsByCode = new Map(runs.map((run) => {
-      const row = this.asRecord(run);
-      return [String(row.runCode), row];
-    }));
-    return reports.map((report) => this.toReport(report, runsByCode.get(String(this.asRecord(report).runCode))));
-  }
-
-  async detail(reportCode: string) {
-    const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    const row = await prisma.evalReport.findUnique({ where: { reportCode } });
-    if (!row) return null;
-    const report = this.asRecord(row);
-    return {
-      ...this.toReport(row),
-      summary: this.asRecord(report.summaryJson),
-      categoryStats: Array.isArray(report.categoryStatsJson) ? report.categoryStatsJson : [],
-      riskStats: Array.isArray(report.riskStatsJson) ? report.riskStatsJson : [],
-      typicalFailures: Array.isArray(report.typicalFailuresJson) ? report.typicalFailuresJson : [],
-      suggestions: typeof report.suggestion === 'string' && report.suggestion ? [report.suggestion] : [],
-    };
-  }
-
-  async generate(request: GenerateReportRequest, summary: Record<string, unknown>): Promise<ReportListRecord | null> {
-    const prisma = await this.prismaPromise;
-    if (!prisma) return null;
-    const run = await prisma.evalRun.findUnique({ where: { runCode: request.runCode } });
-    const runRow = run ? this.asRecord(run) : undefined;
-    const reportCode = `REPORT_${request.runCode}_${Date.now()}`;
-    const saved = await prisma.evalReport.create({
-      data: {
-        reportCode,
-        runCode: request.runCode,
-        reportName: request.reportName ?? `${request.runCode} 评估报告`,
-        summaryJson: summary,
-        categoryStatsJson: [],
-        riskStatsJson: [],
-        typicalFailuresJson: [],
-        suggestion: '',
-      },
-    });
-    return this.toReport(saved, runRow);
+    return { apps, cases, plans, runs, results, reviews };
   }
 
   private async createClient() {
-    if (process.env.VITEST) return null;
     return createRuntimePrismaClient<StatisticsPrismaClient>();
-  }
-
-  private toReport(row: unknown, run?: Record<string, unknown>): ReportListRecord {
-    const data = this.asRecord(row);
-    const generatedAt = data.generatedAt instanceof Date ? data.generatedAt.toISOString() : String(data.generatedAt ?? '');
-    const total = Number(run?.totalCount ?? 0);
-    const pass = Number(run?.passCount ?? 0);
-    return {
-      reportCode: String(data.reportCode),
-      runCode: String(data.runCode),
-      reportName: String(data.reportName),
-      appCode: String(run?.appCode ?? ''),
-      passRate: total > 0 ? Math.round((pass / total) * 100) : 0,
-      generatedAt,
-    };
-  }
-
-  private asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   }
 }
 
 export class ReportService {
-  private readonly database = new ReportDatabase();
-  private readonly generatedReports = new Map<string, ReportListRecord>();
+  constructor(private readonly database: ReportDataStore = new ReportDatabase()) {}
 
   /**
    * @author codex
    * Produces dashboard metrics from current database records only.
-   */
+  */
   async dashboard() {
-    return (
-      (await this.database.dashboard()) ?? {
-        appCount: 0,
-        caseCount: 0,
-        planCount: 0,
-        avgPassRate: 0,
-        pendingReviewCount: 0,
-        highRiskFailureCount: 0,
-      }
-    );
-  }
+    const snapshot = await this.database.dashboardSnapshot();
 
-  async detail(reportCode: string) {
-    const report = (await this.database.detail(reportCode)) ?? this.generatedReports.get(reportCode);
-    if (!report) throw new Error('报告不存在');
+    const runs = snapshot.runs.map((run) => this.toRunRecord(run));
+    const completedRuns = runs.filter((run) => run.status === 'COMPLETED');
+    const avgPassRate =
+      completedRuns.length === 0
+        ? 0
+        : Math.round(
+            completedRuns.reduce((sum, run) => sum + (run.totalCount > 0 ? (run.passCount / run.totalCount) * 100 : 0), 0) /
+              completedRuns.length,
+          );
+    const latestReviews = this.latestManualReviews(snapshot.reviews);
+    const pendingReviewCount = snapshot.results
+      .map((result) => this.toResultRecord(result))
+      .filter((result) => result.passStatus === 'REVIEW')
+      .filter((result) => {
+        const review = latestReviews.get(result.id);
+        return review?.manualResult !== 'PASS' && review?.manualResult !== 'FAIL';
+      }).length;
+    const failedRunCount = runs.filter((run) => run.failCount > 0).length;
+
     return {
-      ...report,
-      summary: 'summary' in report ? report.summary : await this.dashboard(),
-      categoryStats: 'categoryStats' in report ? report.categoryStats : [],
-      suggestions: 'suggestions' in report ? report.suggestions : [],
+      appCount: snapshot.apps.length,
+      caseCount: snapshot.cases.length,
+      planCount: snapshot.plans.length,
+      avgPassRate,
+      pendingReviewCount,
+      failedRunCount,
     };
   }
 
-  async list(query: { appCode?: string; runCode?: string }, page: { currentPage: number; linesPerPage: number }) {
-    const start = (page.currentPage - 1) * page.linesPerPage;
-    const rows = ((await this.database.listReports()) ?? Array.from(this.generatedReports.values())).filter((report) => {
-      const appMatched = !query.appCode || report.appCode === query.appCode;
-      const runMatched = !query.runCode || report.runCode === query.runCode;
-      return appMatched && runMatched;
-    });
-    return pageResult(rows.slice(start, start + page.linesPerPage), page.currentPage, page.linesPerPage, rows.length);
+  private latestManualReviews(reviews: unknown[]) {
+    const latest = new Map<string, DashboardReviewRecord>();
+    for (const review of reviews.map((item) => this.toReviewRecord(item)).sort((left, right) => this.comparePersistedIdDesc(left.id, right.id))) {
+      if (!latest.has(review.resultId)) latest.set(review.resultId, review);
+    }
+    return latest;
   }
 
-  /**
-   * @author codex
-   * Generates an evaluation report snapshot from an execution run identifier.
-   */
-  async generate(request: GenerateReportRequest): Promise<ReportListRecord> {
-    const summary = await this.dashboard();
-    const saved = await this.database.generate(request, summary);
-    const record =
-      saved ??
-      ({
-        reportCode: `REPORT_${request.runCode}_${Date.now()}`,
-        runCode: request.runCode,
-        reportName: request.reportName ?? `${request.runCode} 评估报告`,
-        appCode: request.appCode,
-        passRate: 0,
-        generatedAt: new Date().toISOString(),
-      } satisfies ReportListRecord);
-    this.generatedReports.set(record.reportCode, record);
-    return record;
-  }
-
-  async exportReport(reportCode: string) {
+  private toRunRecord(value: unknown): DashboardRunRecord {
+    const data = this.readRecord(value, '执行批次记录格式不正确');
     return {
-      fileName: `${reportCode}.json`,
-      content: await this.detail(reportCode),
+      status: this.readRequiredString(data.status, '执行批次记录缺少状态'),
+      totalCount: this.readNonNegativeInteger(data.totalCount, '执行批次记录缺少总数'),
+      passCount: this.readNonNegativeInteger(data.passCount, '执行批次记录缺少通过数'),
+      failCount: this.readNonNegativeInteger(data.failCount, '执行批次记录缺少失败数'),
     };
+  }
+
+  private toResultRecord(value: unknown): DashboardResultRecord {
+    const data = this.readRecord(value, '执行结果记录格式不正确');
+    return {
+      id: this.readPersistedId(data.id, '执行结果记录缺少 ID'),
+      passStatus: this.readRequiredString(data.passStatus, '执行结果记录缺少通过状态'),
+    };
+  }
+
+  private toReviewRecord(value: unknown): DashboardReviewRecord {
+    const data = this.readRecord(value, '人工复核记录格式不正确');
+    return {
+      id: this.readPersistedId(data.id, '人工复核记录缺少 ID'),
+      resultId: this.readPersistedId(data.resultId, '人工复核记录缺少执行结果 ID'),
+      manualResult: data.manualResult,
+    };
+  }
+
+  private readRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readRequiredString(value: unknown, message: string): string {
+    if (typeof value === 'string' && value.trim()) return value;
+    throw new Error(message);
+  }
+
+  private readNonNegativeInteger(value: unknown, message: string): number {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+    throw new Error(message);
+  }
+
+  private readPersistedId(value: unknown, message: string): string {
+    if (typeof value === 'bigint' && value > 0n) return String(value);
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) return String(value);
+    throw new Error(message);
+  }
+
+  private comparePersistedIdDesc(left: string, right: string): number {
+    const leftId = BigInt(left);
+    const rightId = BigInt(right);
+    if (rightId > leftId) return 1;
+    if (rightId < leftId) return -1;
+    return 0;
   }
 }

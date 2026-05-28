@@ -8,28 +8,44 @@ import type { CaseCsvRow } from '../case-csv';
 
 type GatewayRow = Record<string, unknown>;
 
-function toStringField(value: unknown, fallback = '') {
-  if (value === undefined || value === null) return fallback;
-  return String(value);
+function readStringField(value: unknown, message: string) {
+  if (typeof value !== 'string') throw new Error(message);
+  return value;
+}
+
+function readRequiredStringField(value: unknown, message: string) {
+  const text = readStringField(value, message);
+  if (!text.trim()) throw new Error(message);
+  return text;
+}
+
+function readNumberField(value: unknown, message: string) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(message);
+  return value;
+}
+
+function readBooleanField(value: unknown, message: string) {
+  if (typeof value !== 'boolean') throw new Error(message);
+  return value;
 }
 
 function mapCategory(item: GatewayRow): PresetCategory {
   return {
-    id: toStringField(item.id ?? item.code),
-    name: toStringField(item.name ?? item.categoryName),
-    description: toStringField(item.description),
-    sortOrder: toStringField(item.sortOrder, '0'),
-    status: item.enabled === false ? '停用' : '启用',
+    id: readRequiredStringField(item.id, '预置分类响应缺少分类 ID'),
+    name: readRequiredStringField(item.name, '预置分类响应缺少分类名称'),
+    description: readStringField(item.description, '预置分类响应缺少分类描述'),
+    sortOrder: String(readNumberField(item.sortOrder, '预置分类响应缺少排序值')),
+    status: readBooleanField(item.enabled, '预置分类响应缺少启停状态') ? '启用' : '停用',
   };
 }
 
 function mapCase(item: GatewayRow): PresetCase {
   return {
-    id: toStringField(item.id ?? item.caseCode),
-    categoryId: toStringField(item.categoryId ?? item.categoryCode),
-    input: toStringField(item.input ?? item.query),
-    expected: toStringField(item.expectedBehavior),
-    status: item.enabled === false ? '停用' : '启用',
+    id: readRequiredStringField(item.id, '预置用例响应缺少用例 ID'),
+    categoryId: readRequiredStringField(item.categoryId, '预置用例响应缺少分类 ID'),
+    input: readRequiredStringField(item.query, '预置用例响应缺少问题内容'),
+    expected: readRequiredStringField(item.expectedBehavior, '预置用例响应缺少期望回答'),
+    status: readBooleanField(item.enabled, '预置用例响应缺少启停状态') ? '启用' : '停用',
   };
 }
 
@@ -69,7 +85,7 @@ export async function saveCategory(category: Partial<PresetCategory>, editingId?
 
 export async function saveCase(presetCase: Partial<PresetCase>, editingId?: string) {
   const payload = {
-    categoryCode: presetCase.categoryId,
+    categoryId: presetCase.categoryId,
     query: presetCase.input?.trim(),
     expectedBehavior: presetCase.expected?.trim(),
     enabled: presetCase.status !== '停用',

@@ -1,7 +1,7 @@
 'use client';
 /**
  * 供应商对话框 — 新增/编辑供应商
- * @author Antigravity/Gemini
+ * @author codex
  */
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ interface ProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialForm?: ProviderFormState;
+  apiKeyRequired?: boolean;
   onSave: (form: ProviderFormState) => Promise<void>;
   title?: string;
 }
@@ -40,7 +41,7 @@ const DEFAULT_FORM: ProviderFormState = {
   apiKey: '',
 };
 
-export function ProviderDialog({ open, onOpenChange, initialForm, onSave, title = '新增供应商' }: ProviderDialogProps) {
+export function ProviderDialog({ open, onOpenChange, initialForm, apiKeyRequired = true, onSave, title = '新增供应商' }: ProviderDialogProps) {
   const [form, setForm] = useState<ProviderFormState>(initialForm ?? DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -57,7 +58,7 @@ export function ProviderDialog({ open, onOpenChange, initialForm, onSave, title 
   const handleSave = async () => {
     if (!form.name.trim()) { setError('请填写供应商名称'); return; }
     if (!form.baseUrl.trim()) { setError('请填写 API 地址'); return; }
-    if (!form.apiKey.trim()) { setError('请填写 API Key'); return; }
+    if (apiKeyRequired && !form.apiKey.trim()) { setError('请填写 API Key'); return; }
     setSaving(true);
     try {
       await onSave(form);
@@ -126,11 +127,11 @@ export function ProviderDialog({ open, onOpenChange, initialForm, onSave, title 
 
           {/* API Key */}
           <div className="space-y-1.5">
-            <Label htmlFor="provider-key">API Key <span className="text-destructive">*</span></Label>
+            <Label htmlFor="provider-key">API Key {apiKeyRequired && <span className="text-destructive">*</span>}</Label>
             <Input
               id="provider-key"
               type="password"
-              placeholder="sk-..."
+              placeholder={apiKeyRequired ? 'sk-...' : '留空则沿用已保存的 Key'}
               value={form.apiKey}
               onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
             />

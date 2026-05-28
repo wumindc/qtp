@@ -23,7 +23,8 @@ describe('quality-execution-service health', () => {
       }),
     } as never).health();
 
-    expect(response.data.worker).toEqual({
+    expect(response.data).toMatchObject({
+      worker: {
       enabled: true,
       activeRunCount: 2,
       runningRunCount: 3,
@@ -31,6 +32,22 @@ describe('quality-execution-service health', () => {
       lastRecoveryAt: '2026-05-27T00:59:00.000Z',
       lastRecoveryStatus: 'SUCCEEDED',
       recoveredRunCount: 1,
+      },
     });
+  });
+
+  it('reports DOWN when worker health cannot read persisted execution state', async () => {
+    const response = await new HealthController({
+      getWorkerHealth: async () => {
+        throw new Error('执行批次读取失败');
+      },
+    } as never).health();
+
+    expect(response.data.status).toBe('DOWN');
+    expect(response.data).toMatchObject({
+      status: 'DOWN',
+      message: '执行批次读取失败',
+    });
+    expect('worker' in response.data).toBe(false);
   });
 });

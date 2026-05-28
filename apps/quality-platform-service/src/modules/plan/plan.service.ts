@@ -23,7 +23,6 @@ export interface PreviewCasesRequest {
   planCode?: string;
   appCode?: string;
   categoryCodes?: string[];
-  riskLevels?: string[];
   selectedCaseCodes?: string[];
 }
 
@@ -37,10 +36,9 @@ export interface StartPlanDto {
 export interface PreviewCaseRecord {
   id: string;
   caseCode: string;
-  caseName: string;
+  query: string;
   appCode: string;
   categoryId: string;
-  riskLevel: string;
 }
 
 type PlanPrismaClient = {
@@ -56,6 +54,15 @@ type PlanPrismaClient = {
   };
 };
 
+export interface PlanDataStore {
+  listPlans(): Promise<PlanRecord[]>;
+  listCases(): Promise<PreviewCaseRecord[]>;
+  findPlan(planCode: string): Promise<PlanRecord | null>;
+  createPlan(record: PlanRecord): Promise<PlanRecord>;
+  updatePlan(record: PlanRecord): Promise<PlanRecord>;
+  deletePlan(planCode: string): Promise<PlanRecord>;
+}
+
 const OPAQUE_ID_LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 const OPAQUE_ID_ALPHABET = `${OPAQUE_ID_LETTERS}0123456789`;
 const OPAQUE_ID_LENGTH = 10;
@@ -69,44 +76,39 @@ function createOpaqueId(prefix: string): string {
   return `${prefix}-${suffix}`;
 }
 
-class PlanDatabase {
+class PlanDatabase implements PlanDataStore {
   private readonly prismaPromise = this.createClient();
 
   /**
    * @author codex
    * Reads plans and previewable cases from MySQL without injecting default records.
    */
-  async listPlans(): Promise<PlanRecord[] | null> {
+  async listPlans(): Promise<PlanRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.evalPlan.findMany({ orderBy: { id: 'asc' } });
     return rows.map((row) => this.toPlan(row));
   }
 
-  async listCases(): Promise<PreviewCaseRecord[] | null> {
+  async listCases(): Promise<PreviewCaseRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.evalCase.findMany({ orderBy: { id: 'asc' } });
     return rows.map((row) => this.toCase(row));
   }
 
-  async findPlan(planCode: string): Promise<PlanRecord | null | undefined> {
+  async findPlan(planCode: string): Promise<PlanRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.evalPlan.findUnique({ where: { planCode } });
     return row ? this.toPlan(row) : null;
   }
 
-  async createPlan(record: PlanRecord): Promise<PlanRecord | null> {
+  async createPlan(record: PlanRecord): Promise<PlanRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.evalPlan.create({ data: this.toPayload(record) });
     return this.toPlan(saved);
   }
 
-  async updatePlan(record: PlanRecord): Promise<PlanRecord | null> {
+  async updatePlan(record: PlanRecord): Promise<PlanRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.evalPlan.update({
       where: { planCode: record.planCode },
       data: this.toPayload(record),
@@ -114,15 +116,13 @@ class PlanDatabase {
     return this.toPlan(saved);
   }
 
-  async deletePlan(planCode: string): Promise<PlanRecord | null> {
+  async deletePlan(planCode: string): Promise<PlanRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const deleted = await prisma.evalPlan.delete({ where: { planCode } });
     return this.toPlan(deleted);
   }
 
   private async createClient() {
-    if (process.env.VITEST) return null;
     return createRuntimePrismaClient<PlanPrismaClient>();
   }
 
@@ -137,37 +137,57 @@ class PlanDatabase {
   }
 
   private toPlan(row: unknown): PlanRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '执行计划记录格式不正确');
     return {
-      planCode: String(data.planCode),
-      planName: String(data.planName),
-      appCode: String(data.appCode),
-      caseFilter: this.asRecord(data.caseFilterJson),
-      status: data.status === 'DISABLED' ? 'DISABLED' : 'ENABLED',
+      planCode: this.readRequiredString(data.planCode, '执行计划记录缺少计划编码'),
+      planName: this.readRequiredString(data.planName, '执行计划记录缺少计划名称'),
+      appCode: this.readRequiredString(data.appCode, '执行计划记录缺少应用编码'),
+      caseFilter: this.readRequiredRecord(data.caseFilterJson, '执行计划记录缺少用例筛选条件'),
+      status: this.readPlanStatus(data.status),
     };
   }
 
   private toCase(row: unknown): PreviewCaseRecord {
-    const data = this.asRecord(row);
+    const data = this.readRecord(row, '预览用例记录格式不正确');
+    const inputJson = this.readRequiredRecord(data.inputJson, '预览用例记录缺少输入 JSON');
+    const id = this.readRequiredBigIntId(data.id, '预览用例记录缺少数据库 ID');
     return {
-      id: String(data.id),
-      caseCode: String(data.id),
-      caseName: String(data.caseName),
-      appCode: String(data.appCode),
-      categoryId: String(data.categoryId),
-      riskLevel: String(data.riskLevel ?? 'MEDIUM'),
+      id,
+      caseCode: id,
+      query: this.readRequiredString(inputJson.query, '预览用例记录缺少问题内容'),
+      appCode: this.readRequiredString(data.appCode, '预览用例记录缺少应用编码'),
+      categoryId: this.readRequiredBigIntId(data.categoryId, '预览用例记录缺少分类 ID'),
     };
   }
 
-  private asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  private readRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readRequiredRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
+  }
+
+  private readRequiredString(value: unknown, message: string): string {
+    if (typeof value === 'string' && value.trim()) return value;
+    throw new Error(message);
+  }
+
+  private readRequiredBigIntId(value: unknown, message: string): string {
+    if (typeof value === 'bigint' && value > 0n) return String(value);
+    throw new Error(message);
+  }
+
+  private readPlanStatus(value: unknown): PlanRecord['status'] {
+    if (value === 'ENABLED' || value === 'DISABLED') return value;
+    throw new Error('执行计划记录状态非法');
   }
 }
 
 export class PlanService {
-  private readonly database = new PlanDatabase();
-  private readonly plans = new Map<string, PlanRecord>();
-  private readonly previewCaseMap = new Map<string, PreviewCaseRecord>();
+  constructor(private readonly database: PlanDataStore = new PlanDatabase()) {}
 
   /**
    * @author codex
@@ -185,15 +205,25 @@ export class PlanService {
     const planCode = requestedPlanCode || (await this.createPlanCode());
     if (await this.findPlan(planCode)) throw new Error('计划编码已存在');
     return this.persist({
-      ...request,
       planCode,
+      planName: request.planName,
+      appCode: request.appCode,
+      caseFilter: this.readRequiredRecord(request.caseFilter, '执行计划缺少用例筛选条件'),
       status: 'ENABLED',
     });
   }
 
   async update(planCode: string, request: UpdatePlanRequest): Promise<PlanRecord> {
     const plan = await this.getPlan(planCode);
-    return this.persist({ ...plan, ...request, planCode });
+    return this.persist({
+      planCode,
+      planName: request.planName ?? plan.planName,
+      appCode: request.appCode ?? plan.appCode,
+      caseFilter: request.caseFilter === undefined
+        ? this.readRequiredRecord(plan.caseFilter, '执行计划缺少用例筛选条件')
+        : this.readRequiredRecord(request.caseFilter, '执行计划缺少用例筛选条件'),
+      status: request.status ?? plan.status,
+    });
   }
 
   async changeStatus(planCode: string, status: PlanRecord['status']): Promise<PlanRecord> {
@@ -201,10 +231,8 @@ export class PlanService {
   }
 
   async delete(planCode: string): Promise<PlanRecord> {
-    const plan = await this.getPlan(planCode);
-    const deleted = await this.database.deletePlan(planCode);
-    this.plans.delete(planCode);
-    return deleted ?? plan;
+    await this.getPlan(planCode);
+    return this.database.deletePlan(planCode);
   }
 
   /**
@@ -214,17 +242,15 @@ export class PlanService {
   async previewCasesForPlan(request: string | PreviewCasesRequest) {
     const previewRequest = typeof request === 'string' ? { planCode: request } : request;
     const plan = previewRequest.planCode ? await this.getPlan(previewRequest.planCode) : undefined;
-    const caseFilter = plan?.caseFilter ?? {};
+    const caseFilter = plan ? this.readRequiredRecord(plan.caseFilter, '执行计划缺少用例筛选条件') : undefined;
     const appCode = previewRequest.appCode ?? plan?.appCode;
-    const categoryCodes = this.stringArray(previewRequest.categoryCodes ?? caseFilter.categoryCodes);
-    const riskLevels = this.stringArray(previewRequest.riskLevels ?? caseFilter.riskLevels);
-    const selectedCaseCodes = this.stringArray(previewRequest.selectedCaseCodes ?? caseFilter.selectedCaseCodes);
+    const categoryCodes = this.stringArray(previewRequest.categoryCodes ?? caseFilter?.categoryCodes);
+    const selectedCaseCodes = this.stringArray(previewRequest.selectedCaseCodes ?? caseFilter?.selectedCaseCodes);
     const matchedCases = (await this.getCaseSource()).filter((testCase) => {
       const appMatched = !appCode || testCase.appCode === appCode;
       const categoryMatched = categoryCodes.length === 0 || categoryCodes.includes(testCase.categoryId);
-      const riskMatched = riskLevels.length === 0 || riskLevels.includes(testCase.riskLevel);
       const selectedMatched = selectedCaseCodes.length === 0 || selectedCaseCodes.includes(testCase.caseCode);
-      return appMatched && categoryMatched && riskMatched && selectedMatched;
+      return appMatched && categoryMatched && selectedMatched;
     });
     return {
       matchedCount: matchedCases.length,
@@ -238,41 +264,25 @@ export class PlanService {
 
   async start(planCode: string): Promise<StartPlanDto> {
     const plan = await this.getPlan(planCode);
+    const caseFilter = this.readRequiredRecord(plan.caseFilter, '执行计划缺少用例筛选条件');
     return {
       planCode,
       appCode: plan.appCode,
-      selectedCaseCodes: this.stringArray(plan.caseFilter.selectedCaseCodes),
-      caseFilter: plan.caseFilter,
+      selectedCaseCodes: this.stringArray(caseFilter.selectedCaseCodes),
+      caseFilter,
     };
   }
 
   private async getPlanSource() {
-    const databasePlans = await this.database.listPlans();
-    if (databasePlans) {
-      this.plans.clear();
-      databasePlans.forEach((plan) => this.plans.set(plan.planCode, plan));
-      return databasePlans;
-    }
-    return Array.from(this.plans.values());
+    return this.database.listPlans();
   }
 
   private async getCaseSource() {
-    const databaseCases = await this.database.listCases();
-    if (databaseCases) {
-      this.previewCaseMap.clear();
-      databaseCases.forEach((testCase) => this.previewCaseMap.set(testCase.caseCode, testCase));
-      return databaseCases;
-    }
-    return Array.from(this.previewCaseMap.values());
+    return this.database.listCases();
   }
 
   private async findPlan(planCode: string): Promise<PlanRecord | null> {
-    const databasePlan = await this.database.findPlan(planCode);
-    if (databasePlan !== undefined) {
-      if (databasePlan) this.plans.set(databasePlan.planCode, databasePlan);
-      return databasePlan;
-    }
-    return this.plans.get(planCode) ?? null;
+    return this.database.findPlan(planCode);
   }
 
   private async getPlan(planCode: string) {
@@ -294,15 +304,17 @@ export class PlanService {
   }
 
   private async persist(record: PlanRecord) {
-    const saved = this.plans.has(record.planCode)
-      ? await this.database.updatePlan(record)
-      : await this.database.createPlan(record);
-    const next = saved ?? record;
-    this.plans.set(next.planCode, next);
-    return next;
+    return (await this.findPlan(record.planCode))
+      ? this.database.updatePlan(record)
+      : this.database.createPlan(record);
   }
 
   private stringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  }
+
+  private readRequiredRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 }

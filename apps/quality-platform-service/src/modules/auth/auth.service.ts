@@ -1,4 +1,5 @@
-import { DEFAULT_ADMIN } from '@ai-quality-platform/shared-database';
+import { createAuthToken, readAuthTokenSecret, verifyPassword } from '@ai-quality-platform/shared-auth';
+import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 
 export interface LoginRequest {
   username: string;
@@ -12,24 +13,86 @@ export interface LoginUser {
   token: string;
 }
 
-export class AuthService {
+interface AuthUserRecord {
+  username: string;
+  displayName: string;
+  passwordHash: string;
+  roleCode: string;
+  enabled: boolean;
+}
+
+interface AuthUserStore {
+  findByUsername(username: string): Promise<AuthUserRecord | null>;
+}
+
+type AuthPrismaClient = {
+  user: {
+    findUnique(input: { where: { username: string } }): Promise<unknown | null>;
+  };
+};
+
+class AuthDatabase implements AuthUserStore {
+  private readonly prismaPromise = createRuntimePrismaClient<AuthPrismaClient>();
+
   /**
    * @author codex
-   * Provides the first local-account login path before database-backed users land.
+   * Reads local platform users from MySQL instead of accepting hard-coded credentials.
+   */
+  async findByUsername(username: string): Promise<AuthUserRecord | null> {
+    const prisma = await this.prismaPromise;
+    const record = await prisma.user.findUnique({ where: { username } });
+    if (!record || typeof record !== 'object') return null;
+    const data = record as Partial<AuthUserRecord>;
+    if (
+      typeof data.username !== 'string' ||
+      typeof data.displayName !== 'string' ||
+      typeof data.passwordHash !== 'string' ||
+      typeof data.roleCode !== 'string' ||
+      typeof data.enabled !== 'boolean'
+    ) {
+      return null;
+    }
+    return {
+      username: data.username,
+      displayName: data.displayName,
+      passwordHash: data.passwordHash,
+      roleCode: data.roleCode,
+      enabled: data.enabled,
+    };
+  }
+}
+
+export class AuthService {
+  constructor(
+    private readonly userStore: AuthUserStore = new AuthDatabase(),
+    private readonly tokenSecret = readAuthTokenSecret(),
+  ) {}
+
+  /**
+   * @author codex
+   * Authenticates local platform users from MySQL and returns a signed session token.
    */
   async login(request: LoginRequest): Promise<LoginUser> {
-    if (
-      request.username !== DEFAULT_ADMIN.username ||
-      request.password !== DEFAULT_ADMIN.initialPassword
-    ) {
+    const username = request.username?.trim();
+    const user = username ? await this.userStore.findByUsername(username) : null;
+    if (!user || !verifyPassword(request.password ?? '', user.passwordHash)) {
       throw new Error('用户名或密码错误');
     }
+    if (!user.enabled) throw new Error('用户已停用');
 
     return {
-      username: DEFAULT_ADMIN.username,
-      displayName: DEFAULT_ADMIN.displayName,
-      roleCode: DEFAULT_ADMIN.roleCode,
-      token: `local-admin-token-${DEFAULT_ADMIN.username}`,
+      username: user.username,
+      displayName: user.displayName,
+      roleCode: user.roleCode,
+      token: createAuthToken({
+        username: user.username,
+        displayName: user.displayName,
+        roleCode: user.roleCode,
+      }, this.tokenSecret),
     };
+  }
+
+  async logout() {
+    return { revoked: true };
   }
 }

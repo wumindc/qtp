@@ -1,9 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
+import {
+  assertAllowedApplicationInvokeUrl,
+  normalizeApplicationRequestHeaders,
+} from '@ai-quality-platform/shared-config';
 import { createRuntimePrismaClient } from '@ai-quality-platform/shared-database';
 import { pageResult, type PageResult } from '@ai-quality-platform/shared-http';
+import { randomBytes } from 'node:crypto';
 import {
   createRandomAppIconConfig,
-  createStableAppIconConfig,
   normalizeAppIconConfig,
   type AppIconConfig,
 } from './app-icon';
@@ -11,19 +15,14 @@ import {
 export interface AppRecord {
   appCode: string;
   appName: string;
-  appType: string;
+  appType: AppType;
   description?: string;
-  businessDomain: string;
   invokeUrl: string;
   owner?: string;
   status: 'ENABLED' | 'DISABLED';
-  requestMethod: 'GET' | 'POST' | 'PUT' | 'PATCH';
-  authType: 'NONE' | 'API_KEY' | 'BEARER_TOKEN' | 'BASIC';
-  authConfig?: Record<string, unknown>;
+  requestMethod: 'GET' | 'POST';
   headerTemplate: string;
   bodyTemplate: string;
-  requestSchema: string;
-  responseSchema: string;
   streamEnabled: boolean;
   adapterConfig: {
     response: {
@@ -35,7 +34,7 @@ export interface AppRecord {
     };
   };
   stats?: AppStats;
-  icon?: AppIconConfig;
+  icon: AppIconConfig;
 }
 
 export interface AppStats {
@@ -57,18 +56,13 @@ export interface PageQuery {
 export interface CreateAppRequest {
   appCode?: string;
   appName: string;
-  appType: string;
+  appType?: string;
   description?: string;
-  businessDomain: string;
-  invokeUrl: string;
+  invokeUrl?: string;
   owner?: string;
   requestMethod?: AppRecord['requestMethod'];
-  authType?: AppRecord['authType'];
-  authConfig?: Record<string, unknown>;
   headerTemplate?: string;
   bodyTemplate?: string;
-  requestSchema?: string;
-  responseSchema?: string;
   answerPath?: string;
   successExpression?: string;
   streamEnabled?: boolean;
@@ -76,19 +70,16 @@ export interface CreateAppRequest {
   icon?: Partial<AppIconConfig>;
 }
 
-export type UpdateAppRequest = Partial<Omit<AppRecord, 'appCode'>>;
+export type AppType = 'CHAT';
+export type UpdateAppRequest = Partial<Omit<AppRecord, 'appCode' | 'appType'>> & { appType?: string };
 
 export interface AppProtocolDetail {
   appCode: string;
   appName: string;
   requestMethod: AppRecord['requestMethod'];
   invokeUrl: string;
-  authType: AppRecord['authType'];
-  authConfig?: Record<string, unknown>;
   headerTemplate: string;
   bodyTemplate: string;
-  requestSchema: string;
-  responseSchema: string;
   answerPath: string;
   successExpression: string;
   streamEnabled: boolean;
@@ -98,12 +89,8 @@ export interface AppProtocolDetail {
 export interface AppProtocolSaveRequest {
   requestMethod?: AppRecord['requestMethod'];
   invokeUrl?: string;
-  authType?: AppRecord['authType'];
-  authConfig?: Record<string, unknown>;
   headerTemplate?: string;
   bodyTemplate?: string;
-  requestSchema?: string;
-  responseSchema?: string;
   answerPath?: string;
   successExpression?: string;
   streamEnabled?: boolean;
@@ -137,6 +124,7 @@ export interface AppProtocolTestResult {
   resolvedHeaders: string;
   resolvedBody: string;
   rawResponse: Record<string, unknown>;
+  rawResponseText: string;
   parsedAnswer: unknown;
   assertion: string;
   message: string;
@@ -169,24 +157,61 @@ type AppPrismaClient = {
   };
 };
 
+export type StoredAppEvaluationConfig = Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'>;
+
+export interface AppDataStore {
+  list(): Promise<AppRecord[]>;
+  statsByAppCode(appCodes: string[]): Promise<Map<string, AppStats>>;
+  find(appCode: string): Promise<AppRecord | null>;
+  create(record: AppRecord): Promise<AppRecord>;
+  update(record: AppRecord): Promise<AppRecord>;
+  delete(appCode: string): Promise<AppRecord>;
+  findEvaluationConfig(appCode: string): Promise<StoredAppEvaluationConfig | null>;
+  saveEvaluationConfig(record: StoredAppEvaluationConfig): Promise<StoredAppEvaluationConfig>;
+}
+
 const DEFAULT_HEADER_TEMPLATE = '{\n  "Content-Type": "application/json"\n}';
 const DEFAULT_BODY_TEMPLATE = '{\n  "query": "{{case.input.query}}"\n}';
-const DEFAULT_REQUEST_SCHEMA = '{\n  "query": "string"\n}';
-const DEFAULT_RESPONSE_SCHEMA = '{\n  "data": {\n    "content": "string"\n  }\n}';
 const DEFAULT_ANSWER_PATH = '$.content';
 const DEFAULT_SUCCESS_EXPRESSION = '$.code == 0';
 const DEFAULT_EXECUTION_CONCURRENCY = 3;
 const MIN_EXECUTION_CONCURRENCY = 1;
 const MAX_EXECUTION_CONCURRENCY = 10;
-export const DEFAULT_EVALUATION_PROMPT = [
+const DEFAULT_EVALUATION_PROMPT = [
   '你是 AI 应用质量评估裁判。',
   '请根据测试用例的问题内容、期望回答和被测应用实际回答，判断实际回答是否满足期望。',
   '只返回 JSON，不要输出 Markdown。格式：{"passStatus":"PASS|FAIL|REVIEW","score":0-100,"reason":"评分理由","problemType":"问题类型"}。',
   '当实际回答明确满足期望时给 PASS；明显不满足时给 FAIL；证据不足或需要人工判断时给 REVIEW。',
 ].join('\n');
 
-class AppDatabase {
-  private readonly prismaPromise: Promise<AppPrismaClient | null>;
+function normalizeAppType(value: unknown): AppType {
+  if (value === undefined || value === null || value === '') return 'CHAT';
+  if (value === 'CHAT') return 'CHAT';
+  throw new BadRequestException('当前仅支持 CHAT 类型应用');
+}
+
+function normalizeRequestMethod(value: unknown): AppRecord['requestMethod'] {
+  if (value === 'GET' || value === 'POST') return value;
+  throw new BadRequestException('当前仅支持 GET/POST 请求方法');
+}
+
+function readRequiredProtocolString(value: unknown, message: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(message);
+  return value;
+}
+
+function readProtocolString(value: unknown, message: string): string {
+  if (typeof value !== 'string') throw new Error(message);
+  return value;
+}
+
+function readRequiredProtocolBoolean(value: unknown, message: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(message);
+  return value;
+}
+
+class AppDatabase implements AppDataStore {
+  private readonly prismaPromise: Promise<AppPrismaClient>;
 
   constructor() {
     this.prismaPromise = this.createClient();
@@ -200,39 +225,34 @@ class AppDatabase {
 
   /**
    * @author codex
-   * Reads AI applications from MySQL; test runs use the in-memory path without seeded records.
+   * Reads AI applications from MySQL; tests use explicit injected stores.
    */
-  async list(): Promise<AppRecord[] | null> {
+  async list(): Promise<AppRecord[]> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const rows = await prisma.aiApp.findMany({ orderBy: { id: 'asc' } });
     return rows.map((row) => this.toRecord(row));
   }
 
-  async statsByAppCode(appCodes: string[]): Promise<Map<string, AppStats> | null> {
+  async statsByAppCode(appCodes: string[]): Promise<Map<string, AppStats>> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const pairs = await Promise.all(appCodes.map(async (appCode) => [appCode, await this.buildStats(prisma, appCode)] as const));
     return new Map(pairs);
   }
 
-  async find(appCode: string): Promise<AppRecord | null | undefined> {
+  async find(appCode: string): Promise<AppRecord | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.aiApp.findUnique({ where: { appCode } });
     return row ? this.toRecord(row) : null;
   }
 
-  async create(record: AppRecord): Promise<AppRecord | null> {
+  async create(record: AppRecord): Promise<AppRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.aiApp.create({ data: this.toPayload(record) });
     return this.toRecord(saved);
   }
 
-  async update(record: AppRecord): Promise<AppRecord | null> {
+  async update(record: AppRecord): Promise<AppRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const saved = await prisma.aiApp.update({
       where: { appCode: record.appCode },
       data: this.toPayload(record),
@@ -240,25 +260,22 @@ class AppDatabase {
     return this.toRecord(saved);
   }
 
-  async delete(appCode: string): Promise<AppRecord | null> {
+  async delete(appCode: string): Promise<AppRecord> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const deleted = await prisma.aiApp.delete({ where: { appCode } });
     return this.toRecord(deleted);
   }
 
-  async findEvaluationConfig(appCode: string): Promise<Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'> | null | undefined> {
+  async findEvaluationConfig(appCode: string): Promise<StoredAppEvaluationConfig | null> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return undefined;
     const row = await prisma.appEvaluationConfig.findUnique({ where: { appCode } });
     return row ? this.toEvaluationConfig(row) : null;
   }
 
   async saveEvaluationConfig(
-    record: Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'>,
-  ): Promise<Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'> | null> {
+    record: StoredAppEvaluationConfig,
+  ): Promise<StoredAppEvaluationConfig> {
     const prisma = await this.prismaPromise;
-    if (!prisma) return null;
     const payload = {
       appCode: record.appCode,
       modelId: BigInt(record.modelId),
@@ -275,7 +292,6 @@ class AppDatabase {
   }
 
   private async createClient() {
-    if (process.env.VITEST) return null;
     return createRuntimePrismaClient<AppPrismaClient>();
   }
 
@@ -284,16 +300,13 @@ class AppDatabase {
       appCode: record.appCode,
       appName: record.appName,
       appType: record.appType,
-      businessDomain: record.businessDomain,
       invokeUrl: record.invokeUrl,
       requestMethod: record.requestMethod,
-      authType: record.authType,
-      authConfig: record.authConfig ?? undefined,
-      owner: record.owner,
+      owner: record.owner ?? null,
       status: record.status,
       adapterConfig: {
         ui: {
-          icon: record.icon ?? createStableAppIconConfig(`${record.appCode}:${record.appName}`),
+          icon: this.readRequiredAppIconConfig(record.icon, '应用记录缺少图标配置'),
           description: record.description ?? '',
         },
         response: record.adapterConfig.response,
@@ -303,46 +316,52 @@ class AppDatabase {
         templates: {
           headerTemplate: record.headerTemplate,
           bodyTemplate: record.bodyTemplate,
-          requestSchema: record.requestSchema,
-          responseSchema: record.responseSchema,
           streamEnabled: record.streamEnabled,
         },
       },
     };
   }
 
+  /**
+   * @author codex
+   * @author Antigravity/Claude-Sonnet-4.6
+   * 将数据库行映射为 AppRecord。
+   * 核心标识字段（appCode/appName/status 等）严格校验；
+   * 协议字段容忍缺失并回退到默认值，避免旧格式记录导致整个列表加载失败。
+   */
   private toRecord(row: unknown): AppRecord {
-    const data = this.asRecord(row);
-    const adapterConfig = this.asRecord(data.adapterConfig);
-    const appCode = String(data.appCode);
-    const appName = String(data.appName);
-    const response = this.asRecord(adapterConfig.response);
-    const execution = this.asRecord(adapterConfig.execution);
-    const templates = this.asRecord(adapterConfig.templates);
-    const ui = this.asRecord(adapterConfig.ui);
-    const icon = normalizeAppIconConfig(ui.icon) ?? createStableAppIconConfig(`${appCode}:${appName}`);
+    const data = this.readRecord(row, '应用记录格式不正确');
+    // 核心标识：严格校验
+    const appCode = this.readRequiredString(data.appCode, '应用记录缺少应用编码');
+    const appName = this.readRequiredString(data.appName, '应用记录缺少应用名称');
+
+    // 协议配置：容忍缺失，整块 adapterConfig 可以为空对象
+    const adapterConfig = this.readOptionalRecord(data.adapterConfig, '应用协议配置格式不正确');
+    const response = this.readOptionalRecord(adapterConfig.response, '应用协议响应配置格式不正确');
+    const execution = this.readOptionalRecord(adapterConfig.execution, '应用协议执行配置格式不正确');
+    const templates = this.readOptionalRecord(adapterConfig.templates, '应用协议模板配置格式不正确');
+    const ui = this.readOptionalRecord(adapterConfig.ui, '应用 UI 配置格式不正确');
+
+    // 图标：严格校验（图标是列表展示的核心视觉元素）
+    const icon = this.readRequiredAppIconConfig(ui.icon, '应用记录缺少图标配置');
 
     return {
       appCode,
       appName,
-      appType: String(data.appType),
-      description: typeof ui.description === 'string' ? ui.description : '',
-      businessDomain: String(data.businessDomain),
-      invokeUrl: String(data.invokeUrl ?? ''),
-      owner: typeof data.owner === 'string' ? data.owner : undefined,
-      status: data.status === 'DISABLED' ? 'DISABLED' : 'ENABLED',
-      requestMethod: this.normalizeMethod(data.requestMethod),
-      authType: this.normalizeAuthType(data.authType),
-      authConfig: this.asOptionalRecord(data.authConfig),
-      headerTemplate: String(templates.headerTemplate ?? DEFAULT_HEADER_TEMPLATE),
-      bodyTemplate: String(templates.bodyTemplate ?? DEFAULT_BODY_TEMPLATE),
-      requestSchema: String(templates.requestSchema ?? DEFAULT_REQUEST_SCHEMA),
-      responseSchema: String(templates.responseSchema ?? DEFAULT_RESPONSE_SCHEMA),
-      streamEnabled: templates.streamEnabled === true,
+      appType: this.readPersistedAppType(data.appType),
+      description: this.readOptionalString(ui.description, '应用描述不是字符串'),
+      invokeUrl: this.readString(data.invokeUrl, '应用记录缺少调用地址'),
+      owner: this.readOptionalString(data.owner, '应用负责人不是字符串'),
+      status: this.readAppStatus(data.status),
+      requestMethod: this.readRequestMethod(data.requestMethod),
+      // 协议模板缺失时回退到默认值，后续进入详情页配置
+      headerTemplate: typeof templates.headerTemplate === 'string' ? templates.headerTemplate : DEFAULT_HEADER_TEMPLATE,
+      bodyTemplate: typeof templates.bodyTemplate === 'string' ? templates.bodyTemplate : DEFAULT_BODY_TEMPLATE,
+      streamEnabled: typeof templates.streamEnabled === 'boolean' ? templates.streamEnabled : false,
       adapterConfig: {
         response: {
-          answerPath: String(response.answerPath ?? DEFAULT_ANSWER_PATH),
-          successExpression: String(response.successExpression ?? DEFAULT_SUCCESS_EXPRESSION),
+          answerPath: typeof response.answerPath === 'string' ? response.answerPath : DEFAULT_ANSWER_PATH,
+          successExpression: typeof response.successExpression === 'string' ? response.successExpression : DEFAULT_SUCCESS_EXPRESSION,
         },
         execution: {
           appConcurrency: this.normalizeConcurrency(execution.appConcurrency),
@@ -352,20 +371,20 @@ class AppDatabase {
     };
   }
 
-  private toEvaluationConfig(row: unknown): Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'> {
-    const data = this.asRecord(row);
+  private toEvaluationConfig(row: unknown): StoredAppEvaluationConfig {
+    const data = this.readRecord(row, '评估配置记录格式不正确');
     return {
-      appCode: String(data.appCode),
-      modelId: String(data.modelId ?? ''),
-      promptOverrideEnabled: data.promptOverrideEnabled === true,
-      customPrompt: typeof data.customPrompt === 'string' ? data.customPrompt : '',
-      evaluationConcurrency: this.normalizeConcurrency(data.evaluationConcurrency),
+      appCode: this.readRequiredString(data.appCode, '评估配置记录缺少应用编码'),
+      modelId: this.readRequiredBigIntId(data.modelId, '评估配置记录缺少模型 ID'),
+      promptOverrideEnabled: this.readBoolean(data.promptOverrideEnabled, '评估配置记录缺少提示词覆盖开关'),
+      customPrompt: this.readOptionalString(data.customPrompt, '评估配置自定义提示词不是字符串') ?? '',
+      evaluationConcurrency: this.readConcurrency(data.evaluationConcurrency, '评估配置记录缺少评估并发数'),
     };
   }
 
   private async buildStats(prisma: AppPrismaClient, appCode: string): Promise<AppStats> {
     const subscriptions = await prisma.appPresetCategory.findMany({ where: { appCode }, orderBy: { id: 'asc' } }) as Array<{ categoryId: unknown }>;
-    const subscribedCategoryIds = subscriptions.map((subscription) => this.toBigInt(subscription.categoryId)).filter((id): id is bigint => id !== undefined);
+    const subscribedCategoryIds = subscriptions.map((subscription) => this.readRequiredBigInt(subscription.categoryId, '预置分类订阅缺少分类 ID'));
     const caseCount = await prisma.evalCase.count({
       where: {
         enabled: true,
@@ -377,59 +396,125 @@ class AppDatabase {
     });
     const planCount = await prisma.evalPlan.count({ where: { appCode } });
     const latestRuns = await prisma.evalRun.findMany({ where: { appCode }, orderBy: { startedAt: 'desc' }, take: 1 });
-    const latestRun = this.asRecord(latestRuns[0]);
-    const totalCount = Number(latestRun.totalCount ?? 0);
-    const passCount = Number(latestRun.passCount ?? 0);
-    const lastRunAt = this.toIsoString(latestRun.startedAt);
+    if (latestRuns.length === 0) {
+      return {
+        caseCount,
+        planCount,
+      };
+    }
+
+    const latestRun = this.readRecord(latestRuns[0], '最近执行记录格式不正确');
+    const totalCount = this.readNonNegativeInteger(latestRun.totalCount, '最近执行记录缺少总数');
+    const passCount = this.readNonNegativeInteger(latestRun.passCount, '最近执行记录缺少通过数');
+    if (passCount > totalCount) throw new Error('最近执行记录通过数超过总数');
+    const lastRunAt = this.readRequiredIsoString(latestRun.startedAt, '最近执行记录缺少开始时间');
     return {
       caseCount,
       planCount,
-      ...(lastRunAt ? { lastRunAt } : {}),
+      lastRunAt,
       ...(totalCount > 0 ? { lastPassRate: Math.round((passCount / totalCount) * 100) } : {}),
     };
   }
 
-  private toBigInt(value: unknown) {
-    if (typeof value === 'bigint') return value;
-    if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
-    if (typeof value === 'string' && /^\d+$/u.test(value)) return BigInt(value);
-    return undefined;
+  private readRequiredBigInt(value: unknown, message: string): bigint {
+    if (typeof value === 'bigint' && value > 0n) return value;
+    throw new Error(message);
   }
 
-  private toIsoString(value: unknown) {
-    if (!value) return undefined;
-    if (value instanceof Date) return value.toISOString();
+  private readRequiredIsoString(value: unknown, message: string): string {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
     if (typeof value === 'string') {
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+      if (!Number.isNaN(date.getTime())) return date.toISOString();
     }
-    return undefined;
+    throw new Error(message);
   }
 
-  private asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  private readRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 
-  private asOptionalRecord(value: unknown): Record<string, unknown> | undefined {
-    const record = this.asRecord(value);
-    return Object.keys(record).length > 0 ? record : undefined;
+  private readRequiredRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 
-  private normalizeMethod(value: unknown): AppRecord['requestMethod'] {
-    return value === 'GET' || value === 'PUT' || value === 'PATCH' ? value : 'POST';
+  private readOptionalRecord(value: unknown, message: string): Record<string, unknown> {
+    if (value === null || value === undefined) return {};
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    throw new Error(message);
   }
 
-  private normalizeAuthType(value: unknown): AppRecord['authType'] {
-    return value === 'API_KEY' || value === 'BEARER_TOKEN' || value === 'BASIC' ? value : 'NONE';
+  private readRequiredAppIconConfig(value: unknown, message: string): AppIconConfig {
+    const icon = normalizeAppIconConfig(value);
+    if (icon) return icon;
+    throw new Error(message);
   }
+
+  private readRequiredString(value: unknown, message: string): string {
+    if (typeof value === 'string' && value.trim()) return value;
+    throw new Error(message);
+  }
+
+  private readString(value: unknown, message: string): string {
+    if (typeof value === 'string') return value;
+    throw new Error(message);
+  }
+
+  private readOptionalString(value: unknown, message: string): string | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value;
+    throw new Error(message);
+  }
+
+  private readRequiredBigIntId(value: unknown, message: string): string {
+    if (typeof value === 'bigint' && value > 0n) return String(value);
+    throw new Error(message);
+  }
+
+  private readBoolean(value: unknown, message: string): boolean {
+    if (typeof value === 'boolean') return value;
+    throw new Error(message);
+  }
+
+  private readNonNegativeInteger(value: unknown, message: string): number {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+    throw new Error(message);
+  }
+
+  private readConcurrency(value: unknown, message: string): number {
+    if (
+      typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= MIN_EXECUTION_CONCURRENCY &&
+      value <= MAX_EXECUTION_CONCURRENCY
+    ) return value;
+    throw new Error(message);
+  }
+
+  private readPersistedAppType(value: unknown): AppType {
+    if (value === 'CHAT') return value;
+    throw new Error('应用记录类型非法');
+  }
+
+  private readAppStatus(value: unknown): AppRecord['status'] {
+    if (value === 'ENABLED' || value === 'DISABLED') return value;
+    throw new Error('应用记录状态非法');
+  }
+
+  private readRequestMethod(value: unknown): AppRecord['requestMethod'] {
+    if (value === 'GET' || value === 'POST') return value;
+    throw new Error('应用协议请求方法非法');
+  }
+
 }
 
 export class AppService {
-  private readonly database = new AppDatabase();
-  private readonly apps = new Map<string, AppRecord>();
-  private readonly evaluationConfigs = new Map<string, Omit<AppEvaluationConfigRecord, 'configured' | 'systemPrompt' | 'effectivePrompt'>>();
-
-  constructor(private readonly fetchImpl: typeof fetch = fetch) { }
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly database: AppDataStore = new AppDatabase(),
+  ) { }
 
   /**
    * @author codex
@@ -441,7 +526,7 @@ export class AppService {
       if (!keyword) return true;
       return app.appName.includes(keyword) || app.appCode.includes(keyword);
     });
-    const statsByAppCode = await this.database.statsByAppCode(all.map((app) => app.appCode)) ?? new Map<string, AppStats>();
+    const statsByAppCode = await this.database.statsByAppCode(all.map((app) => app.appCode));
     const enriched = all.map((app) => ({
       ...app,
       stats: statsByAppCode.get(app.appCode) ?? app.stats,
@@ -461,20 +546,15 @@ export class AppService {
       throw new BadRequestException('应用编码已存在');
     }
     const record: AppRecord = {
-      ...request,
       appCode,
       appName,
-      appType: request.appType?.trim() || 'CHAT',
+      appType: normalizeAppType(request.appType?.trim()),
       description: request.description?.trim() ?? '',
-      businessDomain: request.businessDomain?.trim() || '未分类',
       invokeUrl: request.invokeUrl?.trim() ?? '',
-      owner: request.owner?.trim() || 'system',
-      requestMethod: request.requestMethod ?? 'POST',
-      authType: request.authType ?? 'NONE',
+      owner: this.normalizeOwner(request.owner),
+      requestMethod: request.requestMethod === undefined ? 'POST' : normalizeRequestMethod(request.requestMethod),
       headerTemplate: request.headerTemplate ?? DEFAULT_HEADER_TEMPLATE,
       bodyTemplate: request.bodyTemplate ?? DEFAULT_BODY_TEMPLATE,
-      requestSchema: request.requestSchema ?? DEFAULT_REQUEST_SCHEMA,
-      responseSchema: request.responseSchema ?? DEFAULT_RESPONSE_SCHEMA,
       streamEnabled: request.streamEnabled ?? false,
       status: 'ENABLED',
       adapterConfig: {
@@ -486,14 +566,15 @@ export class AppService {
           appConcurrency: this.normalizeConcurrency(request.appConcurrency),
         },
       },
-      icon: normalizeAppIconConfig(request.icon) ?? createRandomAppIconConfig(),
+      icon: request.icon === undefined ? createRandomAppIconConfig() : this.readRequestAppIconConfig(request.icon),
     };
-    return this.persist(record);
+    this.assertOptionalInvokeUrlAllowed(record.invokeUrl);
+    return this.database.create(record);
   }
 
   async changeStatus(appCode: string, status: AppRecord['status']): Promise<AppRecord> {
     const app = await this.getApp(appCode);
-    return this.persist({ ...app, status });
+    return this.database.update({ ...app, status });
   }
 
   /**
@@ -508,10 +589,18 @@ export class AppService {
     const app = await this.getApp(appCode);
     const protocolRequest = request as AppProtocolSaveRequest;
     const updated: AppRecord = {
-      ...app,
-      ...request,
       appCode,
-      icon: normalizeAppIconConfig(request.icon) ?? app.icon,
+      appName: request.appName ?? app.appName,
+      appType: request.appType === undefined ? app.appType : normalizeAppType(request.appType?.trim()),
+      description: request.description ?? app.description,
+      invokeUrl: request.invokeUrl ?? app.invokeUrl,
+      owner: request.owner === undefined ? app.owner : this.normalizeOwner(request.owner),
+      status: request.status ?? app.status,
+      requestMethod: request.requestMethod === undefined ? app.requestMethod : normalizeRequestMethod(request.requestMethod),
+      headerTemplate: request.headerTemplate ?? app.headerTemplate,
+      bodyTemplate: request.bodyTemplate ?? app.bodyTemplate,
+      streamEnabled: request.streamEnabled ?? app.streamEnabled,
+      icon: request.icon === undefined ? app.icon : this.readRequestAppIconConfig(request.icon),
       adapterConfig: {
         ...app.adapterConfig,
         response: {
@@ -520,14 +609,13 @@ export class AppService {
         },
       },
     };
-    return this.persist(updated);
+    this.assertOptionalInvokeUrlAllowed(updated.invokeUrl);
+    return this.database.update(updated);
   }
 
   async delete(appCode: string): Promise<AppRecord> {
-    const app = await this.getApp(appCode);
-    const deleted = await this.database.delete(appCode);
-    this.apps.delete(appCode);
-    return deleted ?? app;
+    await this.getApp(appCode);
+    return this.database.delete(appCode);
   }
 
   /**
@@ -559,10 +647,7 @@ export class AppService {
       customPrompt,
       evaluationConcurrency: this.normalizeConcurrency(request.evaluationConcurrency),
     };
-    const saved = await this.database.saveEvaluationConfig(record);
-    const next = saved ?? record;
-    this.evaluationConfigs.set(appCode, next);
-    return this.toEvaluationConfigDetail(appCode, next);
+    return this.toEvaluationConfigDetail(appCode, await this.database.saveEvaluationConfig(record));
   }
 
   async saveProtocol(appCode: string, request: AppProtocolSaveRequest): Promise<AppProtocolDetail> {
@@ -570,13 +655,9 @@ export class AppService {
     const updated: AppRecord = {
       ...app,
       invokeUrl: request.invokeUrl ?? app.invokeUrl,
-      requestMethod: request.requestMethod ?? app.requestMethod,
-      authType: request.authType ?? app.authType,
-      authConfig: request.authConfig ?? app.authConfig,
+      requestMethod: request.requestMethod === undefined ? app.requestMethod : normalizeRequestMethod(request.requestMethod),
       headerTemplate: request.headerTemplate ?? app.headerTemplate,
       bodyTemplate: request.bodyTemplate ?? app.bodyTemplate,
-      requestSchema: request.requestSchema ?? app.requestSchema,
-      responseSchema: request.responseSchema ?? app.responseSchema,
       streamEnabled: request.streamEnabled ?? app.streamEnabled,
       adapterConfig: {
         ...app.adapterConfig,
@@ -589,28 +670,34 @@ export class AppService {
         },
       },
     };
-    return this.toProtocolDetail(await this.persist(updated));
+    this.assertOptionalInvokeUrlAllowed(updated.invokeUrl);
+    return this.toProtocolDetail(await this.database.update(updated));
   }
 
-  async testProtocol(appCode: string, sampleInput: Record<string, unknown>): Promise<AppProtocolTestResult> {
-    const app = await this.getApp(appCode);
+  async testProtocol(appCode: string, sampleInput: Record<string, unknown>, override: AppProtocolSaveRequest = {}): Promise<AppProtocolTestResult> {
+    const app = this.mergeProtocolOverride(await this.getApp(appCode), override);
+    this.assertInvokeUrlAllowed(app.invokeUrl);
     const startedAt = Date.now();
     const resolvedHeaders = this.renderTemplate(app.headerTemplate, sampleInput);
     const resolvedBody = this.renderTemplate(app.bodyTemplate, sampleInput);
-    const requestHeaders = Object.entries(this.parseJsonObject(resolvedHeaders)).reduce<Record<string, string>>(
-      (headers, [key, value]) => ({ ...headers, [key]: String(value) }),
-      {},
+    const requestHeaders = normalizeApplicationRequestHeaders(
+      this.parseRequestJsonObject(resolvedHeaders, '请求头模板'),
+      '请求头模板',
     );
+    if (app.requestMethod !== 'GET') {
+      this.parseRequestJsonObject(resolvedBody, '请求体模板');
+    }
 
     const upstream = await this.fetchImpl(app.invokeUrl, {
       method: app.requestMethod,
       headers: requestHeaders,
       body: app.requestMethod === 'GET' ? undefined : resolvedBody,
     });
-    const rawText = await upstream.text();
-    const rawResponse = this.parseJsonObject(rawText);
-    const parsedAnswer = this.readJsonPath(rawResponse, app.adapterConfig.response.answerPath);
-    const assertionPassed = this.evaluateSuccessExpression(rawResponse, app.adapterConfig.response.successExpression);
+    const rawResponseText = await upstream.text();
+    const parsedResponse = this.parseProtocolResponse(rawResponseText, upstream.headers?.get('content-type') ?? '', app.adapterConfig.response.answerPath);
+    const assertionPassed = app.streamEnabled
+      ? upstream.ok
+      : this.evaluateSuccessExpression(parsedResponse.rawResponse, app.adapterConfig.response.successExpression);
 
     return {
       success: upstream.ok && assertionPassed,
@@ -620,46 +707,52 @@ export class AppService {
       sampleInput,
       resolvedHeaders,
       resolvedBody,
-      rawResponse,
-      parsedAnswer,
+      rawResponse: parsedResponse.rawResponse,
+      rawResponseText,
+      parsedAnswer: parsedResponse.parsedAnswer,
       assertion: app.adapterConfig.response.successExpression,
       message: upstream.ok && assertionPassed ? '协议真实调用通过' : '协议真实调用未通过',
       elapsedMs: Date.now() - startedAt,
     };
   }
 
-  private async getAppSource() {
-    const databaseApps = await this.database.list();
-    if (databaseApps) {
-      this.apps.clear();
-      databaseApps.forEach((app) => this.apps.set(app.appCode, app));
-      return databaseApps;
+  private assertOptionalInvokeUrlAllowed(rawUrl: string) {
+    if (!rawUrl.trim()) return;
+    this.assertInvokeUrlAllowed(rawUrl);
+  }
+
+  private assertInvokeUrlAllowed(rawUrl: string) {
+    try {
+      assertAllowedApplicationInvokeUrl(rawUrl);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : '被测应用调用地址不允许访问');
     }
-    return Array.from(this.apps.values());
+  }
+
+  private async getAppSource() {
+    return (await this.database.list()).map((app) => this.requireAppRecordIcon(app));
   }
 
   private async findApp(appCode: string): Promise<AppRecord | null> {
-    const databaseApp = await this.database.find(appCode);
-    if (databaseApp !== undefined) {
-      if (databaseApp) this.apps.set(databaseApp.appCode, databaseApp);
-      return databaseApp;
-    }
-    return this.apps.get(appCode) ?? null;
+    const app = await this.database.find(appCode);
+    return app ? this.requireAppRecordIcon(app) : null;
   }
 
   private async findEvaluationConfig(appCode: string) {
-    const databaseConfig = await this.database.findEvaluationConfig(appCode);
-    if (databaseConfig !== undefined) {
-      if (databaseConfig) this.evaluationConfigs.set(appCode, databaseConfig);
-      return databaseConfig;
-    }
-    return this.evaluationConfigs.get(appCode) ?? null;
+    return this.database.findEvaluationConfig(appCode);
   }
 
   private async getApp(appCode: string): Promise<AppRecord> {
     const app = await this.findApp(appCode);
     if (!app) throw new Error('应用不存在');
     return app;
+  }
+
+  private requireAppRecordIcon(app: AppRecord): AppRecord {
+    return {
+      ...app,
+      icon: this.readRequiredAppIconConfig(app.icon, '应用记录缺少图标配置'),
+    };
   }
 
   /**
@@ -684,7 +777,7 @@ export class AppService {
     }
 
     const base = this.toAppCodeBase(appName);
-    const suffix = Date.now().toString(36);
+    const suffix = randomBytes(4).toString('hex');
     let candidate = `${base}-${suffix}`;
     let index = 1;
     while (await this.findApp(candidate)) {
@@ -705,11 +798,8 @@ export class AppService {
     return normalized.length > 1 ? normalized : 'app';
   }
 
-  private async persist(record: AppRecord) {
-    const saved = this.apps.has(record.appCode) ? await this.database.update(record) : await this.database.create(record);
-    const next = saved ?? record;
-    this.apps.set(next.appCode, next);
-    return next;
+  private normalizeOwner(owner: unknown): string | undefined {
+    return typeof owner === 'string' && owner.trim() ? owner.trim() : undefined;
   }
 
   private toProtocolDetail(app: AppRecord): AppProtocolDetail {
@@ -718,12 +808,8 @@ export class AppService {
       appName: app.appName,
       requestMethod: app.requestMethod,
       invokeUrl: app.invokeUrl,
-      authType: app.authType,
-      authConfig: app.authConfig,
       headerTemplate: app.headerTemplate,
       bodyTemplate: app.bodyTemplate,
-      requestSchema: app.requestSchema,
-      responseSchema: app.responseSchema,
       answerPath: app.adapterConfig.response.answerPath,
       successExpression: app.adapterConfig.response.successExpression,
       streamEnabled: app.streamEnabled,
@@ -756,9 +842,42 @@ export class AppService {
     return Math.max(MIN_EXECUTION_CONCURRENCY, Math.min(MAX_EXECUTION_CONCURRENCY, Math.round(numberValue)));
   }
 
+  private readRequestAppIconConfig(value: unknown): AppIconConfig {
+    const icon = normalizeAppIconConfig(value);
+    if (icon) return icon;
+    throw new BadRequestException('应用图标配置不正确');
+  }
+
+  private readRequiredAppIconConfig(value: unknown, message: string): AppIconConfig {
+    const icon = normalizeAppIconConfig(value);
+    if (icon) return icon;
+    throw new Error(message);
+  }
+
+  private mergeProtocolOverride(app: AppRecord, override: AppProtocolSaveRequest): AppRecord {
+    return {
+      ...app,
+      invokeUrl: override.invokeUrl ?? app.invokeUrl,
+      requestMethod: override.requestMethod === undefined ? app.requestMethod : normalizeRequestMethod(override.requestMethod),
+      headerTemplate: override.headerTemplate ?? app.headerTemplate,
+      bodyTemplate: override.bodyTemplate ?? app.bodyTemplate,
+      streamEnabled: override.streamEnabled ?? app.streamEnabled,
+      adapterConfig: {
+        ...app.adapterConfig,
+        response: {
+          answerPath: override.answerPath ?? app.adapterConfig.response.answerPath,
+          successExpression: override.successExpression ?? app.adapterConfig.response.successExpression,
+        },
+        execution: {
+          appConcurrency: this.normalizeConcurrency(override.appConcurrency ?? app.adapterConfig.execution?.appConcurrency),
+        },
+      },
+    };
+  }
+
   private renderTemplate(template: string, data: Record<string, unknown>) {
     return template.replace(/\{\{([^}]+)}}/g, (_, rawPath: string) => {
-      const path = rawPath.trim().replace(/^case\.input\./, '').replace(/^case\./, '');
+      const path = rawPath.trim().replace(/^case\.input\./, '');
       return String(this.readObjectPath(data, path) ?? '');
     });
   }
@@ -770,14 +889,61 @@ export class AppService {
     }, data);
   }
 
-  private parseJsonObject(text: string): Record<string, unknown> {
+  private parseJsonObject(text: string, label = '应用响应'): Record<string, unknown> {
     try {
       const parsed = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new BadRequestException(`${label}不是合法 JSON 对象`);
+      }
       return parsed as Record<string, unknown>;
-    } catch {
-      return {};
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(`${label}不是合法 JSON 对象`);
     }
+  }
+
+  private parseRequestJsonObject(text: string, label: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new BadRequestException(`${label}不是合法 JSON 对象`);
+      }
+      return parsed as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(`${label}不是合法 JSON 对象`);
+    }
+  }
+
+  private parseProtocolResponse(rawText: string, contentType: string, answerPath: string) {
+    if (contentType.includes('text/event-stream') || rawText.split('\n').some((line) => line.startsWith('data:'))) {
+      return this.parseEventStreamResponse(rawText, answerPath);
+    }
+    const rawResponse = this.parseJsonObject(rawText, '应用响应');
+    return {
+      rawResponse,
+      parsedAnswer: this.readJsonPath(rawResponse, answerPath),
+    };
+  }
+
+  private parseEventStreamResponse(rawText: string, answerPath: string) {
+    const events: Record<string, unknown>[] = [];
+    let answer = '';
+    for (const line of rawText.split(/\r?\n/u)) {
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      const event = this.parseJsonObject(data, '流式响应事件');
+      events.push(event);
+      const piece = this.readJsonPath(event, answerPath);
+      if (piece !== undefined && piece !== null) {
+        answer += typeof piece === 'string' ? piece : JSON.stringify(piece);
+      }
+    }
+    return {
+      rawResponse: { events },
+      parsedAnswer: answer || undefined,
+    };
   }
 
   private readJsonPath(data: Record<string, unknown>, path: string) {
@@ -789,8 +955,10 @@ export class AppService {
     const normalized = expression.trim();
     if (!normalized) return true;
     const [path, expectedRaw] = normalized.split('==').map((item) => item.trim());
-    if (!path || expectedRaw === undefined) return true;
+    if (!path || expectedRaw === undefined) return false;
     const expected = expectedRaw.replace(/^['"]|['"]$/g, '');
-    return String(this.readJsonPath(data, path)) === expected;
+    const actual = this.readJsonPath(data, path);
+    if (actual === undefined || actual === null) return false;
+    return String(actual) === expected;
   }
 }

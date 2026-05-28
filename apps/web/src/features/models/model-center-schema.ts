@@ -1,4 +1,4 @@
-import type { ModelFormState, ModelProtocol, ModelProviderRecord, ModelType, ProviderFormState, ProviderType, StatusLabel } from './types';
+import type { ModelFormState, ModelProtocol, ModelProviderRecord, ModelType, ProviderType, StatusLabel } from './types';
 
 export const PROVIDER_TYPE_META: Record<ProviderType, { label: string; defaultBaseUrl: string; llmExample: string; embeddingExample?: string; configHint: string }> = {
   OPENAI_COMPATIBLE: {
@@ -61,28 +61,19 @@ export function buildModelForm(providerCode = '', providerType: ProviderType = '
   };
 }
 
-export function buildProviderForm(type: ProviderType = 'OPENAI_COMPATIBLE'): ProviderFormState {
-  return {
-    name: '',
-    type,
-    baseUrl: '',
-    apiKey: '',
-  };
-}
-
 export function toStatusLabel(enabled: boolean): StatusLabel {
   return enabled ? '启用' : '停用';
 }
 
-export function parseTokenCount(value: string, fallback?: number) {
+export function parseTokenCount(value: string) {
   const normalized = value.trim().replace(/,/g, '').replace(/\s+/g, '').toLowerCase();
-  if (!normalized) return fallback;
+  if (!normalized) return undefined;
   const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
-  if (!match) return fallback;
+  if (!match) return undefined;
   const unit = match[2];
   const multiplier = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
   const parsed = Number(match[1]) * multiplier;
-  return Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed) ? parsed : fallback;
+  return Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed) ? parsed : undefined;
 }
 
 export function formatTokenDisplay(value?: number) {
@@ -96,22 +87,37 @@ export function providerToOptionLabel(provider: ModelProviderRecord) {
   return `${provider.name} (${PROVIDER_TYPE_META[provider.type].label})`;
 }
 
-export function resolveProtocol(providerType: ProviderType, modelType: ModelType): ModelProtocol {
+function resolveProtocol(providerType: ProviderType, modelType: ModelType): ModelProtocol {
   if (providerType === 'QWEN') return modelType === 'EMBEDDING' ? 'DASHSCOPE_COMPATIBLE_EMBEDDINGS' : 'DASHSCOPE_COMPATIBLE_CHAT';
   if (providerType === 'DEEPSEEK') return 'DEEPSEEK_CHAT_COMPLETIONS';
   return modelType === 'EMBEDDING' ? 'OPENAI_EMBEDDINGS' : 'OPENAI_CHAT_COMPLETIONS';
 }
 
-function toNumber(value: string, fallback?: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && value.trim() !== '' ? parsed : fallback;
-}
-
-function toOptionalNonNegativeNumber(value: string) {
+function toOptionalNonNegativeNumber(value: string, label: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
   const parsed = Number(trimmed);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label}价格必须为空或非负数`);
+  return parsed;
+}
+
+function toRequiredTokenCount(value: string, label: string) {
+  const parsed = parseTokenCount(value);
+  if (parsed === undefined) throw new Error(toPositiveIntegerErrorMessage(label));
+  return parsed;
+}
+
+function toOptionalPositiveInteger(value: string, label: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(toPositiveIntegerErrorMessage(label));
+  return parsed;
+}
+
+function toPositiveIntegerErrorMessage(label: string) {
+  const separator = /[A-Za-z0-9]$/.test(label) ? ' ' : '';
+  return `${label}${separator}不是合法正整数`;
 }
 
 function toBoolean(value: string) {
@@ -120,15 +126,18 @@ function toBoolean(value: string) {
 
 /**
  * @author codex
- * Builds the backend model payload from the POC form without exposing internal model codes.
+ * Builds the backend model payload from the model form without exposing internal model codes.
  */
 export function buildModelPayload(modelForm: ModelFormState, provider: ModelProviderRecord) {
   const modelType = modelForm.modelType;
+  const dimensions = modelType === 'EMBEDDING' ? toOptionalPositiveInteger(modelForm.dimensions, '向量维度') : undefined;
+  const maxOutputTokens = modelType === 'LLM' ? toRequiredTokenCount(modelForm.maxOutputTokens, '最大输出 Token') : undefined;
+  const contextWindow = modelType === 'LLM' ? toRequiredTokenCount(modelForm.contextWindow, '上下文窗口') : undefined;
   const parameters =
     modelType === 'EMBEDDING'
-      ? { dimensions: toNumber(modelForm.dimensions) }
+      ? { dimensions }
       : {
-          maxOutputTokens: parseTokenCount(modelForm.maxOutputTokens, 4096),
+          maxOutputTokens,
           stream: toBoolean(modelForm.stream),
           jsonMode: toBoolean(modelForm.jsonMode),
           toolCalling: toBoolean(modelForm.toolCalling),
@@ -145,16 +154,16 @@ export function buildModelPayload(modelForm: ModelFormState, provider: ModelProv
         };
   const limits =
     modelType === 'EMBEDDING'
-      ? { embeddingDimensions: toNumber(modelForm.dimensions), maxInputTokens: 8192 }
+      ? { embeddingDimensions: dimensions, maxInputTokens: 8192 }
       : {
-          contextWindow: parseTokenCount(modelForm.contextWindow, 128000),
-          maxOutputTokens: parseTokenCount(modelForm.maxOutputTokens, 4096),
+          contextWindow,
+          maxOutputTokens,
           pricing: {
             currency: 'CNY' as const,
             unit: 'PER_MILLION_TOKENS' as const,
-            normalInputPrice: toOptionalNonNegativeNumber(modelForm.normalInputPrice),
-            cachedInputPrice: toOptionalNonNegativeNumber(modelForm.cachedInputPrice),
-            outputPrice: toOptionalNonNegativeNumber(modelForm.outputPrice),
+            normalInputPrice: toOptionalNonNegativeNumber(modelForm.normalInputPrice, '普通输入'),
+            cachedInputPrice: toOptionalNonNegativeNumber(modelForm.cachedInputPrice, '缓存命中输入'),
+            outputPrice: toOptionalNonNegativeNumber(modelForm.outputPrice, '输出'),
           },
         };
   return {

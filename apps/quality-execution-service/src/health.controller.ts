@@ -16,13 +16,22 @@ export class HealthController {
    */
   @Get('health.do')
   async health() {
-    const worker = await this.executionService.getWorkerHealth();
+    try {
+      const worker = await this.executionService.getWorkerHealth();
 
-    return ok({
-      service: 'quality-execution-service',
-      status: 'UP',
-      worker,
-      time: new Date().toISOString(),
-    });
+      return ok({
+        service: 'quality-execution-service',
+        status: 'UP',
+        worker,
+        time: new Date().toISOString(),
+      });
+    } catch (error) {
+      return ok({
+        service: 'quality-execution-service',
+        status: 'DOWN',
+        message: error instanceof Error ? error.message : '执行服务健康检查失败',
+        time: new Date().toISOString(),
+      });
+    }
   }
 }

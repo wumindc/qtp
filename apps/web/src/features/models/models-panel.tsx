@@ -22,6 +22,20 @@ interface ModelsPanelProps {
   onTest: (m: ModelCenterRecord) => Promise<void>;
 }
 
+function readRequiredNumber(value: unknown, message: string) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  throw new Error(message);
+}
+
+function readRequiredBoolean(value: unknown, message: string) {
+  if (typeof value === 'boolean') return value;
+  throw new Error(message);
+}
+
+function formatTokenFormValue(value: number) {
+  return value % 1_000 === 0 ? `${value / 1_000}k` : String(value);
+}
+
 export function ModelsPanel({ models, providers, onSave, onToggleStatus, onDelete, onTest }: ModelsPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelCenterRecord | null>(null);
@@ -41,12 +55,12 @@ export function ModelsPanel({ models, providers, onSave, onToggleStatus, onDelet
     provider: m.provider,
     modelId: m.modelId,
     modelType: m.modelType,
-    contextWindow: m.limits.contextWindow ? String(m.limits.contextWindow / 1000) + 'k' : '',
-    maxOutputTokens: String(m.limits.maxOutputTokens ?? m.parameters.maxOutputTokens ?? '4096'),
-    stream: String(m.capabilities.stream ?? m.parameters.stream ?? true),
-    jsonMode: String(m.capabilities.jsonMode ?? m.parameters.jsonMode ?? false),
-    toolCalling: String(m.capabilities.toolCalling ?? m.parameters.toolCalling ?? false),
-    thinkingEnabled: String(m.capabilities.reasoning ?? m.parameters.thinkingEnabled ?? false),
+    contextWindow: m.modelType === 'LLM' ? formatTokenFormValue(readRequiredNumber(m.limits.contextWindow, '模型配置缺少上下文窗口')) : '',
+    maxOutputTokens: m.modelType === 'LLM' ? String(readRequiredNumber(m.limits.maxOutputTokens, '模型配置缺少最大输出 Token')) : '',
+    stream: m.modelType === 'LLM' ? String(readRequiredBoolean(m.capabilities.stream, '模型配置缺少流式能力')) : 'false',
+    jsonMode: m.modelType === 'LLM' ? String(readRequiredBoolean(m.capabilities.jsonMode, '模型配置缺少 JSON 模式能力')) : 'false',
+    toolCalling: m.modelType === 'LLM' ? String(readRequiredBoolean(m.capabilities.toolCalling, '模型配置缺少工具调用能力')) : 'false',
+    thinkingEnabled: m.modelType === 'LLM' ? String(readRequiredBoolean(m.capabilities.reasoning, '模型配置缺少思考能力')) : 'false',
     dimensions: String(m.limits.embeddingDimensions ?? m.parameters.dimensions ?? ''),
     normalInputPrice: String(m.limits.pricing?.normalInputPrice ?? ''),
     cachedInputPrice: String(m.limits.pricing?.cachedInputPrice ?? ''),

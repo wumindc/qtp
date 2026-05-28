@@ -8,6 +8,9 @@ coverage/
 *.log
 tmp/
 .DS_Store
+.codex/
+.superpowers/
+docs/superpowers/
 .playwright-cli/
 .playwright-mcp/
 output/

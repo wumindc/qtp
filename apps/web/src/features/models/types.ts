@@ -7,10 +7,8 @@ export type ModelProtocol =
   | 'DASHSCOPE_COMPATIBLE_EMBEDDINGS'
   | 'DEEPSEEK_CHAT_COMPLETIONS';
 export type StatusLabel = '启用' | '停用';
-export type DialogMode = 'create' | 'edit';
-export type ModelCenterTab = 'models' | 'providers';
 
-export interface ModelParameters {
+interface ModelParameters {
   batchSize?: number;
   dimensions?: number;
   encodingFormat?: 'float' | 'base64';
@@ -26,7 +24,7 @@ export interface ModelParameters {
   topP?: number;
 }
 
-export interface ModelCapabilities {
+interface ModelCapabilities {
   embedding?: boolean;
   jsonMode?: boolean;
   reasoning?: boolean;
@@ -34,7 +32,7 @@ export interface ModelCapabilities {
   toolCalling?: boolean;
 }
 
-export interface ModelLimits {
+interface ModelLimits {
   contextWindow?: number;
   embeddingDimensions?: number;
   maxInputTokens?: number;
@@ -42,7 +40,7 @@ export interface ModelLimits {
   pricing?: ModelPricing;
 }
 
-export interface ModelPricing {
+interface ModelPricing {
   currency?: 'CNY';
   unit?: 'PER_MILLION_TOKENS';
   normalInputPrice?: number | null;
@@ -58,6 +56,7 @@ export interface ModelProviderRecord {
   type: ProviderType;
   baseUrl: string;
   apiKey: string;
+  apiKeyConfigured: boolean;
   status: StatusLabel;
 }
 
@@ -99,5 +98,3 @@ export interface ProviderFormState {
   baseUrl: string;
   apiKey: string;
 }
-
-export type FieldErrors<T> = Partial<Record<keyof T, string>>;

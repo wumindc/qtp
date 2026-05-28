@@ -3,7 +3,7 @@
  * @author Antigravity/Gemini
  * @author codex
  */
-export type StatusLabel = '启用' | '停用';
+type StatusLabel = '启用' | '停用';
 
 export interface PresetCategory {
   id: string;

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import {
   CaseService,
@@ -7,10 +7,7 @@ import {
   type CaseQuery,
   type CreateCaseCategoryRequest,
   type CreateCaseRequest,
-  type CreateCaseSuiteRequest,
   type PageQuery,
-  type PresetImportRequest,
-  type SuiteQuery,
   type UpdateCaseCategoryRequest,
   type UpdateCaseRequest,
 } from './case.service';
@@ -29,12 +26,12 @@ export class CaseController {
    */
   @Post('list.do')
   async list(@Body() request: { page: PageQuery; data: CaseQuery }) {
-    return ok(await this.caseService.list(request.data ?? {}, request.page));
+    return ok(await this.caseService.list(this.readRequiredObject<CaseQuery>(request?.data, '缺少用例查询条件'), request.page));
   }
 
   @Post('category/list.do')
   async categoryList(@Body() request: { page: PageQuery; data: CaseCategoryQuery }) {
-    return ok(await this.caseService.listCategories(request.data ?? {}, request.page));
+    return ok(await this.caseService.listCategories(this.readRequiredObject<CaseCategoryQuery>(request?.data, '缺少分类查询条件'), request.page));
   }
 
   /**
@@ -47,23 +44,23 @@ export class CaseController {
   }
 
   @Post('category/update.do')
-  async updateCategory(@Body() request: { id: string; code?: string; data: UpdateCaseCategoryRequest }) {
-    return ok(await this.caseService.updateCategory(request.id ?? request.code, request.data));
+  async updateCategory(@Body() request: { id: string; data: UpdateCaseCategoryRequest }) {
+    return ok(await this.caseService.updateCategory(request.id, request.data));
   }
 
   @Post('category/change-enabled.do')
-  async changeCategoryEnabled(@Body() request: { id: string; code?: string; enabled: boolean }) {
-    return ok(await this.caseService.changeCategoryEnabled(request.id ?? request.code, request.enabled));
+  async changeCategoryEnabled(@Body() request: { id: string; enabled: boolean }) {
+    return ok(await this.caseService.changeCategoryEnabled(request.id, request.enabled));
   }
 
   @Post('category/delete.do')
-  async deleteCategory(@Body() request: { id: string; code?: string }) {
-    return ok(await this.caseService.deleteCategory(request.id ?? request.code));
+  async deleteCategory(@Body() request: { id: string }) {
+    return ok(await this.caseService.deleteCategory(request.id));
   }
 
   @Post('preset/list.do')
   async presetList(@Body() request: { page: PageQuery; data: CaseQuery }) {
-    return ok(await this.caseService.listPresetCases(request.data ?? {}, request.page));
+    return ok(await this.caseService.listPresetCases(this.readRequiredObject<CaseQuery>(request?.data, '缺少预置用例查询条件'), request.page));
   }
 
   /**
@@ -76,27 +73,18 @@ export class CaseController {
   }
 
   @Post('preset/update.do')
-  async updatePreset(@Body() request: { id: string; caseCode?: string; data: UpdateCaseRequest }) {
-    return ok(await this.caseService.updatePresetCase(request.id ?? request.caseCode, request.data));
+  async updatePreset(@Body() request: { id: string; data: UpdateCaseRequest }) {
+    return ok(await this.caseService.updatePresetCase(request.id, request.data));
   }
 
   @Post('preset/change-enabled.do')
-  async changePresetEnabled(@Body() request: { id: string; caseCode?: string; enabled: boolean }) {
-    return ok(await this.caseService.changePresetCaseEnabled(request.id ?? request.caseCode, request.enabled));
+  async changePresetEnabled(@Body() request: { id: string; enabled: boolean }) {
+    return ok(await this.caseService.changePresetCaseEnabled(request.id, request.enabled));
   }
 
   @Post('preset/delete.do')
-  async deletePreset(@Body() request: { id: string; caseCode?: string }) {
-    return ok(await this.caseService.deletePresetCase(request.id ?? request.caseCode));
-  }
-
-  /**
-   * @author codex
-   * Imports selected global preset cases into an application workspace.
-   */
-  @Post('preset/import-to-app.do')
-  async importPresetToApp(@Body() request: PresetImportRequest) {
-    return ok(await this.caseService.importPresetCasesToApp(request));
+  async deletePreset(@Body() request: { id: string }) {
+    return ok(await this.caseService.deletePresetCase(request.id));
   }
 
   @Post('preset/import-categories-to-app.do')
@@ -112,7 +100,7 @@ export class CaseController {
 
   @Post('preset/subscriptions.do')
   async listPresetSubscriptions(@Body() request: { appCode: string }) {
-    return ok(this.caseService.listCategorySubscriptions(request.appCode));
+    return ok(await this.caseService.listCategorySubscriptions(request.appCode));
   }
 
   @Post('create.do')
@@ -121,47 +109,27 @@ export class CaseController {
   }
 
   @Post('update.do')
-  async update(@Body() request: { id: string; caseCode?: string; data: UpdateCaseRequest }) {
-    return ok(await this.caseService.update(request.id ?? request.caseCode, request.data));
+  async update(@Body() request: { id: string; data: UpdateCaseRequest }) {
+    return ok(await this.caseService.update(request.id, request.data));
   }
 
   @Post('change-enabled.do')
-  async changeEnabled(@Body() request: { id: string; caseCode?: string; enabled: boolean }) {
-    return ok(await this.caseService.changeEnabled(request.id ?? request.caseCode, request.enabled));
+  async changeEnabled(@Body() request: { id: string; enabled: boolean }) {
+    return ok(await this.caseService.changeEnabled(request.id, request.enabled));
   }
 
   @Post('delete.do')
-  async delete(@Body() request: { id: string; caseCode?: string }) {
-    return ok(await this.caseService.delete(request.id ?? request.caseCode));
-  }
-
-  @Post('import.do')
-  async importRows(@Body() request: { rows: CreateCaseRequest[] }) {
-    return ok(await this.caseService.importRows(request.rows ?? []));
+  async delete(@Body() request: { id: string }) {
+    return ok(await this.caseService.delete(request.id));
   }
 
   @Post('import-csv.do')
   async importCsvRows(@Body() request: CaseCsvImportRequest) {
-    return ok(await this.caseService.importCsvRows({ ...request, rows: request.rows ?? [] }));
-  }
-
-  /**
-   * @author codex
-   * Lists case suites for the selected AI application.
-   */
-  @Post('suite/list.do')
-  async suiteList(@Body() request: { page: PageQuery; data: SuiteQuery }) {
-    return ok(await this.caseService.listSuites(request.data ?? {}, request.page));
-  }
-
-  @Post('suite/create.do')
-  createSuite(@Body() request: CreateCaseSuiteRequest) {
-    return ok(this.caseService.createSuite(request));
-  }
-
-  @Post('suite/bind-cases.do')
-  bindSuiteCases(@Body() request: { suiteCode: string; caseCodes: string[] }) {
-    return ok(this.caseService.bindSuiteCases(request.suiteCode, request.caseCodes ?? []));
+    return ok(await this.caseService.importCsvRows({
+      scope: request.scope,
+      appCode: request.appCode,
+      rows: this.readRequiredArray(request.rows, '缺少导入行'),
+    }));
   }
 
   @Get('template.do')
@@ -175,7 +143,17 @@ export class CaseController {
   }
 
   @Get('export.do')
-  exportFile() {
-    return this.excelService.exportWorkbook(this.caseService.exportRows());
+  async exportFile() {
+    return this.excelService.exportWorkbook(await this.caseService.exportRows());
+  }
+
+  private readRequiredObject<TRecord extends object>(value: unknown, message: string): TRecord {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
+  }
+
+  private readRequiredArray<TItem>(value: unknown, message: string): TItem[] {
+    if (Array.isArray(value)) return value as TItem[];
+    throw new BadRequestException(message);
   }
 }

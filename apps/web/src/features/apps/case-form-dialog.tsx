@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { postGateway } from '@/lib/api/gateway-client';
+import { getErrorMessage } from '@/lib/error';
 import type { CaseRecord } from './app-cases';
 
 export function CaseFormDialog({
@@ -86,8 +87,8 @@ export function CaseFormDialog({
       }
       onSuccess();
       onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err.message || (editingCase ? '更新用例失败' : '新建用例失败'));
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, editingCase ? '更新用例失败' : '新建用例失败'));
     } finally {
       setLoading(false);
     }

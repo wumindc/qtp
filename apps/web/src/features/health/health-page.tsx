@@ -8,6 +8,7 @@ import { Activity, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
+import { useEffect } from 'react';
 import { useHealthCheck, type HealthResult, type HealthStatus } from './hooks';
 
 /* ── 工具函数 ── */
@@ -32,14 +33,22 @@ function StatusIcon({ status }: { status: HealthStatus }) {
 
 function dependencyLine(result: HealthResult) {
   const database = result.dependencies?.database?.status;
-  return database ? `数据库：${database}` : '依赖：-';
+  return database ? `数据库：${database}` : null;
+}
+
+function serviceDescription(serviceKey: string) {
+  if (serviceKey === 'gateway') return '公开入口聚合检查';
+  if (serviceKey === 'platform') return '平台业务模块检查';
+  if (serviceKey === 'execution') return '执行与 Worker 检查';
+  if (serviceKey === 'aiInvocation') return '内部 AI 调用服务检查';
+  return '内部服务检查';
 }
 
 function workerLine(result: HealthResult) {
   const runningRunCount = result.worker?.runningRunCount;
   const activeRunCount = result.worker?.activeRunCount;
-  if (runningRunCount === undefined && activeRunCount === undefined) return 'Worker：-';
-  return `Worker：运行 ${runningRunCount ?? 0}，活跃 ${activeRunCount ?? 0}`;
+  if (runningRunCount === undefined && activeRunCount === undefined) return null;
+  return `Worker：运行 ${runningRunCount}，活跃 ${activeRunCount}`;
 }
 
 /* ── 单行卡片 ── */
@@ -51,19 +60,19 @@ function HealthRow({ name, serviceKey, result }: { name: string; serviceKey: str
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-foreground truncate">{name}</p>
         <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {serviceKey === 'gateway' ? '公开入口聚合检查' : serviceKey === 'platform' ? '平台业务模块检查' : '执行与 Worker 检查'}
+          {serviceDescription(serviceKey)}
         </p>
       </div>
 
       {/* 消息 */}
       <div className="hidden md:block min-w-0 max-w-[280px] text-right shrink-0">
         <p className="text-xs text-muted-foreground truncate">{result.message ?? '等待触发检查'}</p>
-        {serviceKey !== 'gateway' ? (
+        {serviceKey !== 'gateway' && dependencyLine(result) && (
           <p className="text-xs text-muted-foreground truncate">{dependencyLine(result)}</p>
-        ) : null}
-        {serviceKey === 'execution' ? (
+        )}
+        {serviceKey === 'execution' && workerLine(result) && (
           <p className="text-xs text-muted-foreground truncate">{workerLine(result)}</p>
-        ) : null}
+        )}
       </div>
 
       {/* 耗时 */}
@@ -97,14 +106,12 @@ function SummaryCard({ label, value, className }: { label: string; value: number
 /* ══ 主页面 ══ */
 export function HealthPage() {
   const { targets, routeMappings, results, summary, lastCheckedAt, checking, checkAll } = useHealthCheck();
-  const platformSegments = routeMappings
-    .filter((route) => route.targetService === 'platform')
-    .map((route) => route.segment)
-    .join(' / ');
-  const executionSegments = routeMappings
-    .filter((route) => route.targetService === 'execution')
-    .map((route) => route.segment)
-    .join(' / ');
+
+  // 页面加载后自动触发健康检查
+  useEffect(() => {
+    void checkAll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -130,31 +137,6 @@ export function HealthPage() {
             <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} />
             {checking ? '检查中…' : '重新检查'}
           </Button>
-        </div>
-      </div>
-
-      {/* 统计 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <SummaryCard label="全部服务" value={targets.length} />
-        <SummaryCard label="UP" value={summary.up} className="border-emerald-500/30" />
-        <SummaryCard label="异常" value={summary.down} className="border-destructive/30" />
-        <SummaryCard label="待检测" value={summary.unknown} />
-      </div>
-
-      <div className="rounded-lg border bg-card px-5 py-4">
-        <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-muted-foreground" />
-          <p className="text-sm font-semibold text-foreground">公开 API 路由</p>
-        </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">quality-platform-service</p>
-            <p className="text-sm font-medium truncate">{platformSegments}</p>
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">quality-execution-service</p>
-            <p className="text-sm font-medium truncate">{executionSegments}</p>
-          </div>
         </div>
       </div>
 

@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { getGatewayApiUrl } from '@ai-quality-platform/shared-config';
+import { clearAuthSession } from '@/lib/auth-session';
 
 interface UserMenuProps {
   collapsed?: boolean;
@@ -23,22 +23,11 @@ interface UserMenuProps {
   role?: string;
 }
 
-async function callLogout() {
-  try {
-    await fetch(getGatewayApiUrl('system', '/auth/logout.do'), {
-      method: 'POST',
-      credentials: 'include',
-    });
-  } catch {
-    // 接口失败也继续跳转，避免用户卡死
-  }
-}
-
 export function UserMenu({ collapsed = false, name = '管理员', role = '系统管理员' }: UserMenuProps) {
   const router = useRouter();
 
-  const handleLogout = async () => {
-    await callLogout();
+  const handleLogout = () => {
+    clearAuthSession();
     router.push('/ai-quality-platform/login');
   };
 

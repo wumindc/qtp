@@ -2,9 +2,9 @@
 
 ## 职责边界
 
-- 汇总工作台、应用概览、执行报告和质量统计数据。
-- 保持 `/ai-quality-platform/report/**` 公开控制器路径稳定，由 gateway 的 `statistics` 段转发进入。
-- 只做读模型和报告生成，不承接业务写入主流程。
+- 汇总工作台和质量统计数据。
+- 保持 `/ai-quality-platform/report/dashboard.do` 公开控制器路径稳定，由 gateway 的 `statistics` 段转发进入。
+- 只做真实业务表只读聚合，不生成离线报告快照。
 
 ## 依赖规则
 

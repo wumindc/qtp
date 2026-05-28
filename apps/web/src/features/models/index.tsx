@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { getErrorMessage } from '@/lib/error';
 import { ProvidersPanel } from './providers-panel';
 import { ModelsPanel } from './models-panel';
 import {
@@ -30,14 +31,18 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
   const [models, setModels] = useState<ModelCenterRecord[]>(initialModels ?? []);
   const [providers, setProviders] = useState<ModelProviderRecord[]>(initialProviders ?? []);
   const [loading, setLoading] = useState(!initialModels || !initialProviders);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
+      setLoadError(null);
       const data = await loadModelCenterData();
       setModels(data.models);
       setProviders(data.providers);
-    } catch {
-      // 静默失败，保持本地状态
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, '模型中心加载失败');
+      setLoadError(message);
+      toast.error(`模型中心加载失败: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -116,6 +121,13 @@ export function ModelCenterPage({ initialModels, initialProviders }: ModelCenter
       </div>
 
       {/* 统计 */}
+      {loadError ? (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4">
+          <p className="text-sm font-semibold text-destructive">模型中心加载失败</p>
+          <p className="mt-1 text-xs text-destructive/80">{loadError}</p>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: '供应商', value: providers.length },

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { getServicePort } from '@ai-quality-platform/shared-config';
+import { GlobalExceptionFilter } from '@ai-quality-platform/shared-http';
 import { AppModule } from './app.module';
 
 /**
@@ -13,6 +14,7 @@ async function bootstrap() {
     origin: true,
     credentials: true,
   });
+  app.useGlobalFilters(new GlobalExceptionFilter());
   await app.listen(getServicePort('execution'));
 }
 

@@ -68,21 +68,13 @@ export function createRandomAppIconConfig(): AppIconConfig {
   return selectByIndex(randomInt(TOTAL_COMBINATIONS));
 }
 
-export function createStableAppIconConfig(seed: string): AppIconConfig {
-  let hash = 2166136261;
-  for (const char of seed) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return selectByIndex(hash >>> 0);
-}
-
 export function normalizeAppIconConfig(value: unknown): AppIconConfig | undefined {
   const record = asRecord(value);
-  const iconKey = String(record.iconKey ?? '');
-  const themeKey = String(record.themeKey ?? '');
-  const variantKey = String(record.variantKey ?? '');
+  const { iconKey, themeKey, variantKey } = record;
   if (
+    typeof iconKey === 'string' &&
+    typeof themeKey === 'string' &&
+    typeof variantKey === 'string' &&
     (ICON_KEYS as readonly string[]).includes(iconKey) &&
     (THEME_KEYS as readonly string[]).includes(themeKey) &&
     (VARIANT_KEYS as readonly string[]).includes(variantKey)

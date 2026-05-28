@@ -14,7 +14,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
-import { postGateway } from '@/lib/api/gateway-client';
+import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
+import { getErrorMessage } from '@/lib/error';
 import { buildCaseCsvTemplate, buildCaseExportFilename, downloadCaseCsv, formatCaseCsv, parseCaseCsv, readCaseCsvFile } from '@/features/cases/case-csv';
 import { importCaseCsvRows } from '@/features/cases/api/case-api';
 import { loadApp } from './api/app-api';
@@ -34,6 +35,8 @@ interface Category {
   appCode?: string;
   isSubscribedPreset?: boolean;
 }
+
+type GatewayRow = Record<string, unknown>;
 
 function mergeCategories(appCategories: Category[], subscribedCategories: Category[]) {
   const merged = new Map<string, Category>();
@@ -56,23 +59,87 @@ export interface CaseRecord {
   categoryId: string;
   query: string;
   expectedBehavior: string;
-  sourcePresetId?: string;
   isSubscribedPreset?: boolean;
   enabled: boolean;
+}
+
+function readRequiredStringField(value: unknown, message: string) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(message);
+  return value;
+}
+
+function readStringField(value: unknown, message: string) {
+  if (typeof value !== 'string') throw new Error(message);
+  return value;
+}
+
+function readOptionalStringField(value: unknown) {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumberField(value: unknown, message: string) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(message);
+  return value;
+}
+
+function readBooleanField(value: unknown, message: string) {
+  if (typeof value !== 'boolean') throw new Error(message);
+  return value;
+}
+
+function readOptionalBooleanField(value: unknown) {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function mapCategoryRow(row: GatewayRow): Category {
+  readNumberField(row.sortOrder, '应用用例分类响应缺少排序值');
+  readBooleanField(row.enabled, '应用用例分类响应缺少启停状态');
+  return {
+    id: readRequiredStringField(row.id, '应用用例分类响应缺少分类 ID'),
+    name: readRequiredStringField(row.name, '应用用例分类响应缺少分类名称'),
+    description: readStringField(row.description, '应用用例分类响应缺少分类描述'),
+    appCode: readOptionalStringField(row.appCode),
+    isSubscribedPreset: readOptionalBooleanField(row.isSubscribedPreset),
+  };
+}
+
+function mapCaseRow(row: GatewayRow): CaseRecord {
+  return {
+    id: readRequiredStringField(row.id, '应用用例响应缺少用例 ID'),
+    appCode: readRequiredStringField(row.appCode, '应用用例响应缺少应用编码'),
+    caseScope: readRequiredStringField(row.caseScope, '应用用例响应缺少用例范围'),
+    categoryId: readRequiredStringField(row.categoryId, '应用用例响应缺少分类 ID'),
+    query: readRequiredStringField(row.query, '应用用例响应缺少问题内容'),
+    expectedBehavior: readRequiredStringField(row.expectedBehavior, '应用用例响应缺少期望回答'),
+    enabled: readBooleanField(row.enabled, '应用用例响应缺少启停状态'),
+    isSubscribedPreset: readOptionalBooleanField(row.isSubscribedPreset),
+  };
+}
+
+function readStringArray(value: unknown, message: string) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new Error(message);
+  }
+  return value;
+}
+
+function readMessageResponse(value: unknown, message: string) {
+  if (!value || typeof value !== 'object') throw new Error(message);
+  return { message: readRequiredStringField((value as GatewayRow).message, message) };
 }
 
 /** 加载分类（按应用范围或预置全局范围） */
 async function fetchCategories(appCode?: string, isPreset = false): Promise<Category[]> {
   if (isPreset) {
     const res = await postGateway<unknown>('case', '/case/category/list.do', { page: { currentPage: 1, linesPerPage: 200 }, data: {} }, { cache: 'no-store' });
-    return ((res as Record<string, unknown>)?.list ?? []) as Category[];
+    return readGatewayList<GatewayRow>(res).map(mapCategoryRow);
   } else if (appCode) {
     const [appRes, subRes] = await Promise.all([
       postGateway<unknown>('case', '/case/category/list.do', { page: { currentPage: 1, linesPerPage: 200 }, data: { appCode, includeGlobal: false } }, { cache: 'no-store' }),
       postGateway<unknown>('case', '/case/category/list.do', { page: { currentPage: 1, linesPerPage: 200 }, data: { subscribedByApp: appCode } }, { cache: 'no-store' }),
     ]);
-    const appCats = ((appRes as Record<string, unknown>)?.list ?? []) as Category[];
-    const subCats = ((subRes as Record<string, unknown>)?.list ?? []) as Category[];
+    const appCats = readGatewayList<GatewayRow>(appRes).map(mapCategoryRow);
+    const subCats = readGatewayList<GatewayRow>(subRes).map(mapCategoryRow);
     return mergeCategories(appCats, subCats);
   }
   return [];
@@ -86,8 +153,7 @@ async function fetchAppCases(appCode: string, keyword = '', categoryId = ''): Pr
     { page: { currentPage: 1, linesPerPage: 200 }, data: { appCode, keyword, categoryId: categoryId === 'ALL' ? undefined : categoryId, caseScope: 'APP' } },
     { cache: 'no-store' }
   );
-  const data = res as Record<string, unknown>;
-  return (data?.list ?? []) as CaseRecord[];
+  return readGatewayList<GatewayRow>(res).map(mapCaseRow);
 }
 
 async function importPresetCategories(appCode: string, categoryIds: string[]): Promise<{ message: string }> {
@@ -95,12 +161,12 @@ async function importPresetCategories(appCode: string, categoryIds: string[]): P
     appCode,
     categoryIds,
   });
-  return res as { message: string };
+  return readMessageResponse(res, '预置分类关联响应缺少消息');
 }
 
 async function fetchAppCategorySubscriptions(appCode: string): Promise<string[]> {
   const res = await postGateway<unknown>('case', '/case/preset/subscriptions.do', { appCode });
-  return res as string[];
+  return readStringArray(res, '预置分类订阅响应必须是分类 ID 数组');
 }
 
 async function unsubscribePresetCategory(appCode: string, categoryId: string): Promise<void> {
@@ -108,11 +174,11 @@ async function unsubscribePresetCategory(appCode: string, categoryId: string): P
 }
 
 async function createAppCategory(appCode: string, category: { name: string; description: string }): Promise<Category> {
-  return postGateway<Category>('case', '/case/category/create.do', {
+  return mapCategoryRow(await postGateway<GatewayRow>('case', '/case/category/create.do', {
     appCode,
     name: category.name.trim(),
     description: category.description.trim(),
-  });
+  }));
 }
 
 export function AppCasesPage({ appCode }: { appCode: string }) {
@@ -121,6 +187,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
   const [activeCategoryId, setActiveCategoryId] = useState('ALL');
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [keyword, setKeyword] = useState('');
 
   // 新建/编辑表单
@@ -160,9 +227,12 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
       ]);
       setCategories(cats);
       setCases(caseList);
+      setLoadError('');
     } catch (err: unknown) {
       console.error(err);
-      toast.error(err instanceof Error ? `加载数据失败: ${err.message}` : '加载数据失败');
+      const message = getErrorMessage(err, '加载数据失败');
+      setLoadError(message);
+      toast.error(`加载数据失败: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -421,7 +491,14 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
           <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-muted/5">
             {loading && <div className="text-center py-12 text-muted-foreground text-sm">加载中...</div>}
 
-            {!loading && cases.map((c) => (
+            {!loading && loadError && (
+              <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-sm">
+                <p className="font-medium text-destructive">应用用例加载失败</p>
+                <p className="mt-1 text-muted-foreground">{loadError}</p>
+              </div>
+            )}
+
+            {!loading && !loadError && cases.map((c) => (
               <div key={c.id} className="group relative bg-card border border-border rounded-xl p-4 shadow-sm hover:shadow-md hover:border-border/80 transition-all">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -430,12 +507,12 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
                         {categoryNameById.get(c.categoryId) ?? '未分类'}
                       </Badge>
                     )}
-                    {(c.sourcePresetId || c.isSubscribedPreset) && (
+                    {c.isSubscribedPreset && (
                       <Badge variant="outline" className="text-xs font-normal">来自预置</Badge>
                     )}
                   </div>
                   
-                  {!(c.sourcePresetId || c.isSubscribedPreset) && (
+                  {!c.isSubscribedPreset && (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button
                         variant="ghost"
@@ -488,7 +565,7 @@ export function AppCasesPage({ appCode }: { appCode: string }) {
               </div>
             ))}
 
-            {!loading && cases.length === 0 && (
+            {!loading && !loadError && cases.length === 0 && (
               <div className="text-center py-16 text-muted-foreground">
                 <ClipboardList className="h-12 w-12 mx-auto mb-4 opacity-20" />
                 <p className="text-sm font-medium mb-2">当前分类暂无用例</p>

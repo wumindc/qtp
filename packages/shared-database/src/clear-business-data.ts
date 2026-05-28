@@ -7,10 +7,8 @@ type DeleteManyDelegate = {
 type ClearBusinessPrismaClient = {
   evalReview: DeleteManyDelegate;
   evalResult: DeleteManyDelegate;
-  evalReport: DeleteManyDelegate;
   evalRun: DeleteManyDelegate;
   evalPlan: DeleteManyDelegate;
-  evalCaseSuite: DeleteManyDelegate;
   evalCase: DeleteManyDelegate;
   evalCaseCategory: DeleteManyDelegate;
   aiModel: DeleteManyDelegate;
@@ -28,10 +26,8 @@ async function clearBusinessData() {
   try {
     await prisma.evalReview.deleteMany();
     await prisma.evalResult.deleteMany();
-    await prisma.evalReport.deleteMany();
     await prisma.evalRun.deleteMany();
     await prisma.evalPlan.deleteMany();
-    await prisma.evalCaseSuite.deleteMany();
     await prisma.evalCase.deleteMany();
     await prisma.evalCaseCategory.deleteMany();
     await prisma.aiModel.deleteMany();

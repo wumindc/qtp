@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CONTEXT_PATH,
+  assertAllowedApplicationInvokeUrl,
+  normalizeApplicationRequestHeaders,
+  validateApplicationInvokeUrl,
   getDeployableServiceForApiSegment,
   getGatewayApiUrl,
   getLocalServiceUrl,
@@ -23,6 +26,7 @@ describe('shared config', () => {
     expect(getServicePort('gateway')).toBe(8080);
     expect(getServicePort('platform')).toBe(3101);
     expect(getServicePort('execution')).toBe(3104);
+    expect(getServicePort('aiInvocation')).toBe(3105);
   });
 
   it('maps public API segments to their deployable runtime services', () => {
@@ -90,8 +94,101 @@ describe('shared config', () => {
   it('allows deployable service hosts to be overridden for container networking', () => {
     vi.stubEnv('PLATFORM_SERVICE_HOST', 'quality-platform-service');
     vi.stubEnv('EXECUTION_SERVICE_HOST', 'quality-execution-service');
+    vi.stubEnv('AI_INVOCATION_SERVICE_HOST', 'quality-ai-invocation-service');
 
     expect(getLocalServiceUrl('platform')).toBe('http://quality-platform-service:3101');
     expect(getLocalServiceUrl('execution')).toBe('http://quality-execution-service:3104');
+    expect(getLocalServiceUrl('aiInvocation')).toBe('http://quality-ai-invocation-service:3105');
+  });
+
+  it('allows local or private application invoke URLs during node development', () => {
+    expect(validateApplicationInvokeUrl('http://127.0.0.1:3999/chat', { env: { NODE_ENV: 'development' } })).toMatchObject({
+      allowed: true,
+    });
+    expect(validateApplicationInvokeUrl('http://192.168.11.107:3999/chat', { env: { NODE_ENV: 'development' } })).toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it('blocks private network application invoke URLs in production unless explicitly allowlisted', () => {
+    const env = { NODE_ENV: 'production' };
+
+    expect(validateApplicationInvokeUrl('http://127.0.0.1:3999/chat', { env })).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('localhost'),
+    });
+    expect(validateApplicationInvokeUrl('http://192.168.11.107:3999/chat', { env })).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('内网'),
+    });
+    expect(validateApplicationInvokeUrl('http://quality-platform-service:3101/health.do', { env })).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('内部服务名'),
+    });
+    expect(validateApplicationInvokeUrl('http://localhost.:3999/chat', { env })).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('localhost'),
+    });
+    expect(validateApplicationInvokeUrl('http://[::ffff:127.0.0.1]:3999/chat', { env })).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('localhost'),
+    });
+    expect(validateApplicationInvokeUrl('https://credit.example.com/chat', { env })).toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it('allows production private application invoke URLs only when their origin is configured', () => {
+    const env = {
+      NODE_ENV: 'production',
+      QTP_ALLOWED_APP_INVOKE_ORIGINS: 'http://192.168.11.107:3999',
+    };
+
+    expect(validateApplicationInvokeUrl('http://192.168.11.107:3999/chat', { env })).toMatchObject({
+      allowed: true,
+    });
+    expect(() => assertAllowedApplicationInvokeUrl('http://192.168.11.108:3999/chat', { env })).toThrow(
+      '被测应用调用地址不允许访问',
+    );
+  });
+
+  it('fails closed when production allowed application invoke origins contain invalid entries', () => {
+    const env = {
+      NODE_ENV: 'production',
+      QTP_ALLOWED_APP_INVOKE_ORIGINS: 'not-a-url, http://192.168.11.107:3999',
+    };
+
+    expect(validateApplicationInvokeUrl('https://credit.example.com/chat', { env })).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('QTP_ALLOWED_APP_INVOKE_ORIGINS'),
+    });
+    expect(() => assertAllowedApplicationInvokeUrl('http://192.168.11.107:3999/chat', { env })).toThrow(
+      'QTP_ALLOWED_APP_INVOKE_ORIGINS',
+    );
+  });
+
+  it('normalizes request headers and rejects forbidden header names', () => {
+    expect(normalizeApplicationRequestHeaders({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer secret',
+      'X-Test': 123,
+    })).toMatchObject({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer secret',
+      'X-Test': '123',
+    });
+
+    expect(() => normalizeApplicationRequestHeaders({
+      connection: 'keep-alive',
+      'Content-Type': 'application/json',
+    })).toThrow('请求头模板包含禁用请求头：connection');
+
+    expect(() => normalizeApplicationRequestHeaders({
+      'x bad': 'value',
+    })).toThrow('请求头模板包含非法请求头名：x bad');
+
+    expect(() => normalizeApplicationRequestHeaders({
+      '': 'value',
+    })).toThrow('包含空请求头名');
   });
 });

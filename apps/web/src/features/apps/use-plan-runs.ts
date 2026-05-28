@@ -14,7 +14,8 @@ import {
   type PlanRecord,
   type RunRecord,
 } from './api/plan-execution-api';
-import { postGateway } from '@/lib/api/gateway-client';
+import { postGateway, readGatewayList } from '@/lib/api/gateway-client';
+import { getErrorMessage } from '@/lib/error';
 
 export interface Category {
   id: string;
@@ -35,16 +36,10 @@ export interface UsePlanRunsResult {
   reload: () => Promise<void>;
   /** 将新执行批次立即合并进本地列表 */
   upsertRun: (run: RunRecord) => void;
+  loadError: string | null;
 }
 
 const POLL_INTERVAL_MS = 5000;
-
-function readList<T>(payload: unknown): T[] {
-  const record = payload as { list?: T[]; data?: { list?: T[] } } | undefined;
-  if (Array.isArray(record?.list)) return record.list;
-  if (Array.isArray(record?.data?.list)) return record.data.list;
-  return [];
-}
 
 function mergeCategories(...categoryGroups: Category[][]): Category[] {
   const merged = new Map<string, Category>();
@@ -65,9 +60,7 @@ function mergeRunsKeepingActive(freshRuns: RunRecord[], previousRuns: RunRecord[
 function readRunSortTime(run: RunRecord): number {
   const timeText = run.startAt ?? run.endAt;
   const time = timeText ? new Date(timeText).getTime() : Number.NaN;
-  if (Number.isFinite(time)) return time;
-  const legacyTime = Number(run.runCode.split('_RUN_')[1] ?? 0);
-  return Number.isFinite(legacyTime) ? legacyTime : 0;
+  return Number.isFinite(time) ? time : 0;
 }
 
 export async function loadPlanCategories(appCode: string): Promise<Category[]> {
@@ -93,8 +86,8 @@ export async function loadPlanCategories(appCode: string): Promise<Category[]> {
   ]);
 
   return mergeCategories(
-    readList<Category>(appCategoryResponse),
-    readList<Category>(subscribedCategoryResponse),
+    readGatewayList<Category>(appCategoryResponse),
+    readGatewayList<Category>(subscribedCategoryResponse),
   );
 }
 
@@ -103,10 +96,11 @@ export function usePlanRuns(appCode: string): UsePlanRunsResult {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /** @author codex 按真实执行时间降序排序，旧数据才回退解析 runCode。 */
+  /** @author codex 按数据库记录的真实执行时间降序排序。 */
   const sortedRuns = useMemo(() => {
     return [...runs].sort((a, b) => {
       const diff = readRunSortTime(b) - readRunSortTime(a);
@@ -140,39 +134,31 @@ export function usePlanRuns(appCode: string): UsePlanRunsResult {
     try {
       const data = await listRuns(appCode);
       setRuns((prev) => mergeRunsKeepingActive(data, prev));
-    } catch {
-      // 静默失败，不影响界面
+      setLoadError(null);
+    } catch (error: unknown) {
+      setLoadError(getErrorMessage(error, '执行记录刷新失败'));
     }
   }, [appCode]);
 
   /** 全量加载（显示 loading） */
   const reload = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const [plansResult, catsResult, runsResult] = await Promise.allSettled([
+      const [plansData, runsData] = await Promise.all([
         listPlans(appCode),
-        loadPlanCategories(appCode),
         listRuns(appCode),
       ]);
-
-      if (plansResult.status === 'fulfilled') {
-        setPlans(plansResult.value);
-      } else {
-        setPlans([]);
-        toast.error('加载计划列表失败');
-      }
-
-      if (catsResult.status === 'fulfilled') {
-        setCategories(catsResult.value);
-      } else {
+      setPlans(plansData);
+      setRuns(runsData);
+      try {
+        setCategories(await loadPlanCategories(appCode));
+      } catch (error: unknown) {
         setCategories([]);
+        toast.error(`加载用例分类失败: ${getErrorMessage(error, '请求失败')}`);
       }
-
-      if (runsResult.status === 'fulfilled') {
-        setRuns(runsResult.value);
-      } else {
-        setRuns([]);
-      }
+    } catch (error: unknown) {
+      setLoadError(getErrorMessage(error, '执行计划加载失败'));
     } finally {
       setLoading(false);
     }
@@ -180,14 +166,13 @@ export function usePlanRuns(appCode: string): UsePlanRunsResult {
 
   /** 手动刷新（不显示 loading） */
   const refresh = useCallback(async () => {
-    const [plansData, runsData] = await Promise.allSettled([
+    const [plansData, runsData] = await Promise.all([
       listPlans(appCode),
       listRuns(appCode),
     ]);
-    if (plansData.status === 'fulfilled') setPlans(plansData.value);
-    if (runsData.status === 'fulfilled') {
-      setRuns((prev) => mergeRunsKeepingActive(runsData.value, prev));
-    }
+    setPlans(plansData);
+    setRuns((prev) => mergeRunsKeepingActive(runsData, prev));
+    setLoadError(null);
   }, [appCode]);
 
   const upsertRun = useCallback((run: RunRecord) => {
@@ -225,6 +210,7 @@ export function usePlanRuns(appCode: string): UsePlanRunsResult {
     totalRunsByPlan,
     categories,
     loading,
+    loadError,
     refresh,
     reload,
     upsertRun,

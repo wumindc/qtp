@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { ok } from '@ai-quality-platform/shared-http';
 import {
   PlanService,
@@ -18,7 +18,7 @@ export class PlanController {
    */
   @Post('list.do')
   async list(@Body() request: { page: { currentPage: number; linesPerPage: number }; data: Record<string, unknown> }) {
-    return ok(await this.planService.list(request.data ?? {}, request.page));
+    return ok(await this.planService.list(this.readRequiredObject(request.data, '缺少计划查询条件'), request.page));
   }
 
   @Post('create.do')
@@ -49,5 +49,10 @@ export class PlanController {
   @Post('start.do')
   async start(@Body() request: { planCode: string }) {
     return ok(await this.planService.start(request.planCode));
+  }
+
+  private readRequiredObject<TRecord extends object>(value: unknown, message: string): TRecord {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as TRecord;
+    throw new BadRequestException(message);
   }
 }

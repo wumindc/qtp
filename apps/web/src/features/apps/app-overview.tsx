@@ -26,11 +26,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
+import { getErrorMessage } from '@/lib/error';
 import { loadApp } from './api/app-api';
 import { formatDuration, listPlans, listRuns } from './api/plan-execution-api';
 import { AppIcon } from './app-icon';
+import { assertAppViewData, type AppWithViewData } from './app-view-contract';
 import type { PlanRecord, RunRecord } from './api/plan-execution-api';
-import type { App } from './types';
 
 const APP_BASE_PATH = '/ai-quality-platform/apps';
 
@@ -61,6 +62,10 @@ function formatDateTime(value?: string) {
 function getRunPassRate(run: RunRecord) {
   if (run.totalCount <= 0) return 0;
   return Math.round((run.passCount / run.totalCount) * 100);
+}
+
+function formatProtocolEndpoint(app: AppWithViewData) {
+  return `${app.protocol.method} ${app.protocol.url.trim() ? app.protocol.url : '未配置接口'}`;
 }
 
 function StatCard({
@@ -165,26 +170,42 @@ function RecentRunRow({
 }
 
 export function AppOverviewPage({ appCode }: { appCode: string }) {
-  const [app, setApp] = useState<App | null>(null);
+  const [app, setApp] = useState<AppWithViewData | null>(null);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
+    setErrorMessage(null);
     Promise.all([
       loadApp(appCode),
-      listPlans(appCode).catch(() => [] as PlanRecord[]),
-      listRuns(appCode).catch(() => [] as RunRecord[]),
+      listPlans(appCode),
+      listRuns(appCode),
     ])
       .then(([appData, plansData, runsData]) => {
-        setApp(appData);
+        if (!active) return;
+        setApp(appData ? assertAppViewData(appData, '应用概览') : null);
         setPlans(plansData);
         setRuns(runsData);
       })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setApp(null);
+        setPlans([]);
+        setRuns([]);
+        setErrorMessage(getErrorMessage(error, '应用概览加载失败'));
+      })
       .finally(() => {
+        if (!active) return;
         setLoading(false);
       });
+
+    return () => {
+      active = false;
+    };
   }, [appCode]);
 
   const planNameByCode = useMemo(
@@ -193,6 +214,14 @@ export function AppOverviewPage({ appCode }: { appCode: string }) {
   );
 
   if (loading) return <div className="text-muted-foreground">加载中...</div>;
+  if (errorMessage) {
+    return (
+      <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-5">
+        <p className="font-medium text-destructive">应用概览加载失败</p>
+        <p className="mt-1 text-sm text-destructive/80">{errorMessage}</p>
+      </div>
+    );
+  }
   if (!app) return <div className="text-muted-foreground">应用不存在</div>;
 
   const stats = app.stats;
@@ -224,7 +253,7 @@ export function AppOverviewPage({ appCode }: { appCode: string }) {
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <Link2 className="h-3.5 w-3.5 shrink-0" />
                 <span className="max-w-[720px] truncate font-mono">
-                  {app.protocol?.method ?? 'POST'} {app.protocol?.url || '未配置接口'}
+                  {formatProtocolEndpoint(app)}
                 </span>
               </span>
             </div>
@@ -249,25 +278,25 @@ export function AppOverviewPage({ appCode }: { appCode: string }) {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="测试用例"
-          value={stats?.caseCount ?? 0}
+          value={stats.caseCount}
           helper="已纳入当前应用的可执行用例"
           icon={Layers}
           iconClassName="bg-blue-500/10 text-blue-600 dark:text-blue-400"
         />
         <StatCard
           label="执行计划"
-          value={stats?.planCount ?? plans.length}
+          value={stats.planCount}
           helper={`${plans.filter((plan) => plan.status === 'ENABLED').length} 个计划可执行`}
           icon={Play}
           iconClassName="bg-violet-500/10 text-violet-600 dark:text-violet-400"
         />
         <StatCard
           label="最近通过率"
-          value={passRateText(stats?.lastPassRate)}
-          helper={stats?.lastRunAt ? `最近执行 ${formatDateTime(stats.lastRunAt)}` : '尚未执行'}
+          value={passRateText(stats.lastPassRate)}
+          helper={stats.lastRunAt ? `最近执行 ${formatDateTime(stats.lastRunAt)}` : '尚未执行'}
           icon={CircleGauge}
           iconClassName="bg-amber-500/10 text-amber-600 dark:text-amber-400"
-          valueClassName={passRateColor(stats?.lastPassRate)}
+          valueClassName={passRateColor(stats.lastPassRate)}
         />
         <StatCard
           label="历史执行"
@@ -315,11 +344,11 @@ export function AppOverviewPage({ appCode }: { appCode: string }) {
             <h2 className="text-base font-semibold text-foreground">应用配置</h2>
           </div>
           <div className="grid gap-3">
-            <DetailItem label="请求方法" value={app.protocol?.method ?? 'POST'} />
-            <DetailItem label="执行并发" value={app.protocol?.appConcurrency ?? 3} />
-            <DetailItem label="答案路径" value={app.protocol?.answerPath || '$.content'} />
-            <DetailItem label="成功条件" value={app.protocol?.successExpr || '$.code == 0'} />
-            <DetailItem label="流式响应" value={app.protocol?.streamEnabled ? '已开启' : '未开启'} />
+            <DetailItem label="请求方法" value={app.protocol.method} />
+            <DetailItem label="执行并发" value={app.protocol.appConcurrency} />
+            <DetailItem label="答案路径" value={app.protocol.answerPath} />
+            <DetailItem label="成功条件" value={app.protocol.successExpr} />
+            <DetailItem label="流式响应" value={app.protocol.streamEnabled ? '已开启' : '未开启'} />
           </div>
         </aside>
       </div>

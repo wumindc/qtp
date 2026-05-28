@@ -10,7 +10,7 @@ import { Activity, CheckCircle2, XCircle, Loader2, Clock, BarChart2 } from 'luci
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 import { toast } from 'sonner';
-import { listRuns, parseRunStartTime, type RunRecord } from './api/plan-execution-api';
+import { listRuns, type RunRecord } from './api/plan-execution-api';
 
 const statusConfig: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   COMPLETED: { label: '已完成', color: 'text-emerald-500', icon: CheckCircle2 },
@@ -21,8 +21,7 @@ const statusConfig: Record<string, { label: string; color: string; icon: React.E
 
 function formatRunStartedAt(run: RunRecord): string {
   if (run.startAt) return new Date(run.startAt).toLocaleString('zh-CN');
-  const legacyStartedAt = parseRunStartTime(run.runCode);
-  return legacyStartedAt ? legacyStartedAt.toLocaleString('zh-CN') : '未知时间';
+  return '未知时间';
 }
 
 export function AppHistoryPage({ appCode }: { appCode: string }) {

@@ -50,3 +50,5 @@ export function pageResult<T>(
     },
   };
 }
+
+export * from './global-exception.filter';

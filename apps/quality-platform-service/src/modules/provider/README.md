@@ -9,5 +9,5 @@
 ## 依赖规则
 
 - 可以被 app 评估配置引用。
-- 执行阶段的模型调用标准通过 `packages/ai-model-adapter` 共享。
+- 模型测试和执行阶段评估调用统一进入 `quality-ai-invocation-service`；platform 只依赖 `packages/ai-invocation-client` 和 `packages/ai-invocation-contract`，供应商协议细节只在 AI invocation 边界内由 `packages/ai-model-adapter` 处理。
 - 不依赖 execution service 的运行状态。

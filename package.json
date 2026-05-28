@@ -13,14 +13,13 @@
     "db:clear-business": "pnpm --filter @ai-quality-platform/shared-database clear-business-data",
     "dev:web": "pnpm --filter web dev",
     "dev:gateway": "pnpm --filter quality-gateway start:dev",
-    "dev:services": "pnpm --parallel --filter quality-platform-service --filter quality-execution-service start:dev",
+    "dev:services": "pnpm --parallel --filter quality-platform-service --filter quality-execution-service --filter quality-ai-invocation-service start:dev",
     "check:health": "node scripts/check-health.mjs",
     "check:topology": "node scripts/check-topology.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.14"
+    "typescript": "^5.9.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

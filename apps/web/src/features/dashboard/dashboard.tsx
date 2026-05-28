@@ -7,7 +7,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { getGatewayApiUrl } from '@ai-quality-platform/shared-config';
 import {
   Activity,
   AlertTriangle,
@@ -21,13 +20,14 @@ import {
   HeartPulse,
   Layers3,
   Play,
-  ShieldAlert,
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
+import { getErrorMessage } from '@/lib/error';
+import { postGateway } from '@/lib/api/gateway-client';
 import { loadApps } from '../apps/api/app-api';
 import { formatDuration, listPlans, listRuns } from '../apps/api/plan-execution-api';
 import { AppIcon } from '../apps/app-icon';
@@ -40,7 +40,7 @@ interface DashboardMetrics {
   planCount: number;
   avgPassRate: number;
   pendingReviewCount: number;
-  highRiskFailureCount: number;
+  failedRunCount: number;
 }
 
 interface DashboardRun extends RunRecord {
@@ -48,38 +48,49 @@ interface DashboardRun extends RunRecord {
   planName: string;
 }
 
-const EMPTY_METRICS: DashboardMetrics = {
-  appCount: 0,
-  caseCount: 0,
-  planCount: 0,
-  avgPassRate: 0,
-  pendingReviewCount: 0,
-  highRiskFailureCount: 0,
-};
-
 const APP_BASE_PATH = '/ai-quality-platform/apps';
 
-function readNumber(value: unknown) {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
+type FocusApp = App & {
+  stats: NonNullable<App['stats']> & {
+    lastPassRate: number;
+  };
+};
+
+function readDashboardRecord(raw: unknown) {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  throw new Error('工作台统计响应格式不正确');
+}
+
+function readDashboardNumber(value: unknown, message: string) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(message);
+  }
+  return value;
 }
 
 function normalizeMetrics(raw: unknown): DashboardMetrics {
-  const data = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const data = readDashboardRecord(raw);
   return {
-    appCount: readNumber(data.appCount),
-    caseCount: readNumber(data.caseCount),
-    planCount: readNumber(data.planCount),
-    avgPassRate: readNumber(data.avgPassRate),
-    pendingReviewCount: readNumber(data.pendingReviewCount),
-    highRiskFailureCount: readNumber(data.highRiskFailureCount),
+    appCount: readDashboardNumber(data.appCount, '工作台统计缺少应用数量'),
+    caseCount: readDashboardNumber(data.caseCount, '工作台统计缺少用例数量'),
+    planCount: readDashboardNumber(data.planCount, '工作台统计缺少计划数量'),
+    avgPassRate: readDashboardNumber(data.avgPassRate, '工作台统计缺少平均通过率'),
+    pendingReviewCount: readDashboardNumber(data.pendingReviewCount, '工作台统计缺少待复核数量'),
+    failedRunCount: readDashboardNumber(data.failedRunCount, '工作台统计缺少未达标批次数量'),
   };
 }
 
+/**
+ * @author codex
+ * @author Antigravity/Claude-Sonnet-4.6
+ * 工作台统计使用 postGateway 自动携带 Authorization token。
+ * 后端 dashboard.do 已改为 POST 与全项目其他接口保持一致。
+ */
 async function loadDashboardMetrics(): Promise<DashboardMetrics> {
-  const response = await fetch(getGatewayApiUrl('statistics', '/report/dashboard.do'));
-  const payload = await response.json();
-  return normalizeMetrics(payload.data ?? payload);
+  const payload = await postGateway<unknown>('statistics', '/report/dashboard.do', {}, { cache: 'no-store' });
+  return normalizeMetrics(payload);
 }
 
 function formatDateTime(value?: string) {
@@ -100,6 +111,10 @@ function passRateColor(rate?: number) {
   if (rate >= 90) return 'text-emerald-600 dark:text-emerald-400';
   if (rate >= 70) return 'text-amber-600 dark:text-amber-400';
   return 'text-red-600 dark:text-red-400';
+}
+
+function hasFocusStats(app: App): app is FocusApp {
+  return typeof app.stats?.lastPassRate === 'number' && Number.isFinite(app.stats.lastPassRate);
 }
 
 function getRunPassRate(run: RunRecord) {
@@ -207,8 +222,9 @@ function RecentRunItem({ run }: { run: DashboardRun }) {
   );
 }
 
-function FocusAppItem({ app }: { app: App }) {
-  const passRate = app.stats?.lastPassRate;
+function FocusAppItem({ app }: { app: FocusApp }) {
+  const { stats } = app;
+  const passRate = stats.lastPassRate;
   return (
     <Link
       href={`${APP_BASE_PATH}/${encodeURIComponent(app.appCode)}/overview`}
@@ -223,7 +239,7 @@ function FocusAppItem({ app }: { app: App }) {
           </Badge>
         </div>
         <p className="mt-1 truncate text-xs text-muted-foreground">
-          {app.stats?.caseCount ?? 0} 用例 · {app.stats?.planCount ?? 0} 计划 · 最近 {formatDateTime(app.stats?.lastRunAt)}
+          {stats.caseCount} 用例 · {stats.planCount} 计划 · 最近 {formatDateTime(stats.lastRunAt)}
         </p>
       </div>
       <div className="shrink-0 text-right">
@@ -260,57 +276,55 @@ function EntryLink({
 }
 
 export function DashboardPage() {
-  const [metrics, setMetrics] = useState<DashboardMetrics>(EMPTY_METRICS);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [apps, setApps] = useState<App[]>([]);
   const [recentRuns, setRecentRuns] = useState<DashboardRun[]>([]);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'partial' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
 
     async function refresh() {
       setStatus('loading');
-      const [metricsResult, appsResult] = await Promise.allSettled([
-        loadDashboardMetrics(),
-        loadApps(),
-      ]);
-      const nextMetrics = metricsResult.status === 'fulfilled' ? metricsResult.value : EMPTY_METRICS;
-      const nextApps = appsResult.status === 'fulfilled' ? appsResult.value : [];
-      const appContexts = await Promise.all(
-        nextApps.slice(0, 20).map(async (app) => {
-          const [plansResult, runsResult] = await Promise.allSettled([
-            listPlans(app.appCode),
-            listRuns(app.appCode),
-          ]);
-          return {
-            app,
-            plans: plansResult.status === 'fulfilled' ? plansResult.value : [] as PlanRecord[],
-            runs: runsResult.status === 'fulfilled' ? runsResult.value : [] as RunRecord[],
-          };
-        }),
-      );
-      const nextRuns = appContexts
-        .flatMap(({ app, plans, runs }) => {
-          const planNameByCode = new Map(plans.map((plan) => [plan.planCode, plan.planName]));
-          return runs.map((run) => ({
-            ...run,
-            appName: app.appName,
-            planName: planNameByCode.get(run.planCode) ?? run.planName ?? '未命名计划',
-          }));
-        })
-        .sort((a, b) => runTimestamp(b) - runTimestamp(a))
-        .slice(0, 5);
+      setLoadError(null);
+      try {
+        const [nextMetrics, nextApps] = await Promise.all([
+          loadDashboardMetrics(),
+          loadApps(),
+        ]);
+        const appContexts = await Promise.all(
+          nextApps.slice(0, 20).map(async (app) => {
+            const [plans, runs] = await Promise.all([
+              listPlans(app.appCode),
+              listRuns(app.appCode),
+            ]);
+            return { app, plans, runs };
+          }),
+        );
+        const nextRuns = appContexts
+          .flatMap(({ app, plans, runs }) => {
+            const planNameByCode = new Map(plans.map((plan) => [plan.planCode, plan.planName]));
+            return runs.map((run) => ({
+              ...run,
+              appName: app.appName,
+              planName: planNameByCode.get(run.planCode) ?? run.planName ?? '未命名计划',
+            }));
+          })
+          .sort((a, b) => runTimestamp(b) - runTimestamp(a))
+          .slice(0, 5);
 
-      if (disposed) return;
-
-      setMetrics(nextMetrics);
-      setApps(nextApps);
-      setRecentRuns(nextRuns);
-      if (metricsResult.status === 'fulfilled' && appsResult.status === 'fulfilled') {
+        if (disposed) return;
+        setMetrics(nextMetrics);
+        setApps(nextApps);
+        setRecentRuns(nextRuns);
         setStatus('ready');
-      } else if (metricsResult.status === 'fulfilled' || appsResult.status === 'fulfilled') {
-        setStatus('partial');
-      } else {
+      } catch (error: unknown) {
+        if (disposed) return;
+        setMetrics(null);
+        setApps([]);
+        setRecentRuns([]);
+        setLoadError(getErrorMessage(error, '工作台数据加载失败'));
         setStatus('error');
       }
     }
@@ -325,12 +339,12 @@ export function DashboardPage() {
   const focusApps = useMemo(
     () =>
       apps
-        .filter((app) => app.stats?.lastPassRate !== undefined)
-        .sort((left, right) => (left.stats?.lastPassRate ?? 101) - (right.stats?.lastPassRate ?? 101))
+        .filter(hasFocusStats)
+        .sort((left, right) => left.stats.lastPassRate - right.stats.lastPassRate)
         .slice(0, 4),
     [apps],
   );
-  const statusText = status === 'loading' ? '加载中' : status === 'ready' ? '服务端数据' : status === 'partial' ? '部分数据' : '统计异常';
+  const statusText = status === 'loading' ? '加载中' : status === 'ready' ? '服务端数据' : '统计异常';
   const latestRun = recentRuns[0];
 
   return (
@@ -361,6 +375,21 @@ export function DashboardPage() {
         </div>
       </header>
 
+      {status === 'loading' ? (
+        <section className="rounded-lg border border-border bg-card p-5 text-sm text-muted-foreground">
+          工作台加载中...
+        </section>
+      ) : null}
+
+      {loadError ? (
+        <section role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-5">
+          <p className="text-sm font-semibold text-destructive">工作台加载失败</p>
+          <p className="mt-1 text-xs text-destructive/80">{loadError}</p>
+        </section>
+      ) : null}
+
+      {metrics ? (
+        <>
       <section className="rounded-lg border border-border bg-card p-5">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-center">
           <div className="min-w-0">
@@ -387,8 +416,8 @@ export function DashboardPage() {
               <p className="mt-1 text-xl font-semibold text-foreground">{metrics.pendingReviewCount}</p>
             </div>
             <div className="rounded-lg bg-muted/35 p-3">
-              <p className="text-muted-foreground">风险执行</p>
-              <p className="mt-1 text-xl font-semibold text-foreground">{metrics.highRiskFailureCount}</p>
+              <p className="text-muted-foreground">未达标批次</p>
+              <p className="mt-1 text-xl font-semibold text-foreground">{metrics.failedRunCount}</p>
             </div>
           </div>
         </div>
@@ -400,7 +429,7 @@ export function DashboardPage() {
         <MetricCard label="执行计划" value={metrics.planCount} helper="已创建计划" icon={Layers3} tone="emerald" />
         <MetricCard label="平均通过率" value={`${metrics.avgPassRate}%`} helper="按完成批次计算" icon={CircleGauge} tone="amber" />
         <MetricCard label="待复核" value={metrics.pendingReviewCount} helper="人工确认结果" icon={AlertTriangle} tone={metrics.pendingReviewCount > 0 ? 'amber' : 'muted'} />
-        <MetricCard label="风险执行" value={metrics.highRiskFailureCount} helper="存在未达标批次" icon={ShieldAlert} tone={metrics.highRiskFailureCount > 0 ? 'red' : 'muted'} />
+        <MetricCard label="未达标批次" value={metrics.failedRunCount} helper="存在未达标结果" icon={XCircle} tone={metrics.failedRunCount > 0 ? 'red' : 'muted'} />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -446,6 +475,8 @@ export function DashboardPage() {
         <EntryLink href="/ai-quality-platform/providers" icon={CircleGauge} label="模型中心" value={statusText} />
         <EntryLink href="/ai-quality-platform/health" icon={HeartPulse} label="服务健康" value="查看" />
       </section>
+        </>
+      ) : null}
     </main>
   );
 }

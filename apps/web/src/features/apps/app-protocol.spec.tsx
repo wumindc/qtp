@@ -5,12 +5,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppProtocolPage } from './app-protocol';
-import { loadApp, loadAppProtocol, saveAppProtocol } from './api/app-api';
+import { loadApp, loadAppProtocol, saveAppProtocol, testAppProtocol } from './api/app-api';
 
 vi.mock('./api/app-api', () => ({
   loadApp: vi.fn(),
   loadAppProtocol: vi.fn(),
   saveAppProtocol: vi.fn(),
+  testAppProtocol: vi.fn(),
 }));
 
 vi.mock('sonner', () => ({
@@ -24,12 +25,14 @@ vi.mock('sonner', () => ({
 const loadAppMock = vi.mocked(loadApp);
 const loadProtocolMock = vi.mocked(loadAppProtocol);
 const saveProtocolMock = vi.mocked(saveAppProtocol);
+const testProtocolMock = vi.mocked(testAppProtocol);
 
 describe('AppProtocolPage', () => {
   beforeEach(() => {
     loadAppMock.mockReset();
     loadProtocolMock.mockReset();
     saveProtocolMock.mockReset();
+    testProtocolMock.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -37,7 +40,7 @@ describe('AppProtocolPage', () => {
     loadAppMock.mockResolvedValue({
       appCode: 'c',
       appName: '测试应用',
-      appType: 'CHATBOT',
+      appType: 'CHAT',
       description: '',
       owner: 'qa',
       status: 'ENABLED',
@@ -55,12 +58,21 @@ describe('AppProtocolPage', () => {
       streamEnabled: false,
       appConcurrency: 3,
     });
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ content: 'ok' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    testProtocolMock.mockResolvedValue({
+      success: true,
+      appCode: 'c',
+      requestMethod: 'POST',
+      invokeUrl: 'http://127.0.0.1:3999/chat',
+      sampleInput: { query: '台湾和中国是什么关系' },
+      resolvedHeaders: '{"Content-Type":"application/json"}',
+      resolvedBody: '{"query":"台湾和中国是什么关系"}',
+      rawResponse: { content: 'ok' },
+      rawResponseText: '{"content":"ok"}',
+      parsedAnswer: 'ok',
+      assertion: '$.code == 0',
+      message: '协议真实调用通过',
+      elapsedMs: 12,
+    });
 
     render(<AppProtocolPage appCode="c" />);
 
@@ -70,12 +82,14 @@ describe('AppProtocolPage', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '发送测试' }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/proxy', expect.any(Object)));
-    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      body: {
-        query: '台湾和中国是什么关系',
-      },
-    });
+    await waitFor(() => expect(testProtocolMock).toHaveBeenCalledWith(
+      'c',
+      expect.objectContaining({
+        body: '{"query":"{{case.input.query}}"}',
+      }),
+      '台湾和中国是什么关系',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
+    expect(await screen.findByText('ok')).toBeInTheDocument();
   });
 });

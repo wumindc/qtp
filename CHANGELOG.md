@@ -2,13 +2,225 @@
 
 ## [未发布]
 
+### 2026-05-28 — 服务健康页面体验优化
+
+#### 优化 — 服务健康页面信息展示与网关耗时计算
+- **变更需求**：用户反馈服务健康页面存在冗余信息（顶部 4 个统计卡片、公开 API 路由），且未在加载页面时自动触发检查。并且只有 Gateway 能够显示耗时（ms），其余服务缺失。部分服务无依赖或 Worker 时，展示了无意义的 `-` 占位符。
+- **变更内容**：
+  - `apps/web/src/features/health/health-page.tsx`：移除了顶部统计和路由模块，增加了 `useEffect` 以在组件挂载时自动触发检查，并优化了 `dependencyLine` 和 `workerLine` 的空状态判定以隐藏无效提示。
+  - `apps/quality-gateway/src/health.controller.ts`：在聚合探针方法 `probeUrl` 中加入了基于 `performance.now()` 的请求耗时统计，将 `durationMs` 随下游微服务状态一同返回给前端。
+  - `apps/web/src/features/health/hooks.ts`：更新前端响应解析，读取并透传各个服务的 `durationMs` 供界面展示。
+
+### 2026-05-28 — 全局异常透传处理优化
+
+#### 优化 — 全局拦截底层 Error 异常，将业务错误透传到前端界面
+- **变更需求**：目前系统大量抛出 `throw new Error('执行结果记录缺少用例快照 JSON')` 这类底层错误，NestJS 默认会拦截为 500 并屏蔽掉 `message` 内容。前端只能提示“内部服务器错误”，用户无法直接知道出错原因，排查成本高。
+- **变更内容**：
+  - `packages/shared-http/src/global-exception.filter.ts`：实现全局异常过滤器，拦截所有未知异常。对于 `Error` 类型的抛出，直接将其 `.message` 信息转换成前端所认识的 `ApiResponse` 结构，将错误细节作为 `message` 透传。
+  - `packages/shared-http/tsconfig.json`：打开了由于引用 `@nestjs/common` `ExceptionFilter` 所需的装饰器开关 `experimentalDecorators` 和 `emitDecoratorMetadata`。
+  - `apps/quality-platform-service/src/main.ts`、`apps/quality-execution-service/src/main.ts`、`apps/quality-gateway/src/main.ts`、`apps/quality-ai-invocation-service/src/main.ts`：全部引入并注册该全局过滤器。
+  - `apps/web/src/components/ui/sonner.spec.tsx`：修复因为前期解决 Toast 位置偏右而移除 `max-content` 导致的测试失败，实现 113 个全量测试 100% Pass。
+
+### 2026-05-28 — 工作台统计接口认证修复
+
+#### 修复 — 工作台首页报 401 / 404
+- **变更需求**：工作台首页依次出现 401"未登录或登录已过期"和 404；同时统一请求方式原则不能破。
+- **根因**：
+  1. `loadDashboardMetrics()` 原用裸 `fetch` 无认证头 → 401。
+  2. 后端 `report.controller.ts` 用 `@Get`，`postGateway` 发 POST → 404。
+- **修复方案（改后端而非破坏前端统一性）**：
+  - `apps/quality-platform-service/src/modules/report/report.controller.ts`：将 `@Get('dashboard.do')` 改为 `@Post('dashboard.do')`，与全项目所有其他接口保持一致。
+  - `apps/web/src/features/dashboard/dashboard.tsx`：使用 `postGateway('statistics', '/report/dashboard.do')` 统一调用，自动携带 Authorization token。
+  - `apps/web/src/features/dashboard/dashboard.spec.tsx`：fetch stub 格式改为 `{ok: true, success: true, data: {...}}`，与 `postGateway` 解析逻辑匹配。
+
+
+
+
+#### 修复 — Toast 偏右 + 协议字段缺失阻断列表加载
+- **变更需求**：1) Toast 显示位置偏右，应居中；2) 后端日志有详细错误信息但前端只看到通用错误；3) 应用协议字段缺失不应影响列表展示，应进入详情页再配置。
+- **变更内容**：
+  - `apps/web/src/components/ui/sonner.tsx`：移除 `width: max-content` 和 `--width: max-content` 覆盖，sonner 的 `top-center` 定位依赖内部固定宽度（默认 356px）才能正确水平居中，覆盖 `--width` 后容器宽度变为内容自适应导致居中计算失效；保留 `maxWidth` 约束即可。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`：将 `toRecord()` 中对 `adapterConfig.*`（`execution`/`templates`/`response`/`ui`）的 `readRequiredRecord` 改为 `readOptionalRecord`（缺失时返回空对象），对协议模板/路径/表达式缺失改为回退到默认常量，避免旧格式或未配置协议的数据库记录导致整个应用列表接口报 500。核心标识字段（`appCode`/`appName`/`status`/`icon`）保持严格校验。
+  - `apps/quality-platform-service/src/modules/app/app.service.spec.ts`：更新源码卫生测试，允许 `toRecord` 对协议字段使用默认值回退，保留对核心标识字段和评估配置字段的强转禁止。
+
+
+
+#### 修复 — 应用列表加载失败时 toast 重复弹出、错误信息不友好
+- **变更需求**：应用列表页报错时显示两条"Internal server error"，无法知晓真正原因。
+- **变更内容**：
+  - `apps/web/src/features/apps/app-list.tsx`：`refresh` 函数接收 `AbortSignal`，在 `useEffect` 中通过 `AbortController` 防止已卸载组件更新状态；`toast.error` 增加固定 `id: 'app-list-load-error'`，sonner 会对同 id 的 toast 去重，解决 React StrictMode 下 effect 执行两次导致两条重复 toast 的问题；`getErrorMessage` 扩展为同时读取非 `Error` 对象的 `message` 字段。
+  - `apps/web/src/lib/api/gateway-client.ts`：当后端返回的 `message` 为空或匹配 `internal server error`（大小写不敏感）时，将通用英文错误替换为中文提示并附上请求路径（如"服务器内部错误（/app/list.do），请联系管理员或稍后重试"），方便用户定位是哪个接口出了问题。
+  - `apps/web/src/features/apps/app-list.spec.tsx`：更新测试断言，匹配 `toast.error` 新调用签名（带 `id` 选项）。
+
+
+
+#### 重构 — 登录页全面使用语义化主题 token，内嵌主题切换
+- **变更需求**：用户反馈登录页在亮色模式下卡片背景颜色突兀，标题文字不清晰，且没有主题切换入口。
+- **变更内容**：
+  - `apps/web/src/features/login/login-form.tsx`：完全重写，所有颜色改为语义化 token（`bg-card`、`text-card-foreground`、`bg-background`、`text-foreground`、`bg-primary` 等），自动跟随亮/暗主题；标题和图标移入卡片内部，消除对比度问题；新增内嵌 `ThemeButton` 组件（右上角），复用 `next-themes` `useTheme`，通过 DropdownMenu 切换浅色/深色/跟随系统。
+  - `apps/web/src/app/ai-quality-platform/login/page.tsx`：背景改为 `bg-background` 语义 token，光晕装饰极淡（opacity 5-7%），在亮色和暗色下均不突兀。
+
+
+#### 重构 — 登录页面从简陋表单升级为现代化玻璃态设计
+- **变更需求**：用户反馈登录页面过于简陋，需要重新设计视觉并确保真实登录功能正常。
+- **变更内容**：
+  - `apps/web/src/features/login/login-form.tsx`：完全重写登录表单，采用现代卡片布局；新增 Logo 图标区域（Sparkles 图标 + 圆角方块）、彩色渐变顶部装饰条、带图标的输入框（User/Lock 图标前缀）、清晰的错误提示块（AlertCircle 图标 + 红色高亮边框）、加载状态（Loader2 旋转动画 + 按钮禁用）；保留并优化真实登录逻辑（`postGateway` + `saveAuthSession`），空表单前端校验拦截避免发空请求；状态机管理 `idle/loading/error/success` 四态。
+  - `apps/web/src/features/login/login-form.tsx`：登录按钮文案统一为“登录”，与测试断言和正式页面文案保持一致，不再保留开发期空格排版。
+  - `apps/web/src/app/ai-quality-platform/login/page.tsx`：重写登录页背景，新增紫蓝渐变光晕（顶部蓝色 + 右下紫色 oklch 径向渐变）、45°微格网格装饰层（低不透明度）、两个大光晕圆点模糊装饰；补充 SEO metadata（`title/description`）；保持登录页在 `PlatformLayout` 之外独立渲染。
+
+### 2026-05-28 — 应用协议请求头安全边界加固
+
+#### 安全 — 拒绝危险请求头透传，双链路统一校验
+- **变更需求**：协议测试与执行调用都支持用户维护 headerTemplate，必须阻断危险/控制类请求头并统一标准。
+- **变更内容**：
+  - `packages/shared-config/src/index.ts`：新增 `validateApplicationRequestHeaders` 与 `normalizeApplicationRequestHeaders`，统一校验 header 名称、禁止空名/非法字符/禁用头（如 `Connection`、`Host`、`Transfer-Encoding` 等）。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`：协议测试阶段改为使用共享 header 规范化函数。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行调用阶段改为使用共享 header 规范化函数。
+  - `packages/shared-config/src/config.spec.ts`、`apps/quality-platform-service/src/modules/app/app.service.spec.ts`、`apps/quality-execution-service/src/execution.service.spec.ts`：新增禁用 header 与非法 header 测试，确保校验失败时不发起真实调用。
+
+### 2026-05-27 — 上线前无用与临时产物清理
+
+#### 删除/清理 — 移除旧 UI 方案、工具过程产物和未引用前端层
+- **变更需求**：用户要求上线前深入审核全部代码，清理无用、冗余、兼容、重复、废弃、临时、虚拟和不真实的代码与产物。
+- **变更内容**：
+  - `.codex/skills/semi-ui-skills`、`.superpowers/brainstorm`、`docs/superpowers/*`、`docs/semi-frontend-standards.md`：删除已废弃的 Semi/HeroUI/脑暴/实施计划过程产物，避免与当前 Radix + shadcn 风格主线冲突。
+  - `.gitignore`：新增 `.codex/`、`.superpowers/`、`docs/superpowers/`，防止后续工具过程产物重新进入仓库。
+  - `apps/web/src/components/console/*`：删除未被页面引用且不符合当前 Tailwind-only 规范的旧 Console 组件。
+  - `apps/web/src/app/providers.tsx`、`apps/web/src/lib/api/query-client.ts`、`apps/web/src/features/models/model-center-queries.ts`：删除 TanStack Query POC 残留层；当前页面均走显式 API 调用和本地状态。
+  - `apps/web/src/features/apps/types.ts`、`apps/web/src/features/models/types.ts`、`apps/web/src/features/apps/api/plan-execution-api.ts`：删除未引用的旧评估/执行类型、前端过滤历史函数和多余导出。
+  - `apps/web/src/components/ui/*`：收窄当前未使用的 UI 基础组件导出，删除旧版导出名称 `DropdownMenuRoot`，不再保留未使用兼容别名。
+  - `apps/web/src/app/api/proxy/route.ts`、`apps/web/src/features/apps/app-protocol.tsx`、`apps/quality-platform-service/src/modules/app/*`：删除前端任意 URL 调试代理，接口测试统一走后端 `/app/protocol/test.do`，并支持测试未保存的当前表单配置和流式响应提取。
+  - `apps/web/src/features/apps/protocol-template.ts`：删除仅服务于前端代理的模板渲染工具，协议模板统一由后端服务渲染。
+  - `packages/ai-invocation-contract`、`packages/ai-invocation-client`、`packages/ai-model-adapter`、`apps/quality-ai-invocation-service/src/model-invocation.controller.ts`：把纯 AI 调用请求/响应契约、usage 归一和失败结果结构从供应商协议 SDK 中拆出，`ai-invocation-client` 不再依赖 `ai-model-adapter`，业务服务只通过内部客户端和纯契约调用 AI invocation service。
+  - `packages/ai-invocation-client`、`apps/quality-platform-service/src/modules/provider/*`、`apps/quality-execution-service/src/execution.service.ts`：模型中心供应商模型发现、模型测试与执行评估统一通过内部 AI 调用客户端；platform/execution 不再直接或间接依赖 `packages/ai-model-adapter`，避免业务服务继续拼装供应商协议请求。
+  - `packages/ai-invocation-contract`、`packages/ai-model-adapter`、`apps/quality-platform-service/src/modules/provider/*`、`apps/quality-execution-service/src/execution.service.ts`：AI 调用契约新增抽象 `providerKind`，platform/execution 只传 `enableThinking` 这类能力开关；Qwen 的 `enable_thinking` 与 DeepSeek 的 `thinking.type` 供应商字段统一由 AI invocation 边界内的 adapter 翻译。
+  - `packages/ai-invocation-contract`、`packages/ai-model-adapter`、`scripts/check-topology.mjs`：删除 AI 调用契约中的 `providerOptions` 万能供应商透传口，`reasoningEffort` 从 `unknown` 收窄为显式枚举；adapter 不再把任意 provider option 或非法 reasoning 值透传到供应商请求体。
+  - `apps/quality-platform-service/src/modules/provider/*`：模型中心供应商连接测试和模型测试不再在 platform 拼装或回显 `/models`、`/chat/completions`、`/embeddings` 等供应商 wire endpoint；platform 只校验供应商 baseUrl 形状并通过内部 AI invocation client 发起探测，供应商路径细节仅保留在 AI invocation/adapter 边界。
+  - `docs/20260527-005-生产部署拓扑与开发运行标准.md`：生产拓扑图补充 `quality-ai-invocation-service`、`ai-invocation-contract`、`ai-invocation-client`、`ai-model-adapter` 与外部模型供应商边界，明确 AI 调用运行时、纯契约、内部客户端与协议 SDK 的分工。
+  - `packages/shared-database/prisma/schema.prisma`、`packages/shared-database/src/clear-business-data.ts`：删除废弃的 `eval_case_suite` 表模型和清理逻辑。
+  - `apps/quality-platform-service/src/modules/case/*`：删除未被真实前端和执行计划使用的 `/case/suite/**`、`/case/import.do`、`/case/preset/import-to-app.do` 以及相关服务逻辑；预置用例复用统一走分类订阅。
+  - `apps/quality-platform-service/src/modules/case/*`、`apps/web/src/features/cases/api/case-api.ts`：用例创建/更新请求收敛为 `categoryId/query/expectedBehavior/enabled`，移除 `categoryCode/caseCode/code` 等旧兼容别名。
+  - `apps/quality-platform-service/src/modules/plan/*`、`apps/quality-execution-service/src/execution.service.ts`、`apps/web/src/features/apps/app-plans.tsx`：移除计划筛选中的隐藏 `riskLevels` 条件，执行计划只按应用、分类和显式选中用例筛选。
+  - `apps/quality-platform-service/src/modules/provider/scoring.service.*`：删除未接入真实执行链路的规则评分 POC，评估统一由 execution service 编排并通过 AI invocation 边界调用模型。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-platform-service/src/modules/report/*`：删除不真实的 `eval_report` 报告快照表和报告生成/导出/详情端点，仅保留真实工作台统计接口。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-platform-service/src/modules/case/*`、`apps/quality-platform-service/src/modules/plan/*`、`apps/quality-execution-service/src/execution.service.ts`：删除未被当前链路使用的用例风险/参考答案/最低分/人工复核标记/标签/版本字段、运行 warning/block 计数字段和结果 rule/judge 双评分字段。
+  - `packages/shared-database/prisma/schema.prisma`、`packages/shared-database/src/seed.ts`、`apps/quality-platform-service/src/modules/case/case.service.ts`、`apps/quality-platform-service/src/modules/plan/plan.service.ts`、`apps/quality-execution-service/src/execution.service.ts`、`apps/web/src/features/apps/api/plan-execution-api.ts`：删除 `eval_case.caseName` 及对应接口/快照字段，用例主模型只保留分类、问题、期望回答和启停状态，执行展示直接使用问题内容。
+  - `apps/quality-execution-service/src/execution.service.ts`、`apps/web/src/features/apps/*`：删除从旧版 `_RUN_` 编码解析执行时间的兼容逻辑，执行排序和展示只使用数据库返回的 `startAt/endAt`。
+  - `docs/20260526-001-执行历史详情页设计.md`、`docs/20260526-002-真实执行闭环实施计划.md`、`docs/20260526-003-应用评估配置实施计划.md`、`docs/20260526-004-执行评估两阶段与计费审计计划.md`、`docs/20260526-005-执行详情语义与历史快照修复计划.md`：删除已经被当前架构取代的历史实施稿，避免旧独立服务、旧字段和 mock 初期设计继续误导上线判断。
+  - `apps/quality-platform-service/src/health.controller.ts`、`docker-compose.yml`、`docker-compose.dev-deps.yml`、`.env.example`、`scripts/check-topology.mjs`、`docs/*`：删除未被当前业务链路使用的 Redis 运行依赖、健康探测和环境变量，当前执行 Worker 以 MySQL 持久化状态为准。
+  - `docs/20260527-006-上线前代码清障审计.md`：新增清障审计记录，沉淀已清理项、自动化证据和下一批数据库/兼容逻辑/安全边界审计重点。
+  - `apps/web/package.json`、`apps/quality-platform-service/package.json`、`package.json`、`pnpm-lock.yaml`：移除未直接使用的 `@tanstack/react-query`、`jsonpath-plus`、`geist`、platform-service 重复 Prisma 依赖和根级重复 `vitest` 依赖。
+  - `packages/shared-database/package.json`：移除未直接导入的 `mariadb` 依赖，MariaDB 驱动由 Prisma adapter 自身依赖提供。
+  - `apps/quality-platform-service/src/modules/app/app.controller.ts`：修正残留的 Semi 页面注释，改为正式工作区详情页语义。
+  - `apps/quality-ai-invocation-service`、`packages/ai-invocation-client`：补齐内部 AI 调用运行时服务边界，platform 的供应商模型发现、模型测试和 execution 的评估调用不再直接访问外部模型供应商；外部供应商调用集中到 AI invocation service，协议细节由 `packages/ai-model-adapter` 承担。
+  - `packages/ai-model-adapter`：补齐 Embedding 调用标准，统一 Chat 与 Embedding 的请求体、供应商错误码和响应结构。
+  - `docker-compose.yml`、`.env.example`、`package.json`、`scripts/check-health.mjs`、`scripts/check-topology.mjs`、`apps/web/src/features/health/*`：运行拓扑增加 `quality-ai-invocation-service`，开发环境 Node 暴露 3105 调试端口，生产环境仍只暴露 nginx 最终入口。
+  - `packages/shared-auth`、`packages/shared-database/src/seed.ts`、`apps/quality-platform-service/src/modules/auth/*`、`apps/quality-gateway/src/gateway.controller.ts`、`apps/web/src/features/login/login-form.tsx`：删除 `admin/admin123456` 和 `local-admin-token-*` 假登录链路，管理员初始密码改为环境变量显式 seed 后哈希入库，gateway 对业务 API 校验签名 token。
+  - `docker-compose.yml`、`docker-compose.dev-deps.yml`、`.env.example`、`packages/shared-database/src/seed.ts`、`scripts/check-topology.mjs`：删除生产 root/root 数据库连接，MySQL root 密码和应用库账号/密码改为显式环境变量，开发默认账号收敛为 `qtp_app`。
+  - `packages/shared-config/src/index.ts`、`apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/quality-execution-service/src/execution.service.ts`：新增被测应用调用地址策略，开发 Node 允许本机和局域网联调，生产默认阻止 `localhost`、回环地址、内网 IP 和 Docker 内部服务名，协议测试与执行计划共享同一策略。
+  - `docker-compose.yml`、`.env.example`、`scripts/check-topology.mjs`、`docs/20260527-005-生产部署拓扑与开发运行标准.md`、`docs/20260527-006-上线前代码清障审计.md`：生产容器显式设置 `NODE_ENV/QTP_RUNTIME_ENV=production`，并通过 `QTP_ALLOWED_APP_INVOKE_ORIGINS` 只放行明确配置的受控内网被测系统。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-platform-service/src/modules/review/*`、`apps/quality-platform-service/src/modules/report/report.service.ts`、`apps/web/src/features/apps/api/plan-execution-api.ts`：删除 `eval_review.reviewStatus/problemType/nextAction/reviewer` 等没有真实工作流来源的字段，前端不再提交硬编码审阅人；工作台待复核数改为从当前执行结果和最新人工结论实时计算。
+  - `apps/web/src/features/models/api/model-center-api.ts`、`apps/web/src/features/apps/api/app-api.ts`：删除前端对 `parametersJson/capabilitiesJson/limitsJson`、旧 `protocol` 对象和平铺统计字段的兼容读取；模型中心和应用列表只消费当前后端公开字段。
+  - `apps/quality-platform-service/package.json`、`apps/quality-execution-service/package.json`、`packages/ai-invocation-client/package.json`、`scripts/check-topology.mjs`：补齐 AI 调用抽象红线检查，禁止 platform/execution 与 invocation client 依赖 `@ai-quality-platform/ai-model-adapter`，模型协议 SDK 只在 AI invocation 边界内暴露。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/web/src/features/apps/app-form-dialog.tsx`、`apps/web/src/features/apps/types.ts`：应用类型收敛为当前真实可用的 `CHAT`，后端拒绝 `CHATBOT/WORKFLOW` 等旧值或未实现类型，前端不再展示“工作流待开发”的虚拟选项。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-platform-service/src/modules/provider/provider.service.ts`、`apps/quality-execution-service/src/execution.service.ts`：`ai_model` 表 JSON 字段从 `parametersJson/capabilitiesJson/limitsJson` 重命名为 `parameters/capabilities/limits`，数据库、Prisma schema 和服务映射与公开模型契约保持一致。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-platform-service/src/modules/provider/provider.service.ts`：`ai_model.parameters/capabilities/limits` 改为必填 JSON 字段；创建模型和测试未保存模型时必须提交显式配置对象，后端不再把缺失配置补成 `{}`。
+  - `apps/quality-platform-service/src/modules/report/report.service.ts`、`apps/web/src/features/dashboard/dashboard.tsx`：工作台失败批次指标从 `highRiskFailureCount`/“风险执行”改为 `failedRunCount`/“未达标批次”，移除已删除风险等级字段带来的虚假语义。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`：删除应用协议契约中的 `requestSchema/responseSchema` 虚拟元数据，并把应用创建/更新改为显式字段白名单，避免旧字段、临时字段或前端多余字段穿透进应用记录。
+  - `packages/shared-database/prisma/schema.prisma`、`packages/shared-database/src/seed.ts`、`apps/quality-platform-service/src/modules/app/app.service.ts`：删除 `ai_app.businessDomain` 占位字段；当前应用创建页、列表、概览、执行链路均不使用业务域，首次上线不保留默认“未分类”这类虚拟分类字段。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-execution-service/src/execution.service.ts`、`apps/quality-platform-service/src/modules/review/review.service.ts`：删除 `eval_plan.createdBy`、`eval_run.createdBy/runName/costCalculatedAt` 和 `eval_review.reviewedAt` 等未被真实用户链路读写或重复的数据库字段，执行批次不再写入重复 runName，人工修订只保留 `createdAt` 作为记录时间。
+  - `apps/quality-gateway/src/health.controller.ts`、`apps/web/src/lib/api/gateway-client.ts`、`apps/web/src/features/health/hooks.ts`：删除健康聚合与前端 gateway client 中把非法 JSON 吞成 `{}` 的兜底；内部服务或 gateway 返回坏 JSON 时明确标记失败并显示错误消息。
+  - `apps/web/src/features/health/hooks.ts`：健康页不再把 execution worker 诊断缺失字段兜底成 0；execution 返回 `UP` 但缺少 `runningRunCount/activeRunCount` 时前端标记为异常并显示缺失字段原因。
+  - `apps/quality-gateway/src/gateway.controller.ts`：gateway 转发 POST/PUT/PATCH/DELETE 请求时不再把缺失请求体合成为 `{}`；只有调用方真实提交 body 时才设置 JSON body 和 `Content-Type`，避免调用方错误被包装成有效空请求。
+  - `apps/quality-platform-service/src/modules/app/app.controller.ts`：应用列表接口不再把缺失查询 `data` 包装成空对象，协议测试接口不再把缺失 `sampleInput` 包装成空输入；调用方必须显式提交查询对象和测试输入，协议覆盖配置仍保持可选。
+  - `apps/quality-platform-service/src/modules/plan/plan.controller.ts`、`apps/quality-platform-service/src/modules/provider/provider.controller.ts`、`apps/quality-execution-service/src/execution.controller.ts`：计划列表、模型列表和执行记录列表不再把缺失 `data` 包装成空查询，缺字段会直接报错，避免后端故障或调用方坏请求被展示成空列表。
+	  - `apps/quality-execution-service/src/execution.service.ts`：执行用例筛选不再把缺失的预置分类订阅数据源当成空订阅列表；执行服务必须能够读取应用订阅的系统预置分类，否则直接失败，避免漏跑预置用例还生成正常完成批次。
+	  - `apps/quality-platform-service/src/modules/case/*`：用例列表、分类列表、预置列表和 CSV 导入接口不再把缺失的 `data` 或 `rows` 包装成空对象/空数组；调用方必须显式提交查询对象和导入行数组，避免坏请求被显示成空列表或“导入 0 条”。
+	  - `apps/quality-platform-service/src/modules/case/*`：应用关联系统预置分类时不再把缺失的 `categoryIds` 包装成空数组；缺字段会明确报“缺少系统预置分类列表”，显式空数组才表示用户未选择分类。
+	  - `apps/quality-platform-service/src/modules/plan/plan.service.ts`、`apps/quality-execution-service/src/execution.service.ts`：执行计划预览、启动和执行用例筛选不再把缺失的 `caseFilter` 包装成 `{}`；坏计划会明确报“执行计划缺少用例筛选条件”，避免被执行成 0 条用例的正常完成批次。
+	  - `apps/quality-platform-service/src/modules/plan/plan.service.ts`：计划服务读取 MySQL 计划和预览用例时不再把缺失字段用 `String(...)` 强转为空值、把坏 `caseFilterJson` 转成 `{}`、或把非法状态默认成启用；坏持久化记录会直接失败。
+	  - `apps/web/src/features/apps/app-overview.tsx`、`apps/web/src/features/apps/use-plan-runs.ts`、`apps/web/src/features/apps/app-plans.tsx`、`apps/web/src/features/apps/app-history-detail.tsx`：删除概览、计划页和执行详情页把接口失败转成空列表或合成执行版本的伪数据路径；主数据加载失败直接展示错误，分类加载失败保留计划列表但提示真实错误。
+	  - `apps/web/src/lib/api/gateway-client.ts`、`apps/web/src/features/apps/api/plan-execution-api.ts`、`apps/web/src/features/apps/app-cases.tsx`、`apps/web/src/source-hygiene.spec.ts`：列表响应必须包含正式 `list` 数组，执行版本和重新评估响应必须是数组，执行状态查询失败不再返回 `null`；应用用例页加载失败展示错误态，不再显示“暂无用例”。
+		  - `apps/web/src/features/apps/api/app-api.ts`：应用列表/详情映射不再把缺失或非法的应用类型、状态、请求方法、协议配置、执行并发和统计字段默认成 `CHAT/ENABLED/POST/3/0`；协议详情也不再用本地默认模板兜底，坏契约直接报错。
+		  - `apps/web/src/features/apps/app-view-contract.ts`、`apps/web/src/features/apps/app-list.tsx`、`apps/web/src/features/apps/app-overview.tsx`：应用列表和应用概览在渲染前再次校验应用协议与统计信息，不再把缺失 `protocol/stats` 的应用显示成 `POST 未配置接口`、0 用例、0 计划或默认协议配置。
+		  - `apps/web/src/features/apps/api/app-api.ts`：应用列表/详情映射不再把非字符串的应用编码、名称、描述、负责人、创建时间、更新时间或最近执行时间用 `String()` 强转成正常字段；可选文本字段只允许缺失或真实字符串。
+		  - `apps/web/src/features/apps/api/app-evaluation-api.ts`、`apps/web/src/features/apps/app-evaluation.tsx`：评估配置和评估模型列表不再把缺失模型 ID、空系统提示词、缺失模型类型、空供应商或丢失供应商关系包装成可用配置；未配置应用也不再自动选择第一条模型，必须由用户显式保存真实评估模型。
+		  - `apps/web/src/features/cases/api/case-api.ts`：预置分类和预置用例列表映射不再读取旧 `code/categoryName/input` 别名，也不再把缺失 ID、分类名称、问题内容、期望回答或启停状态转成空字符串/默认启用；坏契约直接报错。
+		  - `apps/quality-platform-service/src/modules/case/case.service.ts`：用例分类公开契约删除 `code` 旧别名，创建用例不再通过 seed 风格构造器把缺失 `appCode/categoryId/query/expectedBehavior` 补成空字符串；坏请求会明确报缺少应用编码、分类、问题内容或期望回答。
+		  - `apps/web/src/features/apps/app-cases.tsx`：应用用例页不再直接把 gateway 列表结果强转成分类/用例结构；分类、用例、预置订阅和预置关联响应都按当前公开字段显式校验，坏响应进入页面错误态。
+		  - `apps/quality-platform-service/src/modules/case/case.service.ts`：用例数据库读取层不再过滤畸形分类/用例/订阅行，也不再把缺失字段兜底为空字符串、默认启用或默认 APP 范围；MySQL 记录缺少正式字段会直接报错。
+		  - `apps/quality-platform-service/src/modules/report/report.service.ts`：工作台统计不再把畸形执行批次和人工复核记录兜底为 0、空 ID 或默认排序；执行批次、执行结果、人工复核来源字段缺失时直接失败，避免服务异常被展示成平静的 0 指标。
+			  - `apps/quality-platform-service/src/modules/app/app.service.ts`：应用接口协议请求方法收窄为当前真实支持的 `GET/POST`，保存协议或临时测试协议时不再接受 `PUT/PATCH` 或把非法方法默认成 `POST`；读取持久化应用协议时也不再给缺失的模板、答案路径、成功条件或流式配置套默认值。
+				  - `apps/quality-platform-service/src/modules/app/app.service.ts`：应用服务读取 MySQL 应用与评估配置时不再把缺失字段强转成字符串、把非法状态默认启用、把缺失模型 ID/提示词覆盖开关/并发数包装成可用配置；坏持久化记录会直接失败。
+				  - `apps/quality-platform-service/src/modules/app/app.service.ts`：应用统计来源不再静默过滤畸形预置分类订阅，也不再把缺失最近执行记录字段兜底成 0 或无最近执行时间；最近执行记录缺少总数、通过数或开始时间会直接失败。
+				  - `apps/quality-platform-service/src/modules/app/*`、`apps/web/src/features/apps/*`：应用图标读取不再按 `appCode/appName` 稳定生成兼容图标；持久化应用和前端应用列表必须携带真实 `iconKey/themeKey/variantKey`，坏图标配置直接失败。
+				  - `apps/quality-execution-service/src/execution.service.ts`：执行服务读取持久化应用协议时不再给缺失的请求模板、答案路径或成功条件套默认值，执行前也会拒绝非 `GET/POST` 请求方法，坏协议进入明确失败结果。
+			  - `apps/quality-execution-service/src/execution.service.ts`：执行服务读取持久化应用协议时不再把应用编码、应用名称和调用地址用 `String(...)` 强转，也不再把缺失调用地址补成空字符串；坏协议记录会直接失败。
+		  - `apps/web/src/features/apps/use-plan-runs.ts`、`apps/web/src/features/apps/use-plan-runs.spec.ts`：执行计划分类加载不再使用本地 `readList()` 把坏网关列表响应转成空分类，统一复用严格 `readGatewayList()`，分类接口坏响应会走明确错误提示。
+	  - `apps/web/src/features/models/api/model-center-api.ts`、`apps/web/src/features/models/index.tsx`：删除模型中心 gateway 列表加载失败时返回空供应商/空模型的假数据路径，加载失败改为页面错误提示并保留明确异常。
+		  - `apps/web/src/features/models/api/model-center-api.ts`、`apps/quality-platform-service/src/modules/provider/provider.service.ts`：模型中心不再把未知供应商类型、模型类型、协议或缺失供应商关系默认成 OpenAI 兼容/LLM；坏契约直接报错，避免错误模型配置被包装成可用配置。
+		  - `apps/web/src/features/models/api/model-center-api.ts`：模型中心供应商/模型映射不再把缺失的 `providerCode/providerName/baseUrl/id/modelName/modelId` 转成空字符串记录；后端响应缺少必填字符串时直接报错。
+		  - `apps/web/src/features/models/api/model-center-api.ts`：模型中心供应商/模型映射不再把缺失 `enabled` 默认成启用，也不再把缺失或畸形的 `parameters/capabilities/limits` 强转成空对象；坏响应直接进入页面错误态。
+		  - `apps/quality-platform-service/src/modules/provider/provider.service.ts`：模型供应商和模型数据库读取层不再把缺失的供应商编码、接口地址、模型 ID、数据库 ID 或启停状态转成空字符串/默认启用；可选 JSON 配置只允许空值或对象，坏数据库记录会直接失败。
+		  - `apps/web/src/features/models/model-center-schema.ts`：模型保存/测试 payload 不再把非法上下文窗口、最大输出 Token、向量维度或计费价格静默兜底成 `128000/4096/undefined`；坏数值会明确报错，避免错误模型配置被伪装成默认配置。
+		  - `apps/web/src/features/models/models-panel.tsx`、`apps/web/src/source-hygiene.spec.ts`：模型中心编辑已有模型时不再把缺失的上下文窗口、最大输出 Token、流式/JSON/工具/思考能力补成 `4096/true/false`；坏模型记录不会被本地编辑表单包装成可保存配置。
+	  - `apps/web/src/features/dashboard/dashboard.tsx`：删除首页工作台 `EMPTY_METRICS` 和 `Promise.allSettled` 局部空数据兜底；统计、应用和最近执行任一主链路加载失败时显示“工作台加载失败”，不再用 0 指标或“暂无执行记录”掩盖故障。
+	  - `apps/web/src/features/dashboard/dashboard.tsx`：工作台统计响应不再把缺失或非法指标兜底成 0，重点关注应用不再把缺失 `stats` 渲染成 0 用例/0 计划；坏统计响应直接进入加载失败。
+	  - `docs/20260527-002-服务架构收敛设计.md`、`docs/20260527-004-服务架构收敛后续优化目标.md`：修正旧 `quality-ai-service` 归并和“三服务拓扑”表述，明确最终后端运行单元包含 gateway/platform/execution/AI invocation，AI 模型调用运行时必须独立抽象为内部服务。
+	  - `apps/web/src/features/apps/api/app-api.spec.ts`、`apps/web/src/features/models/api/model-center-api.spec.ts`：删除只为旧响应字段设计的前端兼容测试数据，测试集只保留当前公开契约。
+  - `apps/quality-platform-service/src/modules/case/*`、`apps/quality-platform-service/src/modules/plan/*`、`apps/quality-platform-service/src/modules/provider/*`：创建/更新用例、分类、执行计划、模型供应商和模型配置时统一改为显式字段白名单，不再把请求体额外字段透传到服务记录或接口响应。
+  - `apps/quality-platform-service/src/modules/provider/*`、`apps/web/src/features/models/*`：模型供应商公开列表和保存响应不再返回明文 API Key，仅返回 `apiKeyConfigured`；编辑供应商时 API Key 留空会保留已保存密钥，避免前端长期持有或误提交空密钥覆盖生产配置。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/web/src/features/apps/api/app-api.ts`：应用负责人保留为真实可选字段，不再在后端创建或前端保存/映射时注入 `system` 这类虚拟默认值；未设置负责人保持为空，由页面展示“未设置”。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/quality-execution-service/src/execution.service.ts`、`apps/web/src/features/apps/*`：应用接口协议模板统一使用 `{{case.input.query}}`，移除旧 `{{case.query}}` 兼容解析，并禁止执行阶段通过模板向被测应用暴露 `expectedBehavior` 期望答案。
+  - `packages/shared-database/prisma/schema.prisma`、`apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/quality-execution-service/src/execution.service.ts`：删除 `ai_app.authType/authConfig` 隐藏鉴权字段和自动注入请求头逻辑，应用接口调用只以页面真实维护的 `headerTemplate` 为准，避免两套鉴权来源和隐藏密钥回显。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/quality-execution-service/src/execution.service.ts`：收紧应用接口成功条件表达式，非空表达式必须是受支持的 `$.path == value` 且真实命中；不再把不支持的表达式或“答案非空”兜底当成调用成功。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行恢复和批次统计只认 `appStatus/evaluationStatus` 的正式终态，不再把缺少阶段字段但已有答案或 `passStatus` 的旧结果当作已完成、可统计结果。
+  - `apps/quality-execution-service/src/execution.service.ts`：执行结果详情、重跑和恢复不再从 `requestJson`、`inputJson/expectedJson` 或结果顶层字段反补分类、问题和期望回答；`caseSnapshotJson` 必须具备当前正式 `categoryId/question/expectedAnswer`。
+  - `docs/ai-quality-platform-design.md`、`apps/quality-gateway/src/gateway.controller.spec.ts`、`apps/quality-platform-service/src/modules/case/excel.service.spec.ts`、`apps/quality-execution-service/src/execution.service.ts`、`apps/quality-platform-service/src/modules/review/review.service.ts`：移除演示种子数据、示例被测服务和 demo 命名残留，文档明确系统启动只初始化管理员账号，业务应用、用例和计划均来自真实维护或导入。
+  - `packages/shared-database/src/seed.ts`、`packages/shared-database/src/constants.ts`、`apps/quality-platform-service/src/modules/case/case.service.ts`：删除 seed 模块中业务应用、分类、用例、计划、运行批次的空种子接口和多模型 seed 操作规划器；系统预置应用编码改为数据库常量，平台用例服务自持业务类型。
+  - `apps/quality-platform-service/src/modules/plan/plan.service.ts`：删除执行计划服务里的 `process.env.VITEST` 数据库禁用分支和生产代码内置 Map 存储兜底，改为正式 `PlanDataStore` 注入；测试内存存储仅保留在 spec 内。
+  - `apps/quality-platform-service/src/modules/review/review.service.ts`：删除人工复核服务里的 `process.env.VITEST` 数据库禁用分支、Map 存储兜底和数据库不可用时构造复核记录的假写入逻辑，改为正式 `ReviewDataStore` 注入。
+  - `apps/quality-platform-service/src/modules/provider/provider.service.ts`：删除模型供应商服务里的 `process.env.VITEST` 数据库禁用分支、provider/model Map 存储兜底、内存模型 ID 和 `saved ?? record` 假持久化逻辑，改为正式 `ProviderDataStore` 注入。
+  - `apps/quality-platform-service/src/modules/app/app.service.ts`：删除 AI 应用服务里的 `process.env.VITEST` 数据库禁用分支、应用/评估配置 Map 存储兜底和 `saved ?? record` 假持久化逻辑，改为正式 `AppDataStore` 注入。
+	  - `apps/quality-platform-service/src/modules/report/report.service.ts`：删除工作台统计服务里的 `process.env.VITEST` 数据库禁用分支和数据库不可用时返回空统计的假兜底，改为正式 `ReportDataStore` 注入。
+	  - `apps/quality-platform-service/src/health.controller.ts`：删除健康检查里的 `process.env.VITEST` 数据库探测跳过分支，测试改为显式注入探针，默认健康检查始终真实探测 MySQL。
+	  - `apps/quality-platform-service/src/modules/case/case.service.ts`：删除用例服务数据库层 `process.env.VITEST` 禁用分支、读表异常吞噬、数据库不可用时回退服务内 Map 的假数据路径，以及服务内 `categories/cases/preset/subscriptions` 缓存；分类、用例和预置订阅均从 `CaseDataStore` 读取，测试用内存状态只保留在 spec 注入存储中。
+	  - `apps/quality-execution-service/src/execution.service.ts`：删除执行服务里的 `process.env.VITEST` 数据库禁用和启动恢复跳过分支，启动恢复默认由是否使用默认数据库与 worker 开关决定，测试通过显式依赖注入控制。
+	  - `apps/quality-execution-service/src/execution.service.ts`：删除 `ExecutionDatabase` 中不可达的 `if (!prisma) return null/undefined` 分支，默认执行数据库层只表达真实 Prisma/MySQL 读写，不再保留数据库客户端为空的旧兜底路径。
+	  - `apps/quality-execution-service/src/execution.service.ts`：删除执行服务 `saved ?? run/result/call` 假持久化兜底，执行批次、执行结果和评估调用审计写入返回空值时直接失败；恢复任务遇到缺失结果时会真实补写持久化结果，不再制造仅存在于内存里的占位结果。
+		  - `apps/quality-execution-service/src/execution.service.ts`：删除执行服务配置读取的内存缓存和虚拟计划兜底，用例、计划、应用协议、评估配置、裁判模型与供应商均从注入数据源读取；缺失配置直接失败，不再构造 `planName = planCode` 的假计划。
+		  - `apps/quality-execution-service/src/execution.service.ts`：删除执行服务把 `runs/results/judgeCalls` 进程内 Map 当作持久化数据源的兜底路径；批次、结果和评估调用审计查询均要求注入数据源返回真实持久化记录，测试改为显式 stateful 存储桩。
+		  - `apps/quality-execution-service/src/execution.service.ts`：执行批次数据库读取不再把缺失计数、Token、平均分、状态、阶段或计费状态默认成 `0/COMPLETED/NOT_CALCULATED`；持久化 run 记录字段缺失或枚举非法时直接失败，避免坏批次被展示成正常完成历史。
+		  - `apps/quality-execution-service/src/execution.service.ts`：执行服务读取评估配置、裁判模型和裁判供应商时不再把缺失模型 ID、空供应商字段、未知模型类型/协议或缺失启停状态默认成可用配置；坏记录直接失败，避免评估调用以空模型、错误协议或不可用供应商继续发起。
+			  - `apps/quality-execution-service/src/execution.service.ts`：执行服务读取持久化用例和计划时不再把缺失应用编码、分类 ID、问题内容、期望回答、用例作用域、计划名称或计划状态默认成空值、APP 用例或启用计划；执行编排层也不再从 `inputJson/expectedJson` 反补问题内容、期望回答或默认启用用例；坏用例/坏计划直接失败，避免错误筛选进入真实执行。
+			  - `apps/quality-execution-service/src/execution.service.ts`：执行结果和评估调用审计读取不再把缺失阶段、通过状态、最终回答、最终得分、提示词、调用状态或计费状态默认成 `PENDING/PASS/空值/FAILED/SKIPPED_NO_PRICE`；坏历史记录直接失败，避免错误结果污染详情、统计和计费审计。
+			  - `apps/quality-execution-service/src/execution.service.ts`：执行结果持久化不再把缺失的 `caseSnapshotJson/requestJson/appStatus/evaluationStatus` 补成当前用例快照、空对象或 `PENDING`；写入和更新都要求执行链路提交真实结果字段，坏结果直接失败。
+			  - `apps/quality-execution-service/src/execution.service.ts`：重新评估和重试从执行结果快照重建用例时不再把缺失分类、问题内容、期望回答或快照 JSON 补成空字符串/空对象；坏快照直接失败，避免用空用例继续调用评估模型或被测应用。
+			  - `apps/quality-execution-service/src/execution.service.ts`：裁判模型评分 JSON 不再为缺失 `score`、非法 `passStatus` 或缺失 `reason` 套 0 分/FAIL/默认理由；评估模型必须返回当前评分契约，否则本次评估标记为 `JUDGE_EVALUATION_FAILED`。
+		  - `apps/quality-execution-service/src/execution.service.ts`：删除执行数据库层对非数字用例 ID、执行结果 ID 和评估审计外键的假成功处理；真实 Prisma 写入必须使用已持久化数据库 ID，不再直接返回未落库结果或把无效外键写成 `0`。
+	  - `apps/quality-execution-service/src/health.controller.ts`、`apps/quality-execution-service/src/execution.service.ts`：执行服务健康检查不再吞掉执行批次读取失败并显示空闲 Worker；读取持久化执行状态失败时返回 `DOWN` 和明确错误消息，gateway 聚合健康随之降级。
+	  - `packages/shared-database/prisma/schema.prisma`、`docs/ai-quality-platform-design.md`：删除未读写的 `eval_result.traceId` 废弃字段和应用响应 trace 抽取旧承诺；真实 AI 调用追踪保留在 AI invocation 请求契约与评估调用审计中。
+	  - `apps/web/src/features/cases/case-csv.ts`：用例 CSV 下载模板删除内置“敏感问题”示例行，只保留正式表头，避免首次上线向用户模板注入样例业务数据。
+	  - `apps/web/src/lib/error.ts`、`apps/web/src/features/apps/app-protocol.tsx`、`apps/web/src/features/apps/case-form-dialog.tsx`、`apps/web/src/source-hygiene.spec.ts`：删除前端 `catch (...: any)` 临时类型逃逸，错误消息和 Abort 判断统一通过 `unknown` 辅助函数收口，并增加源码卫生红线测试。
+	  - `apps/quality-platform-service/src/modules/case/case.service.ts`：删除用例服务实体 ID 的时间戳 + `Math.random()` 临时生成方式，改为 `node:crypto` 随机字节生成，并用源码红线测试阻止可预测随机源回流。
+	  - `packages/ai-invocation-client/src/index.ts`：AI 调用客户端不再把内部 AI 服务的非法 JSON 或缺少正式状态的 200 响应解包成空对象并强转为成功结果；坏响应统一返回 `AI_INVOCATION_SERVICE_BAD_RESPONSE`。
+	  - `apps/quality-platform-service/src/modules/case/case.service.ts`：预置分类订阅写入/删除不再 `catch {}` 吞掉所有数据库异常；只对 Prisma `P2002` 已存在和 `P2025` 已删除两类幂等错误静默处理，其余错误继续抛出。
+	  - `apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/quality-execution-service/src/execution.service.ts`：协议测试和执行调用不再把非法请求头/请求体 JSON 模板吞成空对象继续调用；请求模板必须解析为 JSON 对象，否则直接返回明确配置错误，避免坏协议被伪装成调用通过。
+	  - `apps/quality-platform-service/src/modules/app/app.service.ts`、`apps/quality-execution-service/src/execution.service.ts`、`apps/quality-execution-service/src/adapter.service.ts`：应用协议测试和执行调用不再把非法响应 JSON 解析成 `{}` 或 `{ rawText }` 继续通过；非流式响应和 SSE data 事件必须是 JSON 对象，旧的未引用 `AdapterService` 流式解析残留已删除。
+	  - `apps/quality-execution-service/src/execution.service.ts`：评估模型返回的评分内容不再用 `{}` 兜底成默认 `FAIL/0分` 且标记为评估通过；裁判评分必须是合法 JSON 对象，否则结果进入评估失败并写入明确错误码。
+		  - `packages/shared-auth/src/index.ts`、`packages/shared-config/src/index.ts`：认证 token 解码不再把非法 JSON 段兜底成空对象；生产被测应用 allowlist 配置包含非法 URL 时 fail-closed，不再静默忽略坏配置后继续放行公网调用。
+		  - `apps/quality-platform-service/src/modules/app/app.service.ts`：自动生成应用编码不再使用 `Date.now().toString(36)` 时间戳后缀，改为 `node:crypto` 随机字节后缀，并增加源码红线测试。
+		  - `apps/quality-execution-service/src/execution.service.ts`：执行 Worker 失败时不再把所有根因覆盖成固定“执行任务处理失败”，健康诊断 `lastError` 记录真实异常消息，方便上线后排查计划读取、数据库和执行配置错误。
+		  - `apps/quality-execution-service/src/execution.service.ts`：执行 Worker 异常收尾不再二次读取结果并在失败时吞错成空数组；批次失败摘要使用本次任务已持有的真实结果快照，避免费用审计等后续异常把已完成应用/评估计数抹成 0。
+		  - `apps/quality-execution-service/src/execution.service.ts`：默认后台 runner 不再用 `catch(() => undefined)` 静默吞掉未处理异常，未捕获后台错误会写入 Worker 健康诊断 `lastError`。
+
 ### 2026-05-27 — 开发 Node 与生产 Docker 拓扑收敛
 
 #### 重构 — 生产只暴露 nginx 最终入口，开发保留 Node 调试端口
 - **变更需求**：用户明确开发环境使用 Node，本机调试端口可以暴露；生产环境使用 Docker，只暴露最终系统入口，内部服务不映射宿主机端口。
 - **变更内容**：
-  - `docker-compose.yml`：改为生产拓扑，新增 nginx 入口，默认只映射 `${PUBLIC_WEB_PORT:-5670}:80`，web/gateway/platform/execution/mysql/redis 均不映射宿主机端口。
-  - `docker-compose.dev-deps.yml`：新增开发依赖 compose，仅暴露 MySQL 与 Redis，供本机 `pnpm dev:*` 使用。
+  - `docker-compose.yml`：改为生产拓扑，新增 nginx 入口，默认只映射 `${PUBLIC_WEB_PORT:-5670}:80`，web/gateway/platform/execution/AI invocation/mysql 均不映射宿主机端口。
+  - `docker-compose.dev-deps.yml`：新增开发依赖 compose，仅暴露 MySQL，供本机 `pnpm dev:*` 使用。
   - `nginx/default.conf`：新增入口转发规则，页面流量转发到 `web:3000`，API 与聚合健康转发到 `quality-gateway:8080`。
   - `packages/shared-config/src/index.ts`：公共 API URL 支持开发端口 `3000 -> 8080` 与生产 nginx 同源两种模式，支持 `NEXT_PUBLIC_GATEWAY_ORIGIN=same-origin`。
   - `apps/quality-gateway/src/health.controller.ts`：`/ai-quality-platform/health.do` 改为聚合 platform/execution 内部健康结果。
@@ -22,22 +234,22 @@
 #### 文档 — 规划后端从 8 个业务服务收敛为平台服务与执行服务
 - **变更需求**：用户希望重新评估当前服务端服务数量，减少不必要的后端进程，同时保留 gateway、AI 调用标准和异步 worker 的合理边界。
 - **变更内容**：
-  - `docs/20260527-002-服务架构收敛设计.md`：新增服务架构收敛设计，明确目标拓扑为 `quality-gateway + quality-platform-service + quality-execution-service + ai-model-adapter package`。
+  - `docs/20260527-002-服务架构收敛设计.md`：新增服务架构收敛设计，明确目标拓扑为 `quality-gateway + quality-platform-service + quality-execution-service + quality-ai-invocation-service + ai-model-adapter package`。
   - `docs/20260527-002-服务架构收敛设计.md`：梳理现有 business/case/plan/ai/review/statistics/system/execution 服务归并去向、公开 API 兼容策略、健康检查调整、AI 模型调用标准和分阶段迁移验收清单。
   - `docs/20260527-003-服务架构收敛实施计划.md`：新增实施计划，将服务收敛拆分为共享配置、gateway、platform 服务、健康检查、AI adapter、旧服务删除和浏览器验收等可执行任务。
   - `packages/shared-config/src/index.ts`、`apps/quality-gateway/src/gateway-router.ts`：区分公开 API 段与真实部署服务，business/case/plan/ai/review/statistics/system 统一转发到 platform，execution 继续转发到 execution。
   - `apps/quality-platform-service`：新增平台服务，承载应用、用例、计划、模型配置、人工复核、报表统计和登录模块；删除旧的 business/case/plan/ai/review/statistics/system 独立服务目录。
   - `packages/ai-model-adapter`：新增模型调用标准 package，统一 OpenAI/Qwen 兼容请求体、`enable_thinking: false`、usage 归一和失败结果结构；执行服务复用该 adapter。
-  - `package.json`、`scripts/check-health.mjs`、`apps/web/src/features/health/*`：本地启动和健康检查收敛为 gateway/platform/execution 三个关键运行单元，健康页同步展示新拓扑。
+  - `package.json`、`scripts/check-health.mjs`、`apps/web/src/features/health/*`：本地启动和健康检查收敛为 gateway/platform/execution/AI invocation 关键运行单元，健康页同步展示新拓扑。
   - `docs/ai-quality-platform-design.md`：更新总体架构、端口规划、服务拆分和 Docker 部署规划，移除旧 8 业务服务拓扑。
   - `docs/ai-quality-platform-design.md`：修正执行链路中的旧 `ai-service`、`statistics-service` 和 Redis 队列表述，改为 execution service 阶段推进、`ai-model-adapter` 模型评估和 platform 统计查询。
   - `docs/20260527-004-服务架构收敛后续优化目标.md`：新增收敛后的持续优化目标，按合并收口、运行健康、执行 Worker、AI 调用标准、Platform 模块治理和部署 CI 六类规划后续推进顺序。
-  - `apps/quality-platform-service/src/health.controller.ts`：健康检查返回数据库、Redis 和模型供应商诊断详情；数据库作为 platform 基础健康硬依赖，模型供应商作为可选诊断项。
+  - `apps/quality-platform-service/src/health.controller.ts`：健康检查返回数据库和模型供应商诊断详情；数据库作为 platform 基础健康硬依赖，模型供应商作为可选诊断项。
   - `apps/quality-execution-service/src/health.controller.ts`、`apps/quality-execution-service/src/execution.service.ts`：执行服务健康检查增加 worker 启用状态、活跃运行数、RUNNING 批次数、恢复状态和最近心跳。
   - `apps/web/src/features/health/service-health.tsx`：健康页增加公开 API 段到运行单元的路由关系，并展示数据库和 worker 诊断摘要。
   - `packages/ai-model-adapter`、`apps/quality-execution-service/src/execution.service.ts`：模型调用标准从请求体/usage 工具扩展为 OpenAI 兼容 ProviderAdapter、稳定供应商错误码和通用 token 费用计算，执行评估阶段改为复用 adapter。
   - `apps/quality-platform-service/src/modules/*/README.md`：补充 platform 内部模块职责边界和依赖规则，避免服务合并后模块边界退化。
-  - `docker-compose.yml`、`.env.example`、`.github/workflows/ci.yml`、`scripts/check-topology.mjs`、`docs/004-本地部署.md`：部署和 CI 收敛为 web/gateway/platform/execution/mysql/redis 拓扑，新增拓扑检查脚本并记录 `WATCHPACK_POLLING=true` 本地兜底启动方式。
+  - `docker-compose.yml`、`.env.example`、`.github/workflows/ci.yml`、`scripts/check-topology.mjs`、`docs/004-本地部署.md`：部署和 CI 收敛为 web/gateway/platform/execution/AI invocation/mysql 拓扑，新增拓扑检查脚本并记录 `WATCHPACK_POLLING=true` 本地兜底启动方式。
 
 ### 2026-05-27 — 首页应用工作台真实数据与布局重设计
 
@@ -221,10 +433,10 @@
 #### 修复 — 新建计划和执行批次不再使用可猜测时间戳编码
 - **变更需求**：用户反馈任务 ID 和任务执行 ID 是前端/后端拼接出来的可猜测字符串，尤其执行 ID 直接暴露时间戳，应该类似应用 ID 一样不可预测。
 - **变更内容**：
-  - `apps/quality-plan-service/src/plan.service.ts`：新建计划在未显式传入 `planCode` 时由后端生成 `plan-xxxxxxxxxx` 形式随机编码，并做碰撞检查；保留旧显式编码兼容测试和历史数据。
+  - `apps/quality-plan-service/src/plan.service.ts`：新建计划在未显式传入 `planCode` 时由后端生成 `plan-xxxxxxxxxx` 形式随机编码，并做碰撞检查；调用方仍可在创建时显式指定计划编码。
   - `apps/quality-execution-service/src/execution.service.ts`：启动执行时由后端生成 `run-xxxxxxxxxx` 形式随机执行批次编码，不再拼接 `planCode` 和 `Date.now()`。
   - `apps/web/src/features/apps/app-plans.tsx`、`apps/web/src/features/apps/api/plan-execution-api.ts`：前端创建计划不再自行生成或提交 `planCode`，改由后端返回。
-  - `apps/web/src/features/apps/use-plan-runs.ts`、`apps/web/src/features/apps/app-history.tsx`、`apps/web/src/features/apps/app-history-detail.tsx`：执行记录排序与时间展示改用后端真实 `startAt/endAt`，仅对旧 `_RUN_` 数据做兼容降级；详情页兜底标题不再暴露原始执行 ID。
+  - `apps/web/src/features/apps/use-plan-runs.ts`、`apps/web/src/features/apps/app-history.tsx`、`apps/web/src/features/apps/app-history-detail.tsx`：执行记录排序与时间展示改用后端真实 `startAt/endAt`，详情页兜底标题不再暴露原始执行 ID。
   - `apps/quality-plan-service/src/plan.service.spec.ts`、`apps/quality-execution-service/src/execution.service.spec.ts`、`apps/web/src/features/apps/app-plans.spec.tsx`：新增不可猜测 plan/run 编码与前端不提交计划编码的回归测试。
 
 ### 2026-05-26 — 执行记录详情路由修复
@@ -315,7 +527,7 @@
 - **变更需求**：执行计划页功能升级：增加计划状态感知（从未执行/执行中/已完成）、执行中轮询、最近一次结果可点击、计划卡片展开历史、侧边栏查看完整历史、内嵌详情页；移除独立「执行历史」Tab。
 - **变更内容**：
   - `apps/web/src/components/ui/sheet.tsx`：新增 Sheet 侧边抽屉 UI 组件（基于 @radix-ui/react-dialog）。
-  - `apps/web/src/features/apps/api/plan-execution-api.ts`：扩展 `RunRecord` 类型（新增 `startAt`/`endAt`/`durationMs`/`planName` 字段）；新增 `listRunsByPlan`、`getRunStatus`、`parseRunStartTime`、`formatDuration` 工具函数。
+  - `apps/web/src/features/apps/api/plan-execution-api.ts`：扩展 `RunRecord` 类型（新增 `startAt`/`endAt`/`durationMs`/`planName` 字段）；新增执行状态查询和耗时格式化工具函数。
   - `apps/web/src/features/apps/use-plan-runs.ts`：新建数据 Hook，统一管理计划列表和执行记录；自动检测 RUNNING 状态开启 5s 轮询；按 planCode 归组 runs 数据。
   - `apps/web/src/features/apps/plan-history-sheet.tsx`：新建侧边栏历史组件，展示某计划完整执行记录，支持状态颜色区分、通过率显示、点击进入详情。
   - `apps/web/src/features/apps/app-plans.tsx`：全面重构，计划卡片支持三态（从未执行灰色占位 / 执行中蓝色进度条+轮询 / 已完成绿色摘要）；最近一次结果区改为可点击 button，hover 显示「点击查看详情」提示；卡片底部可展开显示最近 3 次历史记录行，超过 3 次显示「查看更多」入口打开侧边栏；所有历史记录均可点击跳转内嵌详情页（复用 `AppHistoryDetail`）；新增刷新按钮。
@@ -336,8 +548,8 @@
 #### 修复 — 应用列表卡片统计数据始终为 0/-
 - **变更需求**：用户反馈应用列表卡片上用例数、计划数、通过率没有正确显示。
 - **变更内容**：
-  - `apps/web/src/features/apps/api/app-api.ts`：`mapApp` 函数之前未映射 `stats` 字段，导致所有 App 对象的 `stats` 始终为 `undefined`。现在从后端返回数据中读取 `stats` 对象（或平铺字段 `caseCount`/`planCount`/`lastRunAt`/`lastPassRate`），正确构建统计信息。
-  - `apps/web/src/features/apps/api/app-api.ts`：应用列表兼容后端顶层协议字段 `requestMethod/invokeUrl/adapterConfig`，避免真实接口地址被误显示为“未配置接口”。
+  - `apps/web/src/features/apps/api/app-api.ts`：`mapApp` 函数之前未映射 `stats` 字段，导致所有 App 对象的 `stats` 始终为 `undefined`。现在从后端返回的 `stats` 对象读取用例数、计划数、最近执行时间和最近通过率。
+  - `apps/web/src/features/apps/api/app-api.ts`：应用列表读取后端顶层协议字段 `requestMethod/invokeUrl/adapterConfig`，避免真实接口地址被误显示为“未配置接口”。
   - `apps/quality-business-service/src/app.service.ts`：`/app/list.do` 返回每个应用的真实用例数、计划数、最近执行时间和最近通过率；用例数同步计入应用自建用例和已关联的系统预置用例。
   - `apps/quality-business-service/src/app.service.spec.ts`、`apps/web/src/features/apps/api/app-api.spec.ts`：补充应用列表协议字段和统计字段映射的回归测试。
 
@@ -350,7 +562,7 @@
 #### 修复 — 编辑应用弹窗应用类型不回显、含无效接口配置 Tab、保存按钮不可点击
 - **变更需求**：编辑应用时应用类型下拉显示为空；弹窗内含无用的接口配置 Tab（接口配置应在应用详情页单独管理）；保存按钮因 URL 必填校验始终处于禁用状态。
 - **变更内容**：
-  - `apps/web/src/features/apps/app-form-dialog.tsx`：全量重写，去掉接口配置 Tab 及相关字段；应用类型回填时兼容后端可能返回的历史值（如 `CHATBOT`），统一归为 `CHAT`；保存按钮 disabled 条件仅保留 `!appName.trim()`，不再要求 url 非空。
+  - `apps/web/src/features/apps/app-form-dialog.tsx`：全量重写，去掉接口配置 Tab 及相关字段；应用类型固定为当前已实现的 `CHAT`；保存按钮 disabled 条件仅保留 `!appName.trim()`，不再要求 url 非空。
 
 #### 修复 — 应用内侧边栏"当前应用"显示 appCode 而非应用名
 - **变更需求**：进入应用后，侧边栏「当前应用」显示的是 URL 中的 appCode（如"c"），而非应用名称（如"北京信用小京灵"）。
@@ -387,7 +599,7 @@
 #### 优化 — 结果列表直接展示问题、期望回答和实际回答
 - **变更需求**：用户反馈执行历史详情的用例结果列表不应再显示用例标题，应直接展示问题内容，并在下方展示期望回答和实际回答。
 - **变更内容**：
-  - `apps/web/src/features/apps/app-history-detail.tsx`：结果列表移除 `caseName` 标题展示，主信息改为问题内容；列表下方新增实际回答展示，保留期望回答和评分依据。
+  - `apps/web/src/features/apps/app-history-detail.tsx`：结果列表移除用例标题展示，主信息改为问题内容；列表下方新增实际回答展示，保留期望回答和评分依据。
   - `apps/web/src/features/apps/app-history-detail.tsx`：查看明细弹窗标题同步改为问题内容，避免再次显示兼容标题字段。
   - `apps/web/src/features/apps/app-history-detail.spec.tsx`：补充回归断言，确保列表不显示旧标题，并直接展示实际回答。
 
@@ -448,8 +660,8 @@
 #### 重构 — 用例字段收敛为问题分类、问题内容、期望回答
 - **变更需求**：用户要求预置用例和应用用例不再维护用例名称、风险等级，仅保留「问题分类、问题内容、期望回答」三个业务属性。
 - **变更内容**：
-  - `apps/quality-case-service/src/case.service.ts`：后端创建、导入和更新用例时不再要求 `caseName`、`riskLevel`，仅用问题内容派生旧表兼容字段。
-  - `packages/shared-database/src/seed.ts`：将种子用例的 `caseName`、`riskLevel` 调整为兼容可选字段。
+  - `apps/quality-case-service/src/case.service.ts`：后端创建、导入和更新用例时不再要求用例名称、风险等级，统一使用问题分类、问题内容和期望回答。
+  - `packages/shared-database/src/seed.ts`：种子用例跟随三字段模型收敛，不再维护用例名称和风险等级。
   - `apps/web/src/features/cases/*`：预置用例列表、弹窗和 API 请求移除用例名称与风险等级，改用问题分类、问题内容、期望回答。
   - `apps/web/src/features/apps/app-cases.tsx`、`apps/web/src/features/apps/case-form-dialog.tsx`：应用用例展示与表单同步收敛为三字段。
   - 补充后端和前端回归测试，覆盖三字段创建、导入、展示与请求 payload。
@@ -549,7 +761,7 @@
 - **变更内容**：
   - `features/apps/` 旧文件全量删除（`app-catalog-page.tsx`、`app-detail-page.tsx`、`app-data.ts` 等）
   - `components/app-shell.tsx`：重构侧边栏为二级导航——进入应用后菜单切换为应用子菜单，平台菜单下沉到底部弱化显示；移除 `currentPath` prop 改用 `usePathname()`
-  - `components/ui/popover-confirm.tsx`：新增 `trigger` prop 和 `confirmLabel` alias，向下兼容
+  - `components/ui/popover-confirm.tsx`：新增删除确认气泡组件，用于应用内危险操作二次确认
   - `features/apps/types.ts`：完整类型定义（App/Assertion/AppCase/RunPlan/ExecutionRun 等），含评估模型三层继承设计
   - `features/apps/mock-hooks.ts`：Mock 数据 + CRUD Hooks（useApps/useApp/useAppCases/useRunPlans/useExecutionRuns）
   - `features/apps/app-list.tsx`：AI 应用列表页（卡片网格，展示通过率/用例数/计划数）

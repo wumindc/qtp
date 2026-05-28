@@ -6,7 +6,7 @@ describe('CaseExcelService', () => {
     const service = new CaseExcelService();
     const rows = [
       {
-        appCode: 'demo_credit_assistant',
+        appCode: 'credit_assistant',
         categoryId: 'NORMAL_QA',
         query: '企业信用报告怎么查？',
         expectedBehavior: '正常回答',

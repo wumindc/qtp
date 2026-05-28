@@ -6,7 +6,7 @@
 
 项目文根：`ai-quality-platform`
 
-系统定位：面向 AI 应用的质量治理平台，帮助测试人员通过 Web 页面完成 AI 应用接入、测试用例维护、测试计划执行、自动评分、人工复核、报告输出和回归沉淀。
+系统定位：面向 AI 应用的质量治理平台，帮助测试人员通过 Web 页面完成 AI 应用接入、测试用例维护、测试计划执行、自动评分、人工复核、统计看板和回归沉淀。
 
 本项目按正式生产系统规划，不以临时 Demo 为目标。系统可以分阶段建设，但每个阶段交付的功能都应形成完整闭环，不交付只有页面、没有真实数据流和业务处理的半成品功能。
 
@@ -14,7 +14,7 @@
 
 1. 正式项目优先
 
-   平台从第一天按长期演进系统设计，前后端、数据库、队列、部署方式都预留生产化扩展空间。
+   平台从第一天按长期演进系统设计，前后端、数据库、执行恢复和部署方式都预留生产化扩展空间。
 
 2. 分阶段交付，功能完整
 
@@ -26,7 +26,7 @@
 
 4. 以应用层接口为主测对象
 
-   测试平台优先调用自研 AI 应用层接口，评估真实业务链路的最终输出质量。Dify 直连测试作为底层专项能力保留。
+   测试平台调用已登记的 AI 应用层接口，评估真实业务链路的最终输出质量；第一版不提供绕过应用层的底层平台直连测试能力。
 
 5. 用例体系是核心资产
 
@@ -45,8 +45,6 @@
 - Tailwind CSS
 - shadcn/ui
 - lucide-react
-- TanStack Table
-- Recharts
 
 前端风格参考 Dify、Linear、Vercel Console 等现代 SaaS 管理台。避免传统 antd Pro 后台风格。
 
@@ -63,9 +61,7 @@
 - NestJS
 - TypeScript
 - MySQL
-- Redis
-- BullMQ
-- Prisma 或 TypeORM
+- Prisma
 
 ORM 选型：Prisma。
 
@@ -83,16 +79,6 @@ password: root
 database: ai_quality_platform
 ```
 
-Redis：
-
-```text
-host: 127.0.0.1
-port: 6379
-password: sunsharing
-```
-
-Redis 主要用于执行任务队列、异步评分任务、执行状态缓存、报告生成任务和后续分布式锁。
-
 ## 4. 总体架构
 
 ```text
@@ -100,14 +86,17 @@ Next.js Web
   |
   | HTTP
   v
-Quality Gateway
-  |
-  +--> quality-platform-service
-  +--> quality-execution-service
+  Quality Gateway
+    |
+    +--> quality-platform-service
+    +--> quality-execution-service
+    +--> quality-ai-invocation-service
+
+quality-ai-invocation-service
+  +--> packages/ai-invocation-contract
   +--> packages/ai-model-adapter
 
-MySQL: 业务数据、用例、计划、结果、复核、报告
-Redis: 队列、任务状态、缓存、异步执行
+MySQL: 业务数据、用例、计划、执行结果、复核、统计
 ```
 
 第一阶段建议在一个 monorepo 中建设：
@@ -118,15 +107,17 @@ ai-quality-platform/
     web/
     quality-gateway/
     quality-platform-service/
-    execution-service/
+    quality-execution-service/
+    quality-ai-invocation-service/
   packages/
+    ai-invocation-contract/
+    ai-invocation-client/
     ai-model-adapter/
-    shared-types/
     shared-config/
+    shared-http/
     shared-database/
     shared-logger/
     shared-auth/
-    shared-http/
   docs/
 ```
 
@@ -144,10 +135,10 @@ Monorepo 工具选择：
 | quality-gateway | 8080 | 前端统一后端入口 |
 | quality-platform-service | 3101 | 内部端口，应用、用例、计划、模型配置、复核、统计和系统能力 |
 | quality-execution-service | 3104 | 内部端口，执行、评估、计费和任务恢复 |
+| quality-ai-invocation-service | 3105 | 内部端口，统一外部模型调用运行时 |
 | MySQL | 3306 | 本地数据库 |
-| Redis | 6379 | 本地队列与缓存 |
 
-生产端口规划：Docker Compose 只暴露 nginx 最终入口，默认 `${PUBLIC_WEB_PORT:-5670}:80`。`web`、`quality-gateway`、`quality-platform-service`、`quality-execution-service`、MySQL 和 Redis 均只在 Docker 网络内通信，不映射宿主机端口。
+生产端口规划：Docker Compose 只暴露 nginx 最终入口，默认 `${PUBLIC_WEB_PORT:-5670}:80`。`web`、`quality-gateway`、`quality-platform-service`、`quality-execution-service`、`quality-ai-invocation-service` 和 MySQL 均只在 Docker 网络内通信，不映射宿主机端口。
 
 前端本地访问地址：
 
@@ -159,9 +150,9 @@ http://127.0.0.1:3000/ai-quality-platform
 
 ### 5.1 前端访问方式
 
-开发环境中，前端不直连 platform/execution 服务端口，只访问统一 Gateway 入口；生产环境中，浏览器只访问 nginx 最终入口。
+开发环境中，前端不直连 platform/execution/AI invocation 服务端口，只访问统一 Gateway 入口；生产环境中，浏览器只访问 nginx 最终入口。
 
-后端只保留 gateway、platform、execution 这几个真实运行单元。生产环境由 nginx 对外暴露系统入口，再把 API 转发给 quality-gateway；quality-gateway 根据公开 API 段转发到 platform 或 execution。这样既保留外部接口稳定性，也避免把普通业务模块拆成过多独立进程。
+后端只保留 gateway、platform、execution、AI invocation 这几个真实运行单元。生产环境由 nginx 对外暴露系统入口，再把 API 转发给 quality-gateway；quality-gateway 根据公开 API 段转发到 platform 或 execution，并聚合 AI invocation 健康状态。这样既保留外部接口稳定性，也避免把普通业务模块拆成过多独立进程。
 
 开发环境前端可见接口统一挂载在：
 
@@ -205,7 +196,7 @@ execution-service: /ai-quality-platform/api/execution/execution/start.do
 核心能力：
 
 - AI 应用登记
-- 应用类型维护
+- 对话问答类应用登记
 - 应用层接口配置
 - 环境配置
 - 认证配置
@@ -214,18 +205,10 @@ execution-service: /ai-quality-platform/api/execution/execution/start.do
 - 用例分类管理
 - 用例新增、编辑、删除、启停
 - 预期行为配置
-- 规则断言配置
-- 参考答案维护
 - Excel 导入导出
-- 用例版本管理
-- 回归用例集管理
-- 测试计划模板
-- 冒烟测试计划
-- 全量回归计划
-- 高风险专项计划
-- RAG 专项计划
-- 上线前验收计划
-- 按应用、分类、标签、风险等级筛选用例
+- 系统预置分类订阅
+- 应用自有用例管理
+- 按应用、分类和显式选中用例筛选执行范围
 - 模型供应商配置
 - 评分模型配置
 - 模型连接测试
@@ -233,8 +216,6 @@ execution-service: /ai-quality-platform/api/execution/execution/start.do
 - 人工判定
 - 工作台统计
 - 应用质量概览
-- 报告生成
-- 报告导出
 - 用户登录和基础系统配置
 
 ### 5.3 quality-execution-service
@@ -251,21 +232,22 @@ execution-service: /ai-quality-platform/api/execution/execution/start.do
 - 支持重跑失败用例
 - 支持取消执行
 - 根据应用适配器配置完成请求参数映射
-- 根据响应映射规则抽取最终答案、引用来源、trace 信息和错误信息
+- 根据响应映射规则抽取最终答案和错误信息
 - 按 `APP_CALLING -> EVALUATING -> COSTING` 推进持久化执行阶段
 - 服务启动时扫描 `RUNNING` 批次并恢复未完成任务
 - 记录评估模型调用审计、usage 和费用
 
 由于被测 AI 应用层接口无法保证统一输入输出格式，执行服务不能硬编码单一调用协议。平台需要为每个 AI 应用维护“接口适配器配置”，包括请求构造、字段映射、响应抽取和错误识别规则。
 
-### 5.4 packages/ai-model-adapter
+### 5.4 quality-ai-invocation-service、contract 与 adapter
 
-负责沉淀 AI 模型调用标准，第一阶段作为共享 package 被 platform 和 execution 复用，不独立部署。
+`quality-ai-invocation-service` 负责统一外部模型调用运行时，platform 的供应商模型发现、模型测试和 execution 的评估调用都通过 `packages/ai-invocation-client` 访问该内部服务。`packages/ai-invocation-contract` 只沉淀纯请求响应契约、usage 归一和失败结果结构；`packages/ai-model-adapter` 负责沉淀供应商协议 SDK，只在 AI invocation 边界内复用，不单独作为进程部署，也不作为 platform/execution 或 invocation client 的直接依赖。
 
 核心能力：
 
 - OpenAI compatible 请求体构造
-- Qwen compatible 请求体差异处理
+- Qwen/DeepSeek thinking 参数由抽象 `providerKind/enableThinking` 转换为供应商请求字段
+- 供应商 `/models` 模型发现
 - 评估调用默认关闭 thinking
 - usage 字段归一
 - 错误码和原始响应保留
@@ -309,8 +291,6 @@ LLM Judge 不依赖被测 AI 应用层，采用平台内单独配置的模型供
 - 会话字段映射
 - 用户上下文字段映射
 - 响应内容字段路径
-- 引用来源字段路径
-- traceId 字段路径
 - 错误码字段路径
 - 成功条件表达式
 - 超时时间
@@ -335,8 +315,6 @@ LLM Judge 不依赖被测 AI 应用层，采用平台内单独配置的模型供
   },
   "response": {
     "answerPath": "$.content",
-    "traceIdPath": "$.traceId",
-    "sourcesPath": "$.sources",
     "successExpression": "$.code == 200"
   }
 }
@@ -408,14 +386,16 @@ GET /ai-quality-platform/health.do
   "data": {
     "service": "quality-platform-service",
     "status": "UP",
-    "database": "UP",
-    "redis": "UP",
+    "dependencies": {
+      "database": { "status": "UP" },
+      "modelProviders": { "status": "DIAGNOSTIC_ONLY" }
+    },
     "time": "2026-05-18T00:00:00.000Z"
   }
 }
 ```
 
-前端增加“服务健康检查”页面，用于展示 gateway、platform、execution 等关键运行单元状态、数据库状态、Redis 状态和最后检测时间，方便正式部署和联调排查。
+前端增加“服务健康检查”页面，用于展示 gateway、platform、execution、AI invocation 等关键运行单元状态、数据库状态、Worker 状态和最后检测时间，方便正式部署和联调排查。
 
 前端健康检查页只访问 gateway 聚合健康接口，不展示内部服务 URL：
 
@@ -435,10 +415,9 @@ GET /ai-quality-platform/health.do
 - 测试用例数量
 - 本周执行批次
 - 平均通过率
-- 待复核数量
-- 高风险失败数量
+- 待复核数量（来自当前执行结果中 `REVIEW` 且未被人工结论覆盖的结果）
+- 未达标批次数量（来自存在未达标结果的执行批次）
 - 最近执行批次
-- 待复核任务
 - 低通过率应用
 
 ### 6.2 AI 应用管理
@@ -449,13 +428,12 @@ GET /ai-quality-platform/health.do
 
 - 应用名称
 - 应用编码
-- 应用类型
+- 应用类型（当前固定为 `CHAT`）
 - 业务领域
 - 应用层接口地址
 - 请求方式
 - 认证方式
 - 接口适配器配置
-- 底层 Dify 应用
 - 负责人
 - 状态
 
@@ -465,21 +443,10 @@ GET /ai-quality-platform/health.do
 
 字段：
 
-- 用例编号
-- 用例名称
 - 所属应用
 - 用例分类
-- 风险等级
 - 用户问题
-- 前置上下文
 - 期望行为
-- 必须包含关键词
-- 禁止出现关键词
-- 输出格式要求
-- 参考答案
-- 最低得分
-- 是否需要人工复核
-- 标签
 - 启用状态
 
 ### 6.4 测试计划管理
@@ -504,40 +471,30 @@ GET /ai-quality-platform/health.do
 - PASS
 - FAIL
 - REVIEW
-- WARNING
-- BLOCKED
 
-### 6.6 人工复核中心
+### 6.6 执行结果人工修订
 
-页面布局：
+第一版不提供独立“人工复核中心”。人工修订直接发生在执行详情页的具体结果上，避免制造脱离执行记录的虚拟待办。
 
-- 左侧：用例信息和用户问题
-- 中间：AI 实际回答
-- 右侧：预期要求、自动评分、评分理由
-- 底部：人工判定、问题类型、备注、后续动作
+修订内容：
 
-人工判定：
+- 标为通过
+- 标为未达标
+- 恢复 AI 原始评估
+- 记录人工备注
 
-- 通过
-- 不通过
-- 需业务确认
-- 需开发排查
-- 加入回归用例
+### 6.7 统计看板
 
-### 6.7 评估报告中心
+第一版不提供离线报告生成/导出中心，只保留基于真实执行数据的工作台与应用概览统计：
 
-报告内容：
-
-- 测试概览
-- 测试对象
-- 用例覆盖情况
-- 总体通过率
-- 分类通过率
-- 高风险失败
-- 典型失败案例
-- 人工复核结论
-- 整改建议
-- 版本对比
+- 应用数量
+- 用例数量
+- 执行计划数量
+- 最近执行记录
+- 通过率
+- 未达标数量
+- 待复核数量
+- 低通过率应用
 
 ## 7. 用例分类体系
 
@@ -549,14 +506,14 @@ GET /ai-quality-platform/health.do
 | STRICT_QA | 严谨问答 | 要求依据、边界、审慎表达 |
 | WRONG_PREMISE | 错误前提 | 用户问题本身包含错误假设 |
 | OUT_OF_SCOPE | 无关问题 | 与业务无关的问题 |
-| SENSITIVE_RISK | 敏感风险 | 违规、绕规则、虚假材料等 |
+| SENSITIVE_BOUNDARY | 敏感边界 | 违规、越权、涉密、涉黄涉政等边界问题 |
 | FUZZY_QUERY | 模糊问题 | 输入过短、指代不明 |
 | MULTI_TURN | 多轮对话 | 上下文连续性 |
 | FORMAT_OUTPUT | 格式输出 | JSON、Markdown、表格等 |
 | RAG_QA | 知识库问答 | 依赖知识库检索 |
 | EXCEPTION_STABILITY | 异常稳定性 | 空输入、超长输入、接口异常 |
 
-分类不只是标签，还会关联默认期望行为、评分维度、复核策略和报告统计口径。
+分类用于组织系统预置用例和应用自有用例，并作为计划筛选和统计分组的基础。
 
 ## 8. 执行链路
 
@@ -568,10 +525,11 @@ GET /ai-quality-platform/health.do
   -> execution-service 持久化任务并推进阶段
   -> execution-service 调用被测应用接口
   -> 保存原始请求响应
-  -> execution-service 通过 ai-model-adapter 调用评估模型
+  -> execution-service 调用 quality-ai-invocation-service
+  -> quality-ai-invocation-service 按 ai-invocation-contract 接收请求
+  -> quality-ai-invocation-service 通过 ai-model-adapter 调用评估模型
   -> 汇总最终状态
-  -> 生成待复核任务
-  -> platform-service 查询统计与报告数据
+  -> platform-service 查询统计和复核数据
 ```
 
 ## 9. 核心数据模型
@@ -589,7 +547,6 @@ GET /ai-quality-platform/health.do
 - request_method
 - auth_type
 - auth_config
-- dify_app_id
 - owner
 - status
 - created_at
@@ -600,19 +557,12 @@ GET /ai-quality-platform/health.do
 `eval_case`
 
 - id
-- case_code
-- case_name
 - app_code
-- category_code
-- risk_level
+- case_scope
+- category_id
 - input_json
 - expected_json
-- reference_answer
-- min_score
-- manual_review_required
-- tags
 - enabled
-- version
 - created_at
 - updated_at
 
@@ -641,12 +591,14 @@ GET /ai-quality-platform/health.do
 - run_name
 - status
 - total_count
+- app_completed_count
+- eval_completed_count
 - pass_count
 - fail_count
 - review_count
-- warning_count
-- blocked_count
 - avg_score
+- token 与费用汇总字段
+- cost_status
 - started_at
 - finished_at
 - created_by
@@ -657,51 +609,63 @@ GET /ai-quality-platform/health.do
 
 - id
 - run_code
-- case_code
+- case_id
 - app_code
+- case_snapshot_json
+- app_status
+- evaluation_status
 - request_json
 - response_json
 - final_answer
-- rule_score
-- judge_score
 - final_score
 - pass_status
 - failure_reason
 - problem_type
-- trace_id
 - elapsed_ms
+- app_elapsed_ms
+- judge_elapsed_ms
 - error_code
 - created_at
+- updated_at
 
-### 9.6 人工复核表
+### 9.6 模型评估调用审计表
+
+`eval_judge_call`
+
+- id
+- call_code
+- run_code
+- result_id
+- app_code
+- case_id
+- provider_code
+- model_db_id
+- model_id
+- protocol
+- prompt_text
+- request_json
+- response_json
+- raw_response_text
+- raw_usage_json
+- token 与费用明细字段
+- cost_status
+- status
+- error_code
+- error_message
+- elapsed_ms
+- created_at
+- updated_at
+
+### 9.7 人工复核表
 
 `eval_review`
 
 - id
 - result_id
-- review_status
 - manual_result
-- problem_type
 - review_comment
-- next_action
-- reviewer
 - reviewed_at
 - created_at
-
-### 9.7 报告表
-
-`eval_report`
-
-- id
-- report_code
-- run_code
-- report_name
-- summary_json
-- category_stats_json
-- risk_stats_json
-- typical_failures_json
-- suggestion
-- generated_at
 
 ## 10. 接口规范
 
@@ -728,8 +692,8 @@ POST /ai-quality-platform/app/delete.do
 POST /ai-quality-platform/case/list.do
 POST /ai-quality-platform/case/create.do
 POST /ai-quality-platform/case/update.do
-POST /ai-quality-platform/case/import.do
-POST /ai-quality-platform/case/export.do
+POST /ai-quality-platform/case/import-csv.do
+GET  /ai-quality-platform/case/export.do
 
 POST /ai-quality-platform/plan/list.do
 POST /ai-quality-platform/plan/create.do
@@ -743,9 +707,7 @@ POST /ai-quality-platform/execution/cancel.do
 POST /ai-quality-platform/review/list.do
 POST /ai-quality-platform/review/submit.do
 
-POST /ai-quality-platform/report/list.do
-POST /ai-quality-platform/report/detail.do
-POST /ai-quality-platform/report/export.do
+GET  /ai-quality-platform/report/dashboard.do
 ```
 
 列表接口请求结构：
@@ -802,10 +764,9 @@ ai-quality-gateway
 quality-platform-service
 quality-execution-service
 mysql
-redis
 ```
 
-开发环境标准为 Node 本机进程，Docker 只用于 MySQL/Redis 依赖；生产环境标准为 Docker Compose 全栈部署，仅 nginx 映射宿主机端口。真实运行单元需具备独立构建和独立部署能力；普通业务模块作为 platform 内部模块维护。
+开发环境标准为 Node 本机进程，Docker 只用于 MySQL 依赖；生产环境标准为 Docker Compose 全栈部署，仅 nginx 映射宿主机端口。真实运行单元需具备独立构建和独立部署能力；普通业务模块作为 platform 内部模块维护。
 
 ## 12. 第一阶段建设范围
 
@@ -821,7 +782,6 @@ redis
    - 多 NestJS 服务
    - Prisma
    - MySQL 连接
-   - Redis 连接
    - 统一配置
    - 统一 CORS
    - 统一 Gateway 入口规划
@@ -830,8 +790,8 @@ redis
 
 2. 登录和基础用户
    - 本地账号密码登录
-   - 内置管理员账号：`admin`
-   - 内置管理员默认密码：`admin123456`
+   - 管理员账号由 `QTP_ADMIN_USERNAME` 初始化，默认用户名为 `admin`
+   - 管理员初始密码必须通过 `QTP_ADMIN_INITIAL_PASSWORD` 显式提供，入库只保存哈希
    - 用户表
    - 登录接口
    - 登录页
@@ -861,14 +821,13 @@ redis
    - Excel 模板下载
    - Excel 模板按平台完整字段设计
    - 期望行为
-   - 断言规则
-   - 参考答案
-   - 标签与风险等级
+   - 期望回答
+   - 系统预置分类订阅
 
 6. 测试计划管理
    - 计划列表
    - 新增、编辑、删除、启停
-   - 按应用、分类、标签、风险等级筛选用例
+   - 按应用、分类和显式选中用例筛选用例
 
 7. 执行批次与执行 Worker
    - 创建执行批次
@@ -882,12 +841,10 @@ redis
    - 普通 JSON 响应调用
    - SSE 流式响应调用
    - 最终答案抽取
-   - trace 信息抽取
    - 原始响应保存
    - 错误识别
 
 9. 自动评分
-   - 规则评分
    - LLM Judge 基础实现
    - 按用例分类选择评分模板
    - 评分理由保存
@@ -907,30 +864,23 @@ redis
     - 复核备注
     - 加入回归用例
 
-12. 批次报告
+12. 统计看板
     - 总体通过率
-    - 分类通过率
-    - 高风险失败
-    - 典型失败案例
-    - 整改建议
-    - 报告详情页
+    - 分类统计
+    - 最近执行记录
+    - 低通过率应用
 
 13. Docker 与 CI 部署脚本
     - 前端镜像
-    - gateway/platform/execution 后端服务镜像
+    - gateway/platform/execution/AI invocation 后端服务镜像
     - MySQL 配置
-    - Redis 配置
     - docker compose 本地启动
     - CI 执行拓扑检查、类型检查、测试和 Web 构建
 
-14. 演示种子数据
-    - 内置 1 个演示 AI 应用
-    - 内置 10 类用例分类
-    - 内置 20 条左右演示测试用例
-    - 内置 3 个演示测试计划
-    - 内置 1 个可查看的历史执行批次
-    - 内置基础报告样例
-    - 内置示例被测服务，用于演示真实执行链路
+14. 初始化数据与导入边界
+    - 系统启动只初始化管理员账号，不内置业务应用、业务用例、执行计划或报告样例
+    - 系统预置用例与应用自有用例通过 CSV 导入或页面维护形成真实业务数据
+    - 被测 AI 应用由用户在应用详情中配置真实接口地址、请求模板、响应抽取和执行计划
 
 暂缓：
 
@@ -952,13 +902,13 @@ redis
 7. 已确认模型供应商第一批支持 OpenAI 兼容接口、通义千问、DeepSeek。
 8. 已确认接口适配器第一版需要支持流式响应。
 9. 已确认需要提供统一 Gateway 入口、统一处理跨域，并提供服务健康检查页面。
-10. 已确认开发环境使用 Node 本机进程，本地端口由 Codex 统一规划：前端 3000，统一 Gateway 8080，platform 服务 3101，execution 服务 3104；生产环境使用 Docker Compose，只暴露 nginx 最终入口，默认 5670。
+10. 已确认开发环境使用 Node 本机进程，本地端口由 Codex 统一规划：前端 3000，统一 Gateway 8080，platform 服务 3101，execution 服务 3104，AI invocation 服务 3105；生产环境使用 Docker Compose，只暴露 nginx 最终入口，默认 5670。
 11. 已确认 Monorepo 使用 pnpm workspace。
 12. 已确认第一阶段按功能逐个完整开发，不做半成品模块。
 13. 已确认第一版接入 Excel 导入导出。
-14. 已确认第一版内置一批演示 AI 应用、测试用例和测试计划种子数据。
+14. 已确认第一版不内置演示业务数据，系统启动只初始化管理员账号；用例和应用数据通过 CSV 导入或页面维护。
 15. 已确认 Excel 模板按平台完整字段设计。
-16. 演示 AI 应用采用正式项目中的“示例被测服务”方式，不依赖外部真实 AI 应用，也不混入生产业务逻辑。
+16. 已确认被测 AI 应用通过真实接口配置接入，不在平台内置示例被测服务。
 
 后续仍需确认：
 

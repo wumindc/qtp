@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildChatCompletionsPayload,
+  buildEmbeddingsPayload,
   calculateModelTokenCost,
   createChatCompletionsProviderAdapter,
-  createFailedModelInvocationResult,
+  createEmbeddingsProviderAdapter,
+  createModelDiscoveryProviderAdapter,
   normalizeModelUsage,
 } from './index';
 
@@ -29,6 +31,50 @@ describe('ai-model-adapter', () => {
     });
   });
 
+  /**
+   * @author codex
+   * Provider-specific parameters must be modeled explicitly instead of passed through as raw options.
+   */
+  it('drops arbitrary provider options from provider payloads', () => {
+    const chatPayload = buildChatCompletionsPayload({
+      traceId: 'trace-raw-provider-options',
+      providerCode: 'openai',
+      modelId: 'gpt-4.1',
+      protocol: 'OPENAI_COMPATIBLE',
+      messages: [{ role: 'user', content: 'hi' }],
+      providerOptions: { unsafe_wire_field: true },
+    } as never);
+
+    const embeddingPayload = buildEmbeddingsPayload({
+      traceId: 'trace-raw-embedding-options',
+      providerCode: 'openai',
+      modelId: 'text-embedding-3-large',
+      protocol: 'OPENAI_EMBEDDINGS',
+      input: 'ping',
+      providerOptions: { unsafe_wire_field: true },
+    } as never);
+
+    expect(chatPayload).not.toHaveProperty('unsafe_wire_field');
+    expect(embeddingPayload).not.toHaveProperty('unsafe_wire_field');
+  });
+
+  /**
+   * @author codex
+   * Runtime payloads can only emit supported reasoning effort values.
+   */
+  it('does not pass invalid reasoning effort values to provider payloads', () => {
+    const payload = buildChatCompletionsPayload({
+      traceId: 'trace-invalid-reasoning',
+      providerCode: 'deepseek',
+      modelId: 'deepseek-chat',
+      protocol: 'OPENAI_COMPATIBLE',
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoningEffort: { raw: 'vendor-specific' },
+    } as never);
+
+    expect(payload).not.toHaveProperty('reasoning_effort');
+  });
+
   it('can explicitly disable Qwen thinking on compatible payloads', () => {
     expect(buildChatCompletionsPayload({
       traceId: 'trace-2',
@@ -43,27 +89,35 @@ describe('ai-model-adapter', () => {
     });
   });
 
-  it('normalizes cached, normal input and output token usage', () => {
-    expect(normalizeModelUsage({
-      input_tokens: 100,
-      output_tokens: 20,
-      total_tokens: 120,
-      prompt_tokens_details: { cached_tokens: 40 },
+  it('maps abstract DeepSeek thinking flags inside the AI invocation boundary', () => {
+    expect(buildChatCompletionsPayload({
+      traceId: 'trace-provider-options',
+      providerCode: 'deepseek',
+      modelId: 'deepseek-reasoner',
+      protocol: 'OPENAI_COMPATIBLE',
+      providerKind: 'DEEPSEEK',
+      messages: [{ role: 'user', content: 'ping' }],
+      enableThinking: false,
     })).toMatchObject({
-      normalInputTokens: 60,
-      cachedInputTokens: 40,
-      outputTokens: 20,
-      totalTokens: 120,
-      usageStatus: 'AVAILABLE',
+      model: 'deepseek-reasoner',
+      thinking: { type: 'disabled' },
     });
   });
 
-  it('creates failed invocation results with elapsed time and no usage', () => {
-    expect(createFailedModelInvocationResult('PROVIDER_TIMEOUT', '模型调用超时', 5000)).toEqual({
-      status: 'FAILED',
-      elapsedMs: 5000,
-      errorCode: 'PROVIDER_TIMEOUT',
-      errorMessage: '模型调用超时',
+  it('builds embedding payloads with provider dimensions', () => {
+    expect(buildEmbeddingsPayload({
+      traceId: 'trace-embedding',
+      providerCode: 'openai-compatible-main',
+      modelId: 'text-embedding-3-large',
+      protocol: 'OPENAI_EMBEDDINGS',
+      input: 'ping',
+      dimensions: 1024,
+      encodingFormat: 'float',
+    })).toEqual({
+      model: 'text-embedding-3-large',
+      input: 'ping',
+      dimensions: 1024,
+      encoding_format: 'float',
     });
   });
 
@@ -119,6 +173,57 @@ describe('ai-model-adapter', () => {
     expect(result).toMatchObject({
       status: 'FAILED',
       errorCode: 'PROVIDER_AUTH_FAILED',
+    });
+  });
+
+  it('invokes OpenAI-compatible embedding providers', async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const adapter = createEmbeddingsProviderAdapter({
+      baseUrl: 'https://models.example.com/v1',
+      apiKey: 'sk-test',
+      fetchImpl: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }), { status: 200 });
+      },
+    });
+
+    const result = await adapter.invoke({
+      traceId: 'trace-embedding',
+      providerCode: 'openai-compatible-main',
+      modelId: 'text-embedding-3-large',
+      protocol: 'OPENAI_EMBEDDINGS',
+      input: 'ping',
+    });
+
+    expect(requests[0]?.url).toBe('https://models.example.com/v1/embeddings');
+    expect(requests[0]?.init.headers).toMatchObject({ Authorization: 'Bearer sk-test' });
+    expect(result).toMatchObject({
+      status: 'SUCCEEDED',
+      responseJson: { data: [{ embedding: [0.1, 0.2] }] },
+    });
+  });
+
+  it('discovers provider models through the shared adapter boundary', async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const adapter = createModelDiscoveryProviderAdapter({
+      baseUrl: 'https://models.example.com/v1',
+      apiKey: 'sk-test',
+      fetchImpl: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({ data: [{ id: 'qwen-plus' }] }), { status: 200 });
+      },
+    });
+
+    const result = await adapter.listModels({ traceId: 'trace-models', providerCode: 'qwen-main' });
+
+    expect(requests[0]?.url).toBe('https://models.example.com/v1/models');
+    expect(requests[0]?.init).toMatchObject({
+      method: 'GET',
+      headers: { Authorization: 'Bearer sk-test' },
+    });
+    expect(result).toMatchObject({
+      status: 'SUCCEEDED',
+      responseJson: { data: [{ id: 'qwen-plus' }] },
     });
   });
 
