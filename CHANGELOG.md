@@ -2,6 +2,24 @@
 
 ## [未发布]
 
+### 2026-05-28 — 引入 Framer Motion 全局重构登录页猫咪动画
+
+#### 重构 — 基于物理弹簧系统解决动画裁切与冲突
+- **变更需求**：用户反馈纯 CSS 实现的动画撕裂且看着不舒服，希望通过业界先进的动画框架打磨出极致平滑的动态视觉效果。
+- **变更内容**：
+  - `apps/web/package.json`：安装 `framer-motion` 库。
+  - `apps/web/src/features/login/totoro-illustration.tsx`：废弃之前的纯 CSS `@keyframes` 结合 Tailwind 的粗糙动画实现，使用 `motion.div` 将龙猫动画引擎整体替换。采用物理弹簧（Spring）系统精细调节了小猫从屏幕底部“弹射入场”、点击密码框时的“缩起+爪子捂眼”、以及输入密码时的“偷看+瞳孔追踪”全套反馈。从根本上消除了因为复合 Transform 类引起的身体裁切（“挤扁”）、组件漂移和覆盖等一系列渲染 Bug，极大提升了动画的流畅感（Q弹感）。
+
+### 2026-05-28 — 登录页增强：集成交互式卡通插画
+
+#### 优化 — 基于开源库重写登录交互，提升视觉体验
+- **变更需求**：用户提供了一个有趣的开源动效登录参考，要求我们集成到系统登录页中，实现输入账号时眼球跟随对视、输入密码时蒙眼等动态反馈。
+- **变更内容**：
+  - `apps/web/src/features/login/login-illustration.tsx`：参考 [marker964/animated-characters-login-page](https://github.com/marker964/animated-characters-login-page) 的 Vue 源码重新使用 React 实现了卡通人物，将其转变为交互组件。实现了 `mouseX/mouseY` 鼠标跟踪、`isTyping` 打字对视、`passwordLength` + `showPassword` 逻辑触发的偷看/闭眼交互。
+  - `apps/web/src/features/login/login-form.tsx`：为 LoginForm 追加 `onTyping`, `onPasswordChange`, `onShowPasswordChange` 等状态回调，并添加了切换密码可见性的按钮。现在它通过 `useLoginAnimation` 自动从 Context 吸收动画状态，既能独立工作，也能与动画布局深度融合。
+  - `apps/web/src/features/login/animated-login-layout.tsx`：重构原有的 `LoginView` 为更通用的 `AnimatedLoginLayout` 布局组件。采用全屏左右双栏布局（左侧 50% 显示插画，右侧 50% 渲染传入的 children 表单），并通过 Context API 向下透传动画联动所需的交互状态。
+  - `apps/web/src/app/ai-quality-platform/login/page.tsx`：更新了页面布局，将其修改为完整的左右双栏响应式结构，并将 `LoginForm` 包装在 `AnimatedLoginLayout` 内渲染。
+
 ### 2026-05-28 — 服务健康页面体验优化
 
 #### 优化 — 服务健康页面信息展示与网关耗时计算

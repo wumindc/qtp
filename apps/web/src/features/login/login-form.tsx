@@ -17,6 +17,8 @@ import {
   Sun,
   Moon,
   Monitor,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { postGateway } from '@/lib/api/gateway-client';
 import { saveAuthSession, type StoredAuthUser } from '@/lib/auth-session';
@@ -27,6 +29,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useLoginAnimation } from './animated-login-layout';
 
 type LoginState = 'idle' | 'loading' | 'error' | 'success';
 
@@ -37,7 +40,8 @@ const themeOptions = [
 ] as const;
 
 /** 右上角主题切换按钮，复用 next-themes */
-function ThemeButton() {
+/** 右上角主题切换按钮，复用 next-themes */
+export function ThemeButton() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -53,17 +57,17 @@ function ThemeButton() {
           type="button"
           id="login-theme-toggle"
           aria-label="切换主题"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary/50 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <Icon className="h-4 w-4" />
+          <Icon className="h-5 w-5" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" side="bottom" className="w-36">
+      <DropdownMenuContent align="end" side="bottom" className="w-36 rounded-xl">
         {themeOptions.map((t) => (
           <DropdownMenuItem
             key={t.value}
             onClick={() => setTheme(t.value)}
-            className={cn('cursor-pointer gap-2', theme === t.value && 'bg-accent')}
+            className={cn('cursor-pointer gap-2 rounded-lg', theme === t.value && 'bg-accent')}
           >
             <t.icon className="h-4 w-4" />
             <span>{t.label}</span>
@@ -74,7 +78,23 @@ function ThemeButton() {
   );
 }
 
-export function LoginForm() {
+type LoginFormProps = {
+  onTyping?: () => void;
+  onPasswordChange?: (length: number) => void;
+  showPassword?: boolean;
+  onShowPasswordChange?: (show: boolean) => void;
+  onPasswordFocusChange?: (focused: boolean) => void;
+};
+
+export function LoginForm(props: LoginFormProps = {}) {
+  const animContext = useLoginAnimation();
+
+  const onTyping = animContext?.onTyping || props.onTyping;
+  const onPasswordChange = animContext?.onPasswordChange || props.onPasswordChange;
+  const showPassword = animContext?.showPassword ?? props.showPassword ?? false;
+  const onShowPasswordChange = animContext?.onShowPasswordChange || props.onShowPasswordChange;
+  const onPasswordFocusChange = animContext?.onPasswordFocusChange || props.onPasswordFocusChange;
+
   const router = useRouter();
   const [state, setState] = useState<LoginState>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -111,140 +131,126 @@ export function LoginForm() {
   const isLoading = state === 'loading' || state === 'success';
 
   return (
-    <div className="w-full max-w-[420px]">
-      {/* 右上角主题切换 */}
-      <div className="flex justify-end mb-3 pr-1">
-        <ThemeButton />
-      </div>
+    <div className="w-full max-w-[400px] mx-auto animate-in fade-in slide-in-from-bottom-8 duration-1000 ease-out fill-mode-both">
+      {/* 软阴影无边框卡片 */}
+      <div className="rounded-3xl bg-card text-card-foreground shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] dark:border dark:border-white/5 p-8 sm:p-10">
+        
+        {/* 标题 */}
+        <div className="mb-10 text-center">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground mb-2">
+            Welcome back!
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Please enter your details
+          </p>
+        </div>
 
-      {/* 卡片 */}
-      <div className="rounded-2xl border border-border bg-card text-card-foreground shadow-lg">
-        {/* 顶部彩色渐变条 */}
-        <div
-          className="h-[3px] w-full rounded-t-2xl"
-          style={{
-            background:
-              'linear-gradient(90deg, oklch(0.488 0.243 264.376), oklch(0.569 0.258 301), oklch(0.646 0.222 41.116))',
-          }}
-        />
-
-        <div className="px-8 pt-8 pb-8">
-          {/* Logo + 标题 */}
-          <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary shadow-md">
-              <Zap className="h-7 w-7 text-primary-foreground" />
+        {/* 登录表单 */}
+        <form onSubmit={handleSubmit} noValidate>
+          {/* 错误提示 */}
+          {state === 'error' && (
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 animate-in fade-in zoom-in-95 duration-300">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <p className="text-sm leading-snug text-destructive">{errorMsg}</p>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-card-foreground">
-              AI 质量平台
-            </h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              AI 应用质量评估与管理系统
-            </p>
+          )}
+
+          {/* 账号 */}
+          <div className="mb-5">
+            <label
+              htmlFor="login-username"
+              className="mb-2 block text-sm font-medium text-foreground"
+            >
+              Email / Username
+            </label>
+            <div className="relative">
+              <input
+                id="login-username"
+                name="username"
+                type="text"
+                autoComplete="username"
+                autoFocus
+                disabled={isLoading}
+                placeholder="you@example.com"
+                onChange={() => onTyping?.()}
+                className={cn(
+                  'h-12 w-full rounded-xl border bg-transparent px-4 text-sm text-foreground',
+                  'placeholder:text-muted-foreground/60',
+                  'transition-all outline-none',
+                  'focus:border-primary focus:ring-4 focus:ring-primary/10',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  state === 'error'
+                    ? 'border-destructive/60 focus:border-destructive focus:ring-destructive/10'
+                    : 'border-input hover:border-border/80',
+                )}
+              />
+            </div>
           </div>
 
-          {/* 登录表单 */}
-          <form onSubmit={handleSubmit} noValidate>
-            {/* 错误提示 */}
-            {state === 'error' && (
-              <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-3">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                <p className="text-sm leading-snug text-destructive">{errorMsg}</p>
-              </div>
-            )}
-
-            {/* 账号 */}
-            <div className="mb-4">
-              <label
-                htmlFor="login-username"
-                className="mb-1.5 block text-sm font-medium text-foreground"
-              >
-                账号
-              </label>
-              <div className="relative">
-                <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  id="login-username"
-                  name="username"
-                  type="text"
-                  autoComplete="username"
-                  autoFocus
-                  disabled={isLoading}
-                  placeholder="请输入账号"
-                  className={cn(
-                    'h-10 w-full rounded-lg border bg-background pl-10 pr-4 text-sm text-foreground',
-                    'placeholder:text-muted-foreground',
-                    'transition-colors outline-none',
-                    'focus:border-ring focus:ring-2 focus:ring-ring/25',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
-                    state === 'error'
-                      ? 'border-destructive/60'
-                      : 'border-input',
-                  )}
-                />
-              </div>
-            </div>
-
-            {/* 密码 */}
-            <div className="mb-6">
-              <label
-                htmlFor="login-password"
-                className="mb-1.5 block text-sm font-medium text-foreground"
-              >
-                密码
-              </label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  id="login-password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  disabled={isLoading}
-                  placeholder="请输入密码"
-                  className={cn(
-                    'h-10 w-full rounded-lg border bg-background pl-10 pr-4 text-sm text-foreground',
-                    'placeholder:text-muted-foreground',
-                    'transition-colors outline-none',
-                    'focus:border-ring focus:ring-2 focus:ring-ring/25',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
-                    state === 'error'
-                      ? 'border-destructive/60'
-                      : 'border-input',
-                  )}
-                />
-              </div>
-            </div>
-
-            {/* 登录按钮 */}
-            <button
-              id="login-submit-btn"
-              type="submit"
-              disabled={isLoading}
-              className={cn(
-                'h-10 w-full rounded-lg text-sm font-semibold transition-all',
-                'bg-primary text-primary-foreground',
-                'hover:bg-primary/90 active:scale-[0.99]',
-                'outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2',
-                'disabled:cursor-not-allowed disabled:opacity-70',
-              )}
+          {/* 密码 */}
+          <div className="mb-8">
+            <label
+              htmlFor="login-password"
+              className="mb-2 block text-sm font-medium text-foreground"
             >
-              {isLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {state === 'success' ? '正在进入系统…' : '验证中…'}
-                </span>
-              ) : (
-                '登录'
-              )}
-            </button>
-          </form>
-        </div>
-      </div>
+              Password
+            </label>
+            <div className="relative">
+              <input
+                id="login-password"
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                disabled={isLoading}
+                placeholder="••••••••"
+                onChange={(e) => onPasswordChange?.(e.target.value.length)}
+                onFocus={() => onPasswordFocusChange?.(true)}
+                onBlur={() => onPasswordFocusChange?.(false)}
+                className={cn(
+                  'h-12 w-full rounded-xl border bg-transparent pl-4 pr-12 text-sm text-foreground',
+                  'placeholder:text-muted-foreground/60 tracking-[0.2em]',
+                  'transition-all outline-none',
+                  'focus:border-primary focus:ring-4 focus:ring-primary/10',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                  state === 'error'
+                    ? 'border-destructive/60 focus:border-destructive focus:ring-destructive/10'
+                    : 'border-input hover:border-border/80',
+                )}
+              />
+              <button
+                type="button"
+                onClick={() => onShowPasswordChange?.(!showPassword)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors focus:outline-none"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
 
-      {/* 底部版权 */}
-      <p className="mt-6 text-center text-xs text-muted-foreground">
-        © {new Date().getFullYear()} AI 质量平台 · 内部系统
-      </p>
+          {/* 登录按钮 */}
+          <button
+            id="login-submit-btn"
+            type="submit"
+            disabled={isLoading}
+            className={cn(
+              'h-12 w-full rounded-xl text-[15px] font-semibold transition-all duration-300',
+              'bg-primary text-primary-foreground shadow-sm',
+              'hover:bg-primary/90 hover:shadow-md active:scale-[0.98]',
+              'outline-none focus-visible:ring-4 focus-visible:ring-primary/20',
+              'disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:shadow-none',
+            )}
+          >
+            {isLoading ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                {state === 'success' ? 'Entering...' : 'Authenticating...'}
+              </span>
+            ) : (
+              'Log in'
+            )}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
