@@ -182,6 +182,12 @@ model EvalResult {
   appElapsedMs     Int?
   judgeElapsedMs   Int?
   errorCode        String?  @db.VarChar(100)
+  // 差异化切片新增（均可空，向后兼容）
+  turnsJson            Json?    // 多轮逐轮快照：[{turnIndex, role, content, latencyMs, tokens, status}]
+  sampleCount          Int?     // 阶段2：同一用例采样次数
+  stabilityScore       Decimal? @db.Decimal(5, 2) // 阶段2：稳定性得分（区分真退化与抖动）
+  regressionVerdict    String?  @db.VarChar(50)    // TRUE_REGRESSION / SUSPECTED_FLAKE
+  regressionConfidence Decimal? @db.Decimal(5, 2)  // 退化判定置信度 0-1
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now()) @updatedAt
 
@@ -239,6 +245,102 @@ model EvalReview {
 
   @@index([resultId])
   @@map("eval_review")
+}
+
+// ── 差异化切片：版本 / 回归对比 / 失败诊断 / 断言结果 ──────────────
+// 设计依据：docs/20260529-003-失败诊断与执行对比设计规格.md
+// 全部为新增表，不影响既有单次评估管线。
+
+/// 应用版本：执行对比的两端（基线 / 候选）
+model AppVersion {
+  id               BigInt   @id @default(autoincrement())
+  appCode          String   @db.VarChar(100)
+  versionCode      String   @db.VarChar(100) // 如 v1.5.0-rc1
+  versionType      String   @default("CANDIDATE") @db.VarChar(50) // BASELINE / CANDIDATE / PRODUCTION / HISTORY
+  promptVersion    String?  @db.VarChar(100)
+  modelVersion     String?  @db.VarChar(100)
+  knowledgeVersion String?  @db.VarChar(100)
+  toolVersion      String?  @db.VarChar(100)
+  commitId         String?  @db.VarChar(100)
+  changeNote       String?  @db.Text
+  createdBy        String?  @db.VarChar(100)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([appCode, versionCode])
+  @@index([appCode, versionType])
+  @@map("app_version")
+}
+
+/// 回归对比：一次「基线 run × 候选 run」的对比及聚合结果
+model RegressionComparison {
+  id                    BigInt   @id @default(autoincrement())
+  comparisonCode        String   @unique @db.VarChar(100)
+  appCode               String   @db.VarChar(100)
+  planCode              String?  @db.VarChar(100)
+  baselineRunCode       String   @db.VarChar(100)
+  candidateRunCode      String   @db.VarChar(100)
+  baselineVersionCode   String?  @db.VarChar(100)
+  candidateVersionCode  String?  @db.VarChar(100)
+  status                String   @default("PENDING") @db.VarChar(50) // PENDING / RUNNING / COMPLETED / FAILED
+  releaseRecommendation String?  @db.VarChar(50) // PASS / WATCH / MANUAL / REJECT / BLOCK
+  passRateDelta         Decimal? @db.Decimal(6, 4)
+  newFailCount          Int      @default(0)
+  fixedFailCount        Int      @default(0)
+  persistentFailCount   Int      @default(0)
+  stabilityScore        Decimal? @db.Decimal(5, 2)
+  avgLatencyDeltaMs     Int?
+  summaryJson           Json?    // 退化类型分布、版本变更摘要等
+  createdBy             String?  @db.VarChar(100)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([appCode])
+  @@index([baselineRunCode])
+  @@index([candidateRunCode])
+  @@map("regression_comparison")
+}
+
+/// 失败诊断：把 PASS/FAIL 变成「为什么」——结论 / 证据链 / 可能原因 / 修复建议
+model FailureDiagnosis {
+  id                BigInt   @id @default(autoincrement())
+  resultId          BigInt
+  runCode           String   @db.VarChar(100)
+  appCode           String   @db.VarChar(100)
+  conclusion        String?  @db.Text
+  primaryType       String?  @db.VarChar(100) // 上下文遗忘 / RAG依据不足 / 格式错误 / 安全边界 / 工具调用失败 / 超时 / 接口错误 / 其他
+  evidenceJson      Json?    // [{source, turnIndex, span, text}]
+  possibleCausesJson Json?   // [{name, confidenceLevel, note, evidenceRefs}]
+  suggestionsJson   Json?    // [{text, actionable}]
+  confidence        Decimal? @db.Decimal(5, 2) // 整体诊断置信度 0-1，低于阈值前台不展示原因
+  generatedBy       String?  @db.VarChar(50)    // RULE / LLM / HYBRID
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([resultId])
+  @@index([runCode])
+  @@map("failure_diagnosis")
+}
+
+/// 逐断言结果：支撑多轮上下文断言（mustUpdateContext / mustNotUseStaleContext 等）
+model CaseAssertionResult {
+  id               BigInt   @id @default(autoincrement())
+  resultId         BigInt
+  runCode          String   @db.VarChar(100)
+  caseId           BigInt
+  turnIndex        Int?     // 多轮：所属轮次；单轮为空
+  assertionType    String   @db.VarChar(80) // mustContain / mustNotContain / mustUpdateContext / mustNotUseStaleContext / mustCiteReference / ...
+  expression       String?  @db.Text
+  expectedValueJson Json?
+  actualValueJson  Json?
+  passed           Boolean
+  evidenceSpanJson Json?    // 命中片段定位 {turnIndex, start, end}
+  createdAt        DateTime @default(now())
+
+  @@index([resultId])
+  @@index([runCode])
+  @@index([caseId])
+  @@map("case_assertion_result")
 }
 
 model AppPresetCategory {

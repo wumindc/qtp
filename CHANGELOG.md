@@ -2,6 +2,23 @@
 
 ## [未发布]
 
+### 2026-05-29 — 确立开源定位、路线规划与差异化数据模型
+
+#### 新增 — 开源项目门面与战略材料
+- **变更需求**：项目当前功能够不上"合格开源项目"水平，需先确立锐利定位、收敛范围、补齐对外门面，再回到功能建设。
+- **变更内容**：
+  - `LICENSE`：新增 Apache-2.0。
+  - `README.md`：面向开发者的 GitHub 风格门面，开篇即北极星场景，含与 Ragas/promptfoo/Langfuse 的竞品对比、架构、快速开始、路线图。
+  - `ROADMAP.md`：窄而深的 8 阶段路线，含 v0.1 做/不做速查。
+  - `docs/20260529-001-产品定位与路线规划.md`：战略定位与决策记录。
+  - `docs/20260529-002-设计资产盘点.md`：21 张设计图按路线图阶段归类，识别护城河三屏设计缺口。
+  - `docs/20260529-003-失败诊断与执行对比设计规格.md`：补齐北极星两屏（执行对比 + 失败诊断）高保真文字规格。
+
+#### 新增 — 差异化切片数据模型（只增不改，向后兼容）
+- **变更需求**：现有 schema 仅支撑单次评估管线，缺版本对比、多轮逐轮、失败诊断、上下文断言等差异化能力。
+- **变更内容**：
+  - `packages/shared-database/prisma/schema.prisma`：新增 `AppVersion`、`RegressionComparison`、`FailureDiagnosis`、`CaseAssertionResult` 四张表；为 `EvalResult` 追加可空列 `turnsJson` / `sampleCount` / `stabilityScore` / `regressionVerdict` / `regressionConfidence`。`prisma validate` 通过。
+
 ### 2026-05-28 — 引入 Framer Motion 全局重构登录页猫咪动画
 
 #### 重构 — 基于物理弹簧系统解决动画裁切与冲突
