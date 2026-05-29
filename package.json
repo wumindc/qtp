@@ -4,18 +4,15 @@
   "private": true,
   "packageManager": "pnpm@11.1.2",
   "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "start": "pnpm --filter web start",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "build:web": "pnpm --filter web build",
     "db:generate": "pnpm --filter @ai-quality-platform/shared-database prisma:generate",
     "db:push": "pnpm --filter @ai-quality-platform/shared-database prisma:push",
     "db:seed": "pnpm --filter @ai-quality-platform/shared-database seed",
-    "db:clear-business": "pnpm --filter @ai-quality-platform/shared-database clear-business-data",
-    "dev:web": "pnpm --filter web dev",
-    "dev:gateway": "pnpm --filter quality-gateway start:dev",
-    "dev:services": "pnpm --parallel --filter quality-platform-service --filter quality-execution-service --filter quality-ai-invocation-service start:dev",
-    "check:health": "node scripts/check-health.mjs",
-    "check:topology": "node scripts/check-topology.mjs"
+    "setup": "pnpm install && pnpm db:generate && pnpm db:push && pnpm db:seed"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
@@ -24,7 +21,6 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "@prisma/engines",
-      "@nestjs/core",
       "better-sqlite3",
       "esbuild",
       "prisma",
