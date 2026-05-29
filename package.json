@@ -25,6 +25,7 @@
     "onlyBuiltDependencies": [
       "@prisma/engines",
       "@nestjs/core",
+      "better-sqlite3",
       "esbuild",
       "prisma",
       "sharp"
