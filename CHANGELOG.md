@@ -2,6 +2,24 @@
 
 ## [未发布]
 
+### 2026-05-29 — 重建为单体并点亮北极星两屏
+
+#### 重构 — 收敛为单体 + SQLite 零依赖
+- **变更需求**：按"窄而深 + 开源 5 分钟上手"重建，弃用广而浅的多服务骨架。
+- **变更内容**：
+  - 删除 `quality-gateway` 及 platform/execution/ai-invocation 三服务，删除仅服务用的包（ai-invocation-client/contract、ai-model-adapter、shared-http）。
+  - `packages/shared-database` 转 Prisma + SQLite（`better-sqlite3` driver adapter），新增 client 工厂与北极星 seed。
+  - 根 `package.json` 改单应用脚本（`dev`/`build`/`start`/`db:*`/`setup` 一键）；`.claude/launch.json` 收敛为仅 web；`.env.example` 改为 SQLite 可选覆盖。
+
+#### 新增 — 北极星两屏（执行对比 + 失败诊断）
+- **变更需求**：补齐产品唯一不可替代的两屏，让"改版后哪一轮退化、为什么"可见。
+- **变更内容**：
+  - `apps/web/src/lib/server/qtp-queries.ts`：Server 端数据层，`getComparison` / `getDiagnosis` 直读 SQLite。
+  - `apps/web/src/features/comparison`、`features/diagnosis` 两屏 + 对应 Server Component 路由；侧栏加"回归对比"入口。
+  - `next.config`：外部化 better-sqlite3/Prisma，注入 `DATABASE_URL` 绝对路径。
+  - 实测：两页 HTTP 200，截图确认北极星场景完整渲染，web typecheck 通过。
+  - 文档：新增 `docs/20260529-004-切片重建架构决策.md`；README 改写为单体 + 一键启动。
+
 ### 2026-05-29 — 确立开源定位、路线规划与差异化数据模型
 
 #### 新增 — 开源项目门面与战略材料

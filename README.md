@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Status](https://img.shields.io/badge/status-early%20development-orange.svg)](./ROADMAP.md)
-[![Stack](https://img.shields.io/badge/stack-Next.js%20%2B%20NestJS%20%2B%20Prisma-black.svg)](#架构)
+[![Stack](https://img.shields.io/badge/stack-Next.js%20%2B%20Prisma%20%2B%20SQLite-black.svg)](#架构)
 
 [核心场景](#为什么需要-qtp) · [与现有工具的区别](#和-ragas--promptfoo--langfuse-有什么不同) · [快速开始](#快速开始) · [路线图](./ROADMAP.md)
 
@@ -62,42 +62,39 @@ QTP 的护城河刻意落在这几层 —— 它们比"打分准不准"更难、
 ## 状态
 
 > ⚠️ **早期开发阶段。** QTP 正按 [路线图](./ROADMAP.md) 分阶段建设，优先把"多轮回归诊断"这一条垂直链路做深做透，而不是把模块铺广。当前不建议用于生产，欢迎围绕路线图讨论与共建。
+>
+> ✅ **北极星切片已可本地跑通**：`pnpm setup && pnpm dev` 即可在「回归对比 → 失败诊断」里看到改版后第 3 轮的上下文退化被定位出来（数据由 SQLite seed 提供）。
 
 ## 架构
 
-QTP 采用 monorepo + 服务化边界设计，服务可独立启动、构建与部署：
+QTP 是 **单体应用 + 零依赖本地启动**：一个 Next.js 进程同时承载前端与后端（Server Component / Route Handler 直读数据库），默认用 SQLite，不需要 Docker、不需要 MySQL。
 
 ```
-Next.js Web
-    │  HTTP
+Next.js（前端 + Server Component/Route Handler 后端）
+    │  Prisma
     ▼
-quality-gateway  ──┬──▶ quality-platform-service     业务/用例/套件/复核/统计/系统
-                   ├──▶ quality-execution-service    执行任务与版本对比
-                   └──▶ quality-ai-invocation-service 统一 AI 模型调用
-                                │
-                          MySQL（Prisma）
+SQLite（默认，零依赖）  ——可切换——▶  MySQL（生产可选）
 ```
 
 | 层 | 技术 |
 |---|---|
-| 前端 | Next.js · TypeScript · Tailwind CSS · shadcn/ui · lucide-react |
-| 后端 | NestJS · TypeScript |
-| 数据 | MySQL · Prisma |
-| 工程 | pnpm workspace · Docker Compose · nginx |
+| 前端 | Next.js 16 · TypeScript · Tailwind v4 · Radix UI · lucide-react |
+| 后端 | Next.js Server Component / Route Handler |
+| 数据 | Prisma · SQLite（默认）/ MySQL（可选） |
+| 工程 | pnpm workspace |
 
 目录结构：
 
 ```
 QTP/
 ├── apps/
-│   ├── web/                            # Next.js 前端主应用
-│   ├── quality-gateway/                # API 网关
-│   ├── quality-platform-service/       # 平台业务服务
-│   ├── quality-execution-service/      # 执行服务
-│   └── quality-ai-invocation-service/  # AI 调用服务
-├── packages/                           # 共享库（adapter / contract / config / db / http / auth）
-├── docs/                               # 设计与需求文档
-└── ROADMAP.md                          # 产品路线图
+│   └── web/                       # Next.js 单体应用（前端 + 后端）
+├── packages/
+│   ├── shared-database/           # Prisma schema + 客户端 + seed（北极星数据）
+│   ├── shared-config/             # 共享配置
+│   └── shared-auth/               # 密码哈希与会话令牌
+├── docs/                          # 定位 / 路线 / 设计规格
+└── ROADMAP.md                     # 产品路线图
 ```
 
 ## 快速开始
@@ -106,54 +103,25 @@ QTP/
 
 - Node.js 24（推荐用 [fnm](https://github.com/Schniz/fnm) / nvm 管理）
 - pnpm 11+
-- Docker（用于本地 MySQL）
 
-### 本地开发（Node 进程，支持热更新）
+> 默认 SQLite，**无需 Docker 或 MySQL**。
 
-```bash
-# 1. 安装依赖
-pnpm install
-
-# 2. 准备环境变量
-cp .env.example .env   # 按需修改密钥与密码
-
-# 3. 启动本地 MySQL 依赖
-docker compose -f docker-compose.dev-deps.yml up -d
-
-# 4. 初始化数据库
-export DATABASE_URL="mysql://qtp_app:qtp_dev_password@127.0.0.1:3306/ai_quality_platform"
-pnpm db:generate
-pnpm db:push
-QTP_ADMIN_INITIAL_PASSWORD="<本地管理员初始密码>" pnpm db:seed
-
-# 5. 启动后端服务与网关，再启动前端
-pnpm dev:services      # platform / execution / ai-invocation
-pnpm dev:gateway       # quality-gateway
-pnpm dev:web           # web（如遇 EMFILE，用 WATCHPACK_POLLING=true pnpm dev:web）
-```
-
-访问地址：
-
-- 前端：http://127.0.0.1:3000/ai-quality-platform
-- 网关健康检查：http://127.0.0.1:8080/ai-quality-platform/health.do
-
-### 生产部署（Docker Compose 全栈）
+### 一键启动
 
 ```bash
-export MYSQL_ROOT_PASSWORD="<生产 root 密码>"
-export MYSQL_USER="qtp_app"
-export MYSQL_PASSWORD="<生产应用库密码>"
-export MYSQL_DATABASE="ai_quality_platform"
-export QTP_AUTH_TOKEN_SECRET="<长随机密钥>"
-
-docker compose up --build -d mysql
-QTP_ADMIN_INITIAL_PASSWORD="<管理员初始密码>" docker compose run --rm quality-platform-service pnpm db:seed
-PUBLIC_WEB_PORT=5670 docker compose up --build -d
+pnpm setup    # 安装依赖 + 生成 Prisma Client + 建库 + 写入北极星演示数据
+pnpm dev      # 启动应用（http://127.0.0.1:3000/ai-quality-platform）
 ```
 
-访问：http://127.0.0.1:5670/ai-quality-platform
+`pnpm setup` 等价于：`pnpm install && pnpm db:generate && pnpm db:push && pnpm db:seed`。
 
-更多细节见 [docs/004-本地部署.md](./docs/004-本地部署.md)。
+启动后直接体验北极星场景：左侧「回归对比」→ 看到候选版本 `v1.5.0-rc1` 通过率从 100% 跌到 66.7%、新增失败 1、建议「不建议发布」→ 点「查看诊断」→ 看到**第 3 轮模型仍用旧值 80（用户第 2 轮已改成 20）**、证据链与修复建议。
+
+> 默认管理员：`admin` / `admin123`（可用 `QTP_ADMIN_INITIAL_PASSWORD` 覆盖后重新 `pnpm db:seed`）。
+
+### 切换到 MySQL（可选）
+
+把 `packages/shared-database/prisma/schema.prisma` 的 `provider` 改为 `mysql`，并设置 `DATABASE_URL` 指向你的 MySQL，再执行 `pnpm db:push && pnpm db:seed`。
 
 ## 路线图
 
