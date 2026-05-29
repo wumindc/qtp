@@ -173,3 +173,5 @@ export function deriveFailureType(failedTypes: Set<AssertionType>): string | nul
 }
 
 export * from './stability';
+export * from './comparison';
+export * from './runner';

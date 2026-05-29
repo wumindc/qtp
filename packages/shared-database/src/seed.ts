@@ -1,5 +1,14 @@
 import { hashPassword } from '@ai-quality-platform/shared-auth';
-import { evaluateCase, evaluateStability, type TurnSpec, type TurnActual } from '@ai-quality-platform/eval-engine';
+import {
+  evaluateCase,
+  evaluateStability,
+  runRegression,
+  aggregateComparison,
+  type TurnSpec,
+  type TurnActual,
+  type RunnableCase,
+  type CaseOutcome,
+} from '@ai-quality-platform/eval-engine';
 import { createPrismaClient } from './client';
 
 /**
@@ -158,11 +167,8 @@ async function main() {
     data: { runCode: 'RUN-CAND-0001', appCode, versionCode: 'v1.5.0-rc1', role: 'CANDIDATE', status: 'COMPLETED', startedAt: new Date('2026-05-29T03:00:00Z'), finishedAt: new Date('2026-05-29T03:03:00Z') },
   });
 
-  let baseTotals = { pass: 0, fail: 0 };
-  let candTotals = { pass: 0, fail: 0 };
-  let newFail = 0;
-  const degradationByType: Record<string, number> = {};
-
+  // 建用例并组装可运行集合
+  const runnable: (RunnableCase & { def: CaseDef })[] = [];
   for (const def of CASES) {
     const tc = await prisma.testCase.create({
       data: {
@@ -176,36 +182,45 @@ async function main() {
         turnsSpec: J(def.spec),
       },
     });
+    runnable.push({ caseId: tc.id, spec: def.spec, def });
+  }
+  const defById = new Map(runnable.map((r) => [r.caseId, r.def]));
 
-    // 引擎计算两侧
-    const baseEval = evaluateCase(def.spec, def.baseline);
-    const candEval = evaluateCase(def.spec, def.candidate);
+  // 用运行器跑两版（provider 返回预置回答；真实 Adapter 将来实现同一接口即可接入）
+  const baseResults = await runRegression(runnable, (c) => defById.get(c.caseId)!.baseline);
+  const candResults = await runRegression(runnable, (c) => defById.get(c.caseId)!.candidate);
+  const baseEvalById = new Map(baseResults.map((r) => [r.caseId, r.evaluation]));
 
-    await writeResult(prisma, baselineRun.runCode, tc.id, appCode, def.riskLevel, baseEval);
-    if (baseEval.passStatus === 'PASS') baseTotals.pass++; else baseTotals.fail++;
+  // 写基线结果
+  for (const r of baseResults) {
+    await writeResult(prisma, baselineRun.runCode, r.caseId, appCode, defById.get(r.caseId)!.riskLevel, r.evaluation);
+  }
 
-    // 候选侧稳定性判定（若提供采样序列）
-    const stability = def.candidateSamples
-      ? evaluateStability(def.candidateSamples, baseEval.passStatus === 'PASS')
-      : null;
+  // 写候选结果（含稳定性 + 诊断），并组装对比 outcomes
+  const outcomes: CaseOutcome[] = [];
+  for (const r of candResults) {
+    const def = defById.get(r.caseId)!;
+    const baseEval = baseEvalById.get(r.caseId)!;
+    const baselinePass = baseEval.passStatus === 'PASS';
+    const candidatePass = r.evaluation.passStatus === 'PASS';
 
-    const candResult = await writeResult(prisma, candidateRun.runCode, tc.id, appCode, def.riskLevel, candEval, stability);
-    if (candEval.passStatus === 'PASS') candTotals.pass++; else candTotals.fail++;
+    const stability = def.candidateSamples ? evaluateStability(def.candidateSamples, baselinePass) : null;
+    const candResult = await writeResult(prisma, candidateRun.runCode, r.caseId, appCode, def.riskLevel, r.evaluation, stability);
 
-    // 新增失败统计 + 退化分布
-    if (baseEval.passStatus === 'PASS' && candEval.passStatus === 'FAIL') {
-      newFail++;
-      const t = candEval.failureType ?? '其他';
-      degradationByType[t] = (degradationByType[t] ?? 0) + 1;
-    }
+    outcomes.push({
+      caseId: r.caseId,
+      baselinePass,
+      candidatePass,
+      candidateFailureType: r.evaluation.failureType,
+      riskLevel: def.riskLevel,
+    });
 
-    // 诊断（仅候选失败且提供叙事时）
-    if (candEval.passStatus === 'FAIL' && def.diagnosis) {
+    if (!candidatePass && def.diagnosis) {
       await prisma.diagnosis.create({
         data: {
           resultId: candResult.id,
           appCode,
-          primaryType: candEval.failureType, // 主类型来自引擎
+          primaryType: r.evaluation.failureType, // 主类型来自引擎
           conclusion: def.diagnosis.conclusion,
           evidence: J(def.diagnosis.evidence),
           possibleCauses: J(def.diagnosis.possibleCauses),
@@ -217,15 +232,17 @@ async function main() {
     }
   }
 
-  // 回填执行汇总
-  const baseTotal = baseTotals.pass + baseTotals.fail;
-  const candTotal = candTotals.pass + candTotals.fail;
-  await prisma.regressionRun.update({ where: { runCode: baselineRun.runCode }, data: { totalCount: baseTotal, passCount: baseTotals.pass, failCount: baseTotals.fail } });
-  await prisma.regressionRun.update({ where: { runCode: candidateRun.runCode }, data: { totalCount: candTotal, passCount: candTotals.pass, failCount: candTotals.fail } });
+  // 用聚合器算对比（替换手写逻辑）
+  const agg = aggregateComparison(outcomes);
+  const total = outcomes.length;
+  const basePass = outcomes.filter((o) => o.baselinePass).length;
+  const candPass = outcomes.filter((o) => o.candidatePass).length;
 
-  const passRateDelta = (candTotals.pass / candTotal) - (baseTotals.pass / baseTotal);
-  // 取候选失败用例的稳定性作为对比稳定性概览
+  await prisma.regressionRun.update({ where: { runCode: baselineRun.runCode }, data: { totalCount: total, passCount: basePass, failCount: total - basePass } });
+  await prisma.regressionRun.update({ where: { runCode: candidateRun.runCode }, data: { totalCount: total, passCount: candPass, failCount: total - candPass } });
+
   const staleResult = await prisma.caseResult.findFirst({ where: { runCode: candidateRun.runCode, passStatus: 'FAIL' } });
+  const recLabel: Record<string, string> = { BLOCK: '阻断发布', REJECT: '不建议发布', MANUAL: '需人工评估', WATCH: '需关注', PASS: '可发布' };
 
   await prisma.comparison.create({
     data: {
@@ -236,23 +253,26 @@ async function main() {
       baselineVersionCode: 'v1.4.0',
       candidateVersionCode: 'v1.5.0-rc1',
       status: 'COMPLETED',
-      releaseRecommendation: newFail > 0 ? 'REJECT' : 'PASS',
-      passRateDelta,
-      newFailCount: newFail,
-      fixedFailCount: 0,
-      persistentFailCount: 0,
+      releaseRecommendation: agg.releaseRecommendation,
+      passRateDelta: agg.passRateDelta,
+      newFailCount: agg.newFailCount,
+      fixedFailCount: agg.fixedFailCount,
+      persistentFailCount: agg.persistentFailCount,
       stabilityScore: staleResult?.stabilityScore ?? null,
       avgLatencyDeltaMs: -40,
       summary: J({
-        degradationByType,
+        degradationByType: agg.degradationByType,
         versionChange: ['Prompt 由 prompt@1.4 升级到 prompt@1.5（精简系统提示）'],
-        note: newFail > 0 ? `存在 ${newFail} 个高风险新增失败（${Object.keys(degradationByType).join('、')}），不建议发布。` : '未发现退化，可发布。',
+        note:
+          agg.newFailCount > 0
+            ? `存在 ${agg.newFailCount} 个新增失败（${Object.keys(agg.degradationByType).join('、')}），建议：${recLabel[agg.releaseRecommendation]}。`
+            : '未发现退化，可发布。',
       }),
     },
   });
 
   await prisma.$disconnect();
-  console.log(`✓ 北极星数据已由 eval-engine 计算并写入：基线 ${baseTotals.pass}/${baseTotal} 通过，候选 ${candTotals.pass}/${candTotal} 通过，新增失败 ${newFail}`);
+  console.log(`✓ 北极星数据已由 eval-engine 计算并写入：基线 ${basePass}/${total} 通过，候选 ${candPass}/${total} 通过，新增失败 ${agg.newFailCount}，建议 ${agg.releaseRecommendation}`);
 }
 
 async function writeResult(
