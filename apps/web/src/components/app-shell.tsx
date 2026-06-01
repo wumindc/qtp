@@ -20,6 +20,7 @@ import {
   ClipboardList,
   Command,
   Gauge,
+  GitCompare,
   HeartPulse,
   KeyRound,
   Layers3,
@@ -36,6 +37,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 /* ── 平台主导航菜单 ── */
 const NAV_ITEMS = [
   { label: '工作台', href: '/ai-quality-platform', icon: Gauge, exact: true },
+  { label: '回归对比', href: '/ai-quality-platform/compare/CMP-0001', icon: GitCompare },
   { label: 'AI 应用', href: '/ai-quality-platform/apps', icon: Bot, matchPrefix: '/ai-quality-platform/apps' },
   { label: '预置用例', href: '/ai-quality-platform/cases', icon: ClipboardList },
   { label: '模型中心', href: '/ai-quality-platform/providers', icon: Boxes },

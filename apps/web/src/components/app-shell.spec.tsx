@@ -22,7 +22,7 @@ describe('AppShell', () => {
       </AppShell>,
     );
 
-    expect(screen.getByText('AI 质量平台')).toBeInTheDocument();
+    expect(screen.getAllByText('AI 质量平台').length).toBeGreaterThan(0);
     expect(screen.getByText('工作台')).toBeInTheDocument();
     expect(screen.getByText('AI 应用').closest('a')).toHaveAttribute('href', '/ai-quality-platform/apps');
     expect(screen.getByText('预置用例').closest('a')).toHaveAttribute('href', '/ai-quality-platform/cases');

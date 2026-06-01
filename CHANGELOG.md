@@ -2,6 +2,56 @@
 
 ## [未发布]
 
+### 2026-06-01 — 补齐 GitHub 开源协作资料与任务规划
+
+#### 新增 — 开源治理与功能拆解
+- **变更需求**：围绕 QTP 开源发布目标，补齐符合 GitHub 开源项目习惯的 README 入口、协作文件、Issue/PR 模板、功能规划和任务拆解。
+- **变更内容**：
+  - `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md`、`SUPPORT.md`：新增贡献指南、行为准则、安全策略和支持方式。
+  - `.github/ISSUE_TEMPLATE/*`、`.github/pull_request_template.md`：新增 Bug、Feature 和 PR 模板，统一收集复现、验收、截图、文档更新和风险信息。
+  - `docs/20260601-001-开源化与功能任务规划.md`：新增开源资料清单、P0-P6 功能规划、任务拆解、验收门禁和 PR 合并策略。
+  - `README.md`：补充 CI badge、开发命令、任务规划和贡献入口。
+
+#### 修复 — CI 脚本与当前单体仓库对齐
+- **变更需求**：当前 `.github/workflows/ci.yml` 仍引用旧多服务时期的 `check:topology` 和 `build:web`，会导致外部贡献者 PR 被错误 CI 阻塞。
+- **变更内容**：
+  - `.github/workflows/ci.yml`：删除过期拓扑检查，先生成 Prisma Client，再运行当前根脚本 `pnpm typecheck`、`pnpm test`、`pnpm build`。
+
+### 2026-05-29 — 重建为单体并点亮北极星两屏
+
+#### 重构 — 收敛为单体 + SQLite 零依赖
+- **变更需求**：按"窄而深 + 开源 5 分钟上手"重建，弃用广而浅的多服务骨架。
+- **变更内容**：
+  - 删除 `quality-gateway` 及 platform/execution/ai-invocation 三服务，删除仅服务用的包（ai-invocation-client/contract、ai-model-adapter、shared-http）。
+  - `packages/shared-database` 转 Prisma + SQLite（`better-sqlite3` driver adapter），新增 client 工厂与北极星 seed。
+  - 根 `package.json` 改单应用脚本（`dev`/`build`/`start`/`db:*`/`setup` 一键）；`.claude/launch.json` 收敛为仅 web；`.env.example` 改为 SQLite 可选覆盖。
+
+#### 新增 — 北极星两屏（执行对比 + 失败诊断）
+- **变更需求**：补齐产品唯一不可替代的两屏，让"改版后哪一轮退化、为什么"可见。
+- **变更内容**：
+  - `apps/web/src/lib/server/qtp-queries.ts`：Server 端数据层，`getComparison` / `getDiagnosis` 直读 SQLite。
+  - `apps/web/src/features/comparison`、`features/diagnosis` 两屏 + 对应 Server Component 路由；侧栏加"回归对比"入口。
+  - `next.config`：外部化 better-sqlite3/Prisma，注入 `DATABASE_URL` 绝对路径。
+  - 实测：两页 HTTP 200，截图确认北极星场景完整渲染，web typecheck 通过。
+  - 文档：新增 `docs/20260529-004-切片重建架构决策.md`；README 改写为单体 + 一键启动。
+
+### 2026-05-29 — 确立开源定位、路线规划与差异化数据模型
+
+#### 新增 — 开源项目门面与战略材料
+- **变更需求**：项目当前功能够不上"合格开源项目"水平，需先确立锐利定位、收敛范围、补齐对外门面，再回到功能建设。
+- **变更内容**：
+  - `LICENSE`：新增 Apache-2.0。
+  - `README.md`：面向开发者的 GitHub 风格门面，开篇即北极星场景，含与 Ragas/promptfoo/Langfuse 的竞品对比、架构、快速开始、路线图。
+  - `ROADMAP.md`：窄而深的 8 阶段路线，含 v0.1 做/不做速查。
+  - `docs/20260529-001-产品定位与路线规划.md`：战略定位与决策记录。
+  - `docs/20260529-002-设计资产盘点.md`：21 张设计图按路线图阶段归类，识别护城河三屏设计缺口。
+  - `docs/20260529-003-失败诊断与执行对比设计规格.md`：补齐北极星两屏（执行对比 + 失败诊断）高保真文字规格。
+
+#### 新增 — 差异化切片数据模型（只增不改，向后兼容）
+- **变更需求**：现有 schema 仅支撑单次评估管线，缺版本对比、多轮逐轮、失败诊断、上下文断言等差异化能力。
+- **变更内容**：
+  - `packages/shared-database/prisma/schema.prisma`：新增 `AppVersion`、`RegressionComparison`、`FailureDiagnosis`、`CaseAssertionResult` 四张表；为 `EvalResult` 追加可空列 `turnsJson` / `sampleCount` / `stabilityScore` / `regressionVerdict` / `regressionConfidence`。`prisma validate` 通过。
+
 ### 2026-05-28 — 引入 Framer Motion 全局重构登录页猫咪动画
 
 #### 重构 — 基于物理弹簧系统解决动画裁切与冲突

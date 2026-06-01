@@ -26,14 +26,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Check Service Topology
-        run: pnpm check:topology
+      - name: Generate Prisma Client
+        run: pnpm db:generate
 
       - name: Typecheck
-        run: pnpm -r --if-present typecheck
+        run: pnpm typecheck
 
       - name: Test
-        run: pnpm -r --if-present test
+        run: pnpm test
 
-      - name: Build Web
-        run: pnpm build:web
+      - name: Build
+        run: pnpm build

@@ -87,15 +87,18 @@ function formatCsvCell(value: string) {
 }
 
 function formatCaseTimestamp(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate()),
-    pad(date.getHours()),
-    pad(date.getMinutes()),
-    pad(date.getSeconds()),
-  ].join('');
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+    minute: '2-digit',
+    month: '2-digit',
+    second: '2-digit',
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+  }).formatToParts(date);
+  const valueByType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${valueByType.year}${valueByType.month}${valueByType.day}${valueByType.hour}${valueByType.minute}${valueByType.second}`;
 }
 
 function parseCsvTable(content: string): string[][] {

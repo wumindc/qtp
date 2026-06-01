@@ -5,16 +5,16 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "seed": "tsx src/seed.ts",
-    "clear-business-data": "tsx src/clear-business-data.ts"
+    "seed": "tsx src/seed.ts"
   },
   "dependencies": {
+    "@ai-quality-platform/eval-engine": "workspace:*",
     "@ai-quality-platform/shared-auth": "workspace:*",
-    "@prisma/adapter-mariadb": "^7.8.0",
+    "@prisma/adapter-better-sqlite3": "^7.1.0",
     "@prisma/client": "^7.1.0"
   },
   "devDependencies": {

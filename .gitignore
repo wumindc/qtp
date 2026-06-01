@@ -15,3 +15,8 @@ docs/superpowers/
 .playwright-mcp/
 output/
 /*.png
+
+# SQLite 本地库
+*.db
+*.db-journal
+packages/shared-database/prisma/dev.db

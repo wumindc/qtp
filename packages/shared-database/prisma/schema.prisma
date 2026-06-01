@@ -1,17 +1,23 @@
+// QTP 北极星切片数据模型（单体 + SQLite 默认）
+// 设计依据：docs/20260529-003-失败诊断与执行对比设计规格.md
+//          docs/20260529-004-切片重建架构决策.md
+// 切 MySQL：把 provider 改为 "mysql" 并在 DATABASE_URL 指向 MySQL 即可。
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "sqlite"
 }
 
+/// 平台用户（登录与复核归属）
 model User {
-  id           BigInt   @id @default(autoincrement())
-  username     String   @unique @db.VarChar(100)
-  displayName  String   @db.VarChar(100)
-  passwordHash String   @db.VarChar(255)
-  roleCode     String   @db.VarChar(50)
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  displayName  String
+  passwordHash String
+  roleCode     String   @default("ADMIN")
   enabled      Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -19,235 +25,201 @@ model User {
   @@map("sys_user")
 }
 
-model AiApp {
-  id             BigInt   @id @default(autoincrement())
-  appCode        String   @unique @db.VarChar(100)
-  appName        String   @db.VarChar(200)
-  appType        String   @db.VarChar(50)
-  invokeUrl      String   @db.VarChar(500)
-  requestMethod  String   @default("POST") @db.VarChar(20)
-  adapterConfig  Json?
-  owner          String?  @db.VarChar(100)
-  status         String   @default("ENABLED") @db.VarChar(50)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+/// 被测 AI 应用
+model App {
+  id            Int      @id @default(autoincrement())
+  appCode       String   @unique
+  appName       String
+  appType       String   @default("CHAT") // CHAT / RAG / AGENT / WORKFLOW
+  invokeUrl     String   @default("")
+  adapterConfig String?  // JSON 文本：请求模板 / 响应抽取
+  owner         String?
+  status        String   @default("ENABLED")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  @@map("ai_app")
+  versions AppVersion[]
+  cases    TestCase[]
+  runs     RegressionRun[]
+
+  @@map("app")
 }
 
-model AiProvider {
-  id           BigInt   @id @default(autoincrement())
-  providerCode String   @unique @db.VarChar(100)
-  providerName String   @db.VarChar(200)
-  providerType String   @db.VarChar(50)
-  baseUrl      String   @db.VarChar(500)
-  apiKey       String   @db.VarChar(500)
-  enabled      Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@map("ai_provider")
-}
-
-model AiModel {
-  id               BigInt   @id @default(autoincrement())
-  modelName        String   @db.VarChar(200)
-  providerCode     String   @db.VarChar(100)
-  modelId          String   @db.VarChar(200)
-  modelType        String   @db.VarChar(50)
-  protocol         String   @db.VarChar(80)
-  parameters       Json
-  capabilities     Json
-  limits           Json
-  enabled          Boolean  @default(true)
+/// 应用版本：执行对比的两端
+model AppVersion {
+  id               Int      @id @default(autoincrement())
+  appCode          String
+  versionCode      String   // 如 v1.5.0-rc1
+  versionType      String   @default("CANDIDATE") // BASELINE / CANDIDATE / PRODUCTION / HISTORY
+  promptVersion    String?
+  modelVersion     String?
+  knowledgeVersion String?
+  toolVersion      String?
+  commitId         String?
+  changeNote       String?
+  createdBy        String?
   createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
 
-  @@index([providerCode])
-  @@index([modelType])
-  @@map("ai_model")
+  app App @relation(fields: [appCode], references: [appCode])
+
+  @@unique([appCode, versionCode])
+  @@index([appCode, versionType])
+  @@map("app_version")
 }
 
-model AppEvaluationConfig {
-  id                    BigInt   @id @default(autoincrement())
-  appCode               String   @unique @db.VarChar(100)
-  modelId               BigInt
-  promptOverrideEnabled Boolean  @default(false)
-  customPrompt          String?  @db.Text
-  evaluationConcurrency Int      @default(3)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-
-  @@index([modelId])
-  @@map("app_evaluation_config")
-}
-
-model EvalCaseCategory {
-  id          BigInt   @id @default(autoincrement())
-  appCode     String?  @db.VarChar(100)
-  name        String   @db.VarChar(100)
-  description String   @db.VarChar(500)
-  sortOrder   Int      @default(0)
-  enabled     Boolean  @default(true)
+/// 测试用例（北极星阶段聚焦多轮 Golden Case）
+model TestCase {
+  id          Int      @id @default(autoincrement())
+  appCode     String
+  name        String
+  caseType    String   @default("MULTI_TURN") // MULTI_TURN（v0.1 唯一）
+  riskLevel   String   @default("MEDIUM") // HIGH / MEDIUM / LOW
+  priority    String   @default("P1")     // P0 / P1 / P2 / P3
+  source      String   @default("MANUAL")  // MANUAL / SESSION / IMPORT / FAILURE
+  // 多轮脚本：[{ turnIndex, userInput, expect:{ mustContain[], mustNotContain[],
+  //   mustUpdateContext{}, mustNotUseStaleContext{}, ... } }]
+  turnsSpec   String
+  tags        String?  // JSON 文本数组
+  status      String   @default("ENABLED")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([appCode, name])
+  app     App          @relation(fields: [appCode], references: [appCode])
+  results CaseResult[]
+
   @@index([appCode])
-  @@map("eval_case_category")
+  @@map("test_case")
 }
 
-model EvalCase {
-  id                   BigInt   @id @default(autoincrement())
-  appCode              String   @db.VarChar(100)
-  caseScope            String   @default("APP") @db.VarChar(50)
-  categoryId           BigInt
-  inputJson            Json
-  expectedJson         Json
-  enabled              Boolean  @default(true)
+/// 一次回归执行（针对某个应用版本跑一组用例）
+model RegressionRun {
+  id          Int       @id @default(autoincrement())
+  runCode     String    @unique
+  appCode     String
+  versionCode String
+  role        String    @default("CANDIDATE") // BASELINE / CANDIDATE
+  status      String    @default("COMPLETED") // PENDING / RUNNING / COMPLETED / FAILED
+  totalCount  Int       @default(0)
+  passCount   Int       @default(0)
+  failCount   Int       @default(0)
+  reviewCount Int       @default(0)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  app     App          @relation(fields: [appCode], references: [appCode])
+  results CaseResult[]
+
+  @@index([appCode])
+  @@map("regression_run")
+}
+
+/// 单用例在某次执行中的结果（含逐轮实际回答与稳定性判定）
+model CaseResult {
+  id                   Int      @id @default(autoincrement())
+  runCode              String
+  caseId               Int
+  appCode              String
+  passStatus           String   @default("PASS") // PASS / FAIL / REVIEW / TIMEOUT / ERROR
+  failureType          String?  // 上下文遗忘 / RAG依据不足 / 格式错误 / 超时 / 接口错误 ...
+  riskLevel            String   @default("MEDIUM")
+  // 逐轮实际回答：[{ turnIndex, userInput, answer, latencyMs, status,
+  //   highlights:[{start,end,kind}] }]
+  turnsActual          String
+  // 阶段2：随机性回归判定
+  sampleCount          Int?
+  stabilityScore       Float?   // 0-1
+  regressionVerdict    String?  // TRUE_REGRESSION / SUSPECTED_FLAKE
+  regressionConfidence Float?   // 0-1
+  latencyMs            Int?
   createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
 
-  @@index([appCode])
-  @@index([caseScope])
-  @@index([categoryId])
-  @@map("eval_case")
-}
-
-model EvalPlan {
-  id             BigInt   @id @default(autoincrement())
-  planCode       String   @unique @db.VarChar(100)
-  planName       String   @db.VarChar(200)
-  appCode        String   @db.VarChar(100)
-  caseFilterJson Json
-  status         String   @default("ENABLED") @db.VarChar(50)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@index([appCode])
-  @@map("eval_plan")
-}
-
-model EvalRun {
-  id                    BigInt    @id @default(autoincrement())
-  runCode               String    @unique @db.VarChar(100)
-  planCode              String    @db.VarChar(100)
-  appCode               String    @db.VarChar(100)
-  sequenceNo            Int?
-  status                String    @db.VarChar(50)
-  phase                 String    @default("PENDING") @db.VarChar(50)
-  totalCount            Int       @default(0)
-  appCompletedCount     Int       @default(0)
-  evalCompletedCount    Int       @default(0)
-  passCount             Int       @default(0)
-  failCount             Int       @default(0)
-  reviewCount           Int       @default(0)
-  avgScore              Decimal?  @db.Decimal(5, 2)
-  normalInputTokens     Int       @default(0)
-  cachedInputTokens     Int       @default(0)
-  outputTokens          Int       @default(0)
-  totalTokens           Int       @default(0)
-  normalInputCostAmount Decimal?  @db.Decimal(18, 6)
-  cachedInputCostAmount Decimal?  @db.Decimal(18, 6)
-  outputCostAmount      Decimal?  @db.Decimal(18, 6)
-  totalCostAmount       Decimal?  @db.Decimal(18, 6)
-  currency              String?   @db.VarChar(20)
-  costStatus            String    @default("NOT_CALCULATED") @db.VarChar(50)
-  startedAt             DateTime?
-  finishedAt            DateTime?
-  createdAt             DateTime  @default(now())
-
-  @@index([planCode])
-  @@index([appCode])
-  @@index([status, phase])
-  @@map("eval_run")
-}
-
-model EvalResult {
-  id               BigInt   @id @default(autoincrement())
-  runCode          String   @db.VarChar(100)
-  caseId           BigInt
-  appCode          String   @db.VarChar(100)
-  caseSnapshotJson Json?
-  appStatus        String   @default("PENDING") @db.VarChar(50)
-  evaluationStatus String   @default("PENDING") @db.VarChar(50)
-  requestJson      Json
-  responseJson     Json?
-  finalAnswer      String?  @db.Text
-  finalScore       Decimal? @db.Decimal(5, 2)
-  passStatus       String   @db.VarChar(50)
-  failureReason    String?  @db.Text
-  problemType      String?  @db.VarChar(100)
-  elapsedMs        Int?
-  appElapsedMs     Int?
-  judgeElapsedMs   Int?
-  errorCode        String?  @db.VarChar(100)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now()) @updatedAt
+  run        RegressionRun     @relation(fields: [runCode], references: [runCode])
+  case       TestCase          @relation(fields: [caseId], references: [id])
+  assertions AssertionResult[]
+  diagnosis  Diagnosis?
+  reviews    Review[]
 
   @@index([runCode])
   @@index([caseId])
-  @@index([runCode, appStatus, evaluationStatus])
-  @@map("eval_result")
+  @@map("case_result")
 }
 
-model EvalJudgeCall {
-  id                    BigInt   @id @default(autoincrement())
-  callCode              String   @unique @db.VarChar(100)
-  runCode               String   @db.VarChar(100)
-  resultId              BigInt
-  appCode               String   @db.VarChar(100)
-  caseId                BigInt
-  providerCode          String   @db.VarChar(100)
-  modelDbId             BigInt
-  modelId               String   @db.VarChar(200)
-  protocol              String   @db.VarChar(80)
-  promptText            String   @db.Text
-  requestJson           Json
-  responseJson          Json?
-  rawResponseText       String?  @db.LongText
-  rawUsageJson          Json?
-  normalInputTokens     Int?
-  cachedInputTokens     Int?
-  outputTokens          Int?
-  totalTokens           Int?
-  normalInputCostAmount Decimal? @db.Decimal(18, 6)
-  cachedInputCostAmount Decimal? @db.Decimal(18, 6)
-  outputCostAmount      Decimal? @db.Decimal(18, 6)
-  totalCostAmount       Decimal? @db.Decimal(18, 6)
-  currency              String?  @db.VarChar(20)
-  costStatus            String   @default("NOT_CALCULATED") @db.VarChar(50)
-  status                String   @db.VarChar(50)
-  errorCode             String?  @db.VarChar(100)
-  errorMessage          String?  @db.Text
-  elapsedMs             Int?
+/// 逐断言结果（支撑多轮上下文断言）
+model AssertionResult {
+  id            Int      @id @default(autoincrement())
+  resultId      Int
+  turnIndex     Int?
+  assertionType String   // mustContain / mustNotContain / mustUpdateContext / mustNotUseStaleContext / mustCiteReference
+  expression    String?
+  expectedValue String?  // JSON 文本
+  actualValue   String?  // JSON 文本
+  passed        Boolean
+  evidenceSpan  String?  // JSON 文本 { turnIndex, start, end }
+  createdAt     DateTime @default(now())
+
+  result CaseResult @relation(fields: [resultId], references: [id])
+
+  @@index([resultId])
+  @@map("assertion_result")
+}
+
+/// 失败诊断：把 PASS/FAIL 变成「为什么」
+model Diagnosis {
+  id             Int      @id @default(autoincrement())
+  resultId       Int      @unique
+  appCode        String
+  conclusion     String?
+  primaryType    String?
+  evidence       String?  // JSON 文本：[{ source, turnIndex, span, text }]
+  possibleCauses String?  // JSON 文本：[{ name, confidenceLevel, note }]
+  suggestions    String?  // JSON 文本：[{ text }]
+  confidence     Float?   // 0-1，低于阈值前台不展示原因
+  generatedBy    String?  @default("RULE") // RULE / LLM / HYBRID
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  result CaseResult @relation(fields: [resultId], references: [id])
+
+  @@map("diagnosis")
+}
+
+/// 回归对比：基线 run × 候选 run 的聚合与发布建议
+model Comparison {
+  id                    Int      @id @default(autoincrement())
+  comparisonCode        String   @unique
+  appCode               String
+  baselineRunCode       String
+  candidateRunCode      String
+  baselineVersionCode   String?
+  candidateVersionCode  String?
+  status                String   @default("COMPLETED")
+  releaseRecommendation String?  // PASS / WATCH / MANUAL / REJECT / BLOCK
+  passRateDelta         Float?
+  newFailCount          Int      @default(0)
+  fixedFailCount        Int      @default(0)
+  persistentFailCount   Int      @default(0)
+  stabilityScore        Float?
+  avgLatencyDeltaMs     Int?
+  summary               String?  // JSON 文本：退化类型分布 / 版本变更摘要
   createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
 
-  @@index([runCode])
-  @@index([resultId])
-  @@index([modelDbId])
-  @@map("eval_judge_call")
-}
-
-model EvalReview {
-  id            BigInt    @id @default(autoincrement())
-  resultId      BigInt
-  manualResult  String?   @db.VarChar(50)
-  reviewComment String?   @db.Text
-  createdAt     DateTime  @default(now())
-
-  @@index([resultId])
-  @@map("eval_review")
-}
-
-model AppPresetCategory {
-  id          BigInt   @id @default(autoincrement())
-  appCode     String   @db.VarChar(100)
-  categoryId  BigInt
-  createdAt   DateTime @default(now())
-
-  @@unique([appCode, categoryId])
   @@index([appCode])
-  @@map("eval_app_preset_category")
+  @@map("comparison")
+}
+
+/// 人工复核
+model Review {
+  id            Int      @id @default(autoincrement())
+  resultId      Int
+  manualResult  String?  // CONFIRMED_FAIL / FALSE_POSITIVE / MODEL_CORRECT / UNCERTAIN
+  action        String?  // DEFECT / WHITELIST / REJUDGE / IGNORE
+  reviewerId    String?
+  comment       String?
+  createdAt     DateTime @default(now())
+
+  result CaseResult @relation(fields: [resultId], references: [id])
+
+  @@index([resultId])
+  @@map("review")
 }
