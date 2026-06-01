@@ -2,6 +2,21 @@
 
 ## [未发布]
 
+### 2026-06-01 — 补齐 GitHub 开源协作资料与任务规划
+
+#### 新增 — 开源治理与功能拆解
+- **变更需求**：围绕 QTP 开源发布目标，补齐符合 GitHub 开源项目习惯的 README 入口、协作文件、Issue/PR 模板、功能规划和任务拆解。
+- **变更内容**：
+  - `CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、`SECURITY.md`、`SUPPORT.md`：新增贡献指南、行为准则、安全策略和支持方式。
+  - `.github/ISSUE_TEMPLATE/*`、`.github/pull_request_template.md`：新增 Bug、Feature 和 PR 模板，统一收集复现、验收、截图、文档更新和风险信息。
+  - `docs/20260601-001-开源化与功能任务规划.md`：新增开源资料清单、P0-P6 功能规划、任务拆解、验收门禁和 PR 合并策略。
+  - `README.md`：补充 CI badge、开发命令、任务规划和贡献入口。
+
+#### 修复 — CI 脚本与当前单体仓库对齐
+- **变更需求**：当前 `.github/workflows/ci.yml` 仍引用旧多服务时期的 `check:topology` 和 `build:web`，会导致外部贡献者 PR 被错误 CI 阻塞。
+- **变更内容**：
+  - `.github/workflows/ci.yml`：删除过期拓扑检查，先生成 Prisma Client，再运行当前根脚本 `pnpm typecheck`、`pnpm test`、`pnpm build`。
+
 ### 2026-05-29 — 重建为单体并点亮北极星两屏
 
 #### 重构 — 收敛为单体 + SQLite 零依赖

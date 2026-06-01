@@ -28,13 +28,14 @@ describe('HealthPage', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows public API routing relationships for consolidated services', async () => {
+  it('shows simplified service descriptions for consolidated services', async () => {
     render(<HealthPage />);
 
-    expect(await screen.findByText('公开 API 路由')).toBeInTheDocument();
-    expect(screen.getByText('business / case / plan / ai / review / statistics / system')).toBeInTheDocument();
-    expect(screen.getAllByText('quality-platform-service').length).toBeGreaterThan(1);
-    expect(screen.getAllByText('execution').length).toBeGreaterThan(0);
+    expect(await screen.findByText('quality-gateway')).toBeInTheDocument();
+    expect(screen.getByText('公开入口聚合检查')).toBeInTheDocument();
+    expect(screen.getByText('平台业务模块检查')).toBeInTheDocument();
+    expect(screen.getByText('quality-platform-service')).toBeInTheDocument();
+    expect(screen.getByText('执行与 Worker 检查')).toBeInTheDocument();
   });
 
   it('checks one aggregated gateway health endpoint when the recheck button is clicked', async () => {
@@ -62,11 +63,12 @@ describe('HealthPage', () => {
 
     render(<HealthPage />);
     await screen.findByText('quality-gateway');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: '重新检查' }));
 
     await waitFor(() => expect(screen.getByText(/最近检查：/u)).toBeInTheDocument());
     expect(screen.getAllByText('UP').length).toBeGreaterThanOrEqual(3);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/ai-quality-platform/health.do'),
       expect.objectContaining({ cache: 'no-store' }),

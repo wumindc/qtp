@@ -40,7 +40,6 @@ const themeOptions = [
 ] as const;
 
 /** 右上角主题切换按钮，复用 next-themes */
-/** 右上角主题切换按钮，复用 next-themes */
 export function ThemeButton() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -138,10 +137,10 @@ export function LoginForm(props: LoginFormProps = {}) {
         {/* 标题 */}
         <div className="mb-10 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground mb-2">
-            Welcome back!
+            欢迎回来
           </h1>
           <p className="text-sm text-muted-foreground">
-            Please enter your details
+            请输入账号信息
           </p>
         </div>
 
@@ -161,7 +160,7 @@ export function LoginForm(props: LoginFormProps = {}) {
               htmlFor="login-username"
               className="mb-2 block text-sm font-medium text-foreground"
             >
-              Email / Username
+              账号
             </label>
             <div className="relative">
               <input
@@ -171,7 +170,7 @@ export function LoginForm(props: LoginFormProps = {}) {
                 autoComplete="username"
                 autoFocus
                 disabled={isLoading}
-                placeholder="you@example.com"
+                placeholder="请输入账号"
                 onChange={() => onTyping?.()}
                 className={cn(
                   'h-12 w-full rounded-xl border bg-transparent px-4 text-sm text-foreground',
@@ -193,7 +192,7 @@ export function LoginForm(props: LoginFormProps = {}) {
               htmlFor="login-password"
               className="mb-2 block text-sm font-medium text-foreground"
             >
-              Password
+              密码
             </label>
             <div className="relative">
               <input
@@ -202,7 +201,7 @@ export function LoginForm(props: LoginFormProps = {}) {
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
                 disabled={isLoading}
-                placeholder="••••••••"
+                placeholder="请输入密码"
                 onChange={(e) => onPasswordChange?.(e.target.value.length)}
                 onFocus={() => onPasswordFocusChange?.(true)}
                 onBlur={() => onPasswordFocusChange?.(false)}
@@ -243,10 +242,10 @@ export function LoginForm(props: LoginFormProps = {}) {
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                {state === 'success' ? 'Entering...' : 'Authenticating...'}
+                {state === 'success' ? '正在进入...' : '正在登录...'}
               </span>
             ) : (
-              'Log in'
+              '登录'
             )}
           </button>
         </form>

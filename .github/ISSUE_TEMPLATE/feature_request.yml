@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose an improvement aligned with the QTP roadmap.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        QTP prioritizes a narrow and deep regression-testing loop. Please connect the request to the roadmap when possible.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user pain or workflow gap does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version.
+    validations:
+      required: true
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: Roadmap stage
+      options:
+        - P0 Open-source readiness
+        - P1 North-star demo hardening
+        - P2 Narrow end-to-end loop
+        - P3 Regression confidence / stability
+        - P4 Multi-turn context tracking
+        - P5 Session recording to Golden Case
+        - P6 Adoption tooling
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - Users can ...
+        - The page shows ...
+        - The command exits ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

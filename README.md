@@ -9,8 +9,9 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Status](https://img.shields.io/badge/status-early%20development-orange.svg)](./ROADMAP.md)
 [![Stack](https://img.shields.io/badge/stack-Next.js%20%2B%20Prisma%20%2B%20SQLite-black.svg)](#架构)
+[![CI](https://github.com/wumindc/qtp/actions/workflows/ci.yml/badge.svg)](https://github.com/wumindc/qtp/actions/workflows/ci.yml)
 
-[核心场景](#为什么需要-qtp) · [与现有工具的区别](#和-ragas--promptfoo--langfuse-有什么不同) · [快速开始](#快速开始) · [路线图](./ROADMAP.md)
+[核心场景](#为什么需要-qtp) · [快速开始](#快速开始) · [路线图](./ROADMAP.md) · [任务规划](./docs/20260601-001-开源化与功能任务规划.md) · [贡献](#参与贡献)
 
 </div>
 
@@ -119,13 +120,21 @@ pnpm dev      # 启动应用（http://127.0.0.1:3000/ai-quality-platform）
 
 > 默认管理员：`admin` / `admin123`（可用 `QTP_ADMIN_INITIAL_PASSWORD` 覆盖后重新 `pnpm db:seed`）。
 
+### 常用开发命令
+
+```bash
+pnpm typecheck  # TypeScript 类型检查
+pnpm test       # 单元测试
+pnpm build      # Next.js 生产构建
+```
+
 ### 切换到 MySQL（可选）
 
 把 `packages/shared-database/prisma/schema.prisma` 的 `provider` 改为 `mysql`，并设置 `DATABASE_URL` 指向你的 MySQL，再执行 `pnpm db:push && pnpm db:seed`。
 
 ## 路线图
 
-QTP 按"先通链路 → 再做可信 → 再做差异化 → 再做惊艳"的顺序推进，每一阶段都比上一阶段更难、更不可替代。完整规划见 **[ROADMAP.md](./ROADMAP.md)**。
+QTP 按"先通链路 → 再做可信 → 再做差异化 → 再做惊艳"的顺序推进，每一阶段都比上一阶段更难、更不可替代。完整规划见 **[ROADMAP.md](./ROADMAP.md)**，可执行任务拆解见 **[开源化与功能任务规划](./docs/20260601-001-开源化与功能任务规划.md)**。
 
 | 阶段 | 主题 | 关键能力 |
 |---|---|---|
@@ -137,9 +146,17 @@ QTP 按"先通链路 → 再做可信 → 再做差异化 → 再做惊艳"的�
 | 5 | 资产飞轮 | 会话录制 · 一键转 Golden Case |
 | 6 | 开源采纳基建 | 一键 demo 数据 · 演示录屏 · CLI / CI 接入 |
 
-## 贡献
+## 参与贡献
 
 项目处于早期，最有价值的贡献是围绕路线图的讨论：定位是否准确、哪些阶段该重排、技术难点（尤其阶段 2/3）的实现思路。欢迎提 Issue 与 Discussion。
+
+参与前建议先阅读：
+
+- [贡献指南](./CONTRIBUTING.md)：开发环境、验证命令、PR 要求。
+- [任务规划](./docs/20260601-001-开源化与功能任务规划.md)：开源资料、功能规划与 P0-P6 任务拆解。
+- [行为准则](./CODE_OF_CONDUCT.md)：社区协作基本规范。
+- [支持方式](./SUPPORT.md)：如何提 Bug、功能建议与路线讨论。
+- [安全策略](./SECURITY.md)：如何报告安全问题。
 
 ## License
 

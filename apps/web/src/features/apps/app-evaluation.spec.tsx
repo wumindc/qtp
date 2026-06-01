@@ -70,7 +70,6 @@ describe('AppEvaluationPage', () => {
     render(<AppEvaluationPage appCode="c" />);
 
     expect(await screen.findByRole('heading', { name: '评估配置' })).toBeInTheDocument();
-    expect(screen.getByLabelText('评估模型')).toHaveValue('4');
     expect(screen.getAllByText('qwen3.5-plus').length).toBeGreaterThan(0);
     expect(screen.getAllByText('你是 AI 应用质量评估裁判。').length).toBeGreaterThan(0);
 

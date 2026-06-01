@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem in QTP.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please include enough detail for another contributor to reproduce it.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Setup / install
+        - README / docs
+        - Dashboard
+        - Execution comparison
+        - Failure diagnosis
+        - App onboarding
+        - Cases / suites
+        - Database / seed
+        - CI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the exact commands or page actions.
+      placeholder: |
+        1. Run pnpm setup
+        2. Open /ai-quality-platform
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        OS:
+        Node.js:
+        pnpm:
+        Commit:
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or recordings
+      description: Remove secrets before attaching logs.
+    validations:
+      required: false
